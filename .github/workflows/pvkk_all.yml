@@ -1,0 +1,145 @@
+name: 🏗️ PVKK Multi-Platform Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Linux Editor  (x86_64)
+  # ─────────────────────────────────────────────
+  build-linux-editor:
+    name: 🐧 Linux Editor
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            scons \
+            pkg-config \
+            libx11-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libgl1-mesa-dev \
+            libglu-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libudev-dev \
+            libxi-dev \
+            libxrandr-dev \
+            yasm
+
+      - name: Build – Linux Editor x86_64
+        run: |
+          scons target=editor platform=linuxbsd arch=x86_64 -j$(nproc)
+
+      - name: Prepare artifact
+        run: |
+          strip bin/godot.linuxbsd.editor.x86_64
+          chmod +x bin/godot.linuxbsd.editor.x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-linux-editor-x86_64
+          path: bin/godot.linuxbsd.editor.x86_64
+
+  # ─────────────────────────────────────────────
+  # Windows Builds (MSVC)
+  # ─────────────────────────────────────────────
+  build-windows:
+    name: 🪟 Windows Builds
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Editor
+            target: editor
+            artifact: godot-windows-editor-x86_64
+            bin: bin/godot.windows.editor.x86_64.exe
+
+          - name: Template Debug
+            target: template_debug
+            artifact: godot-windows-template-debug-x86_64
+            bin: bin/godot.windows.template_debug.x86_64.exe
+
+          - name: Template Release
+            target: template_release
+            artifact: godot-windows-template-release-x86_64
+            bin: bin/godot.windows.template_release.x86_64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python + SCons
+        run: |
+          python -m pip install --upgrade pip
+          pip install scons requests
+
+      # ─────────────────────────────────────────
+      # D3D12 (non-fatal)
+      # ─────────────────────────────────────────
+      - name: Fetch D3D12 dependencies
+        id: d3d12
+        shell: pwsh
+        run: |
+          try {
+            python misc/scripts/install_d3d12_sdk_windows.py
+            echo "enabled=yes" >> $env:GITHUB_OUTPUT
+          } catch {
+            Write-Host "D3D12 fetch failed, continuing without it"
+            echo "enabled=no" >> $env:GITHUB_OUTPUT
+          }
+
+      # ─────────────────────────────────────────
+      # Build
+      # ─────────────────────────────────────────
+      - name: Build (${{ matrix.name }})
+        shell: pwsh
+        run: |
+          scons `
+            platform=windows `
+            target=${{ matrix.target }} `
+            arch=x86_64 `
+            debug_symbols=yes `
+            d3d12=${{ steps.d3d12.outputs.enabled }}
+
+      # ─────────────────────────────────────────
+      # Validate output
+      # ─────────────────────────────────────────
+      - name: Validate build output
+        shell: pwsh
+        run: |
+          if (!(Test-Path "${{ matrix.bin }}")) {
+            throw "Missing EXE: ${{ matrix.bin }}"
+          }
+
+          $pdb = "${{ matrix.bin }}".Replace(".exe", ".pdb")
+          if (!(Test-Path $pdb)) {
+            throw "Missing PDB: $pdb"
+          }
+
+      # ─────────────────────────────────────────
+      # Upload EXE + PDB
+      # ─────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.bin }}
+            ${{ matrix.bin }}.pdb
