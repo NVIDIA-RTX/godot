@@ -235,6 +235,11 @@ def get_opts():
             "Path to the PIX runtime distribution (optional for D3D12)",
             os.path.join(deps_folder, "pix"),
         ),
+        (
+            "streamline_sdk_path",
+            "Path to the extracted NVIDIA Streamline SDK (Windows)",
+            os.path.join(deps_folder, "streamline_sdk"),
+        ),
     ]
 
 
@@ -492,6 +497,8 @@ def configure_msvc(env: "SConsEnvironment"):
         else:
             env.Append(LIBPATH=[env["mesa_libs"] + "/bin"])
         LIBS += ["libNIR.windows." + env["arch"] + prebuilt_lib_extra_suffix]
+
+    configure_streamline(env)
 
     if env["opengl3"]:
         env.AppendUnique(CPPDEFINES=["GLES3_ENABLED"])
@@ -929,6 +936,8 @@ def configure_mingw(env: "SConsEnvironment"):
         env.Append(LIBS=["libNIR.windows." + env["arch"]])
         env.Append(LIBS=["version"])  # Mesa dependency.
 
+    configure_streamline(env)
+
     if env["opengl3"]:
         env.Append(CPPDEFINES=["GLES3_ENABLED"])
         if env["angle"]:
@@ -1016,3 +1025,57 @@ def check_d3d12_installed(env, suffix):
             "Alternatively, disable this driver by compiling with `d3d12=no` explicitly."
         )
         sys.exit(255)
+
+
+def configure_streamline(env: "SConsEnvironment") -> None:
+    """Ensure the Streamline SDK exists (Windows, x86_64; official zips ship ``bin/x64`` only)."""
+    if env["platform"] != "windows" or not env["use_streamline"]:
+        return
+    if env.GetOption("help"):
+        return
+
+    install_hint = f"You can install it by running `python {os.path.join('misc', 'scripts', 'install_streamline_sdk.py')}`."
+    sdk = os.path.normpath(os.path.expanduser(str(env.subst(env.get("streamline_sdk_path", "")))))
+    if sdk == "" or sdk == os.path.normpath("."):
+        print_warning(
+            "Streamline support was requested, but `streamline_sdk_path` is empty.\n"
+            f"{install_hint}\n"
+            "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+        )
+        env["use_streamline"] = False
+        return
+    env["streamline_sdk_path"] = sdk
+
+    # Official Streamline SDK zips ship `bin/x64` only (no arm64/x86 tree in current releases).
+    if env["arch"] != "x86_64":
+        print_warning(
+            "The NVIDIA Streamline SDK is only distributed with `bin/x64` runtimes; Streamline is disabled for this architecture.\n"
+            "Build for x86_64 to use Streamline, or compile with `use_streamline=no` to silence this warning."
+        )
+        env["use_streamline"] = False
+        return
+
+    bin_path = os.path.join(sdk, "bin", "x64")
+
+    def _try_auto_install_streamline() -> bool:
+        repo_root = env.Dir("#").abspath
+        script = os.path.join(repo_root, "misc", "scripts", "install_streamline_sdk.py")
+        if not os.path.isfile(script):
+            return False
+        print("Streamline SDK missing or incomplete; downloading and extracting ...")
+        r = subprocess.run(
+            [sys.executable, script, "--extract_to", sdk],
+            cwd=repo_root,
+            env=os.environ.copy(),
+        )
+        return r.returncode == 0
+
+    if not os.path.isdir(sdk) or not os.path.isdir(bin_path):
+        if not _try_auto_install_streamline() or not os.path.isdir(sdk) or not os.path.isdir(bin_path):
+            print_warning(
+                "Streamline support was requested, but the Streamline SDK is not available "
+                "(expected `bin/x64` under the SDK root).\n"
+                f"{install_hint}\n"
+                "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+            )
+            env["use_streamline"] = False
