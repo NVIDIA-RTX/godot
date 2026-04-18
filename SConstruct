@@ -604,12 +604,6 @@ if not env["deprecated"]:
 if env["precision"] == "double":
     env.Append(CPPDEFINES=["REAL_T_IS_DOUBLE"])
 
-if env["use_streamline"]:
-    if env["platform"] == "windows":
-        env.AppendUnique(CPPDEFINES=["STREAMLINE_ENABLED"])
-    else:
-        env["use_streamline"] = False
-
 # Library Support
 if env["library_type"] != "executable":
     if "library" not in env.get("supported", []):
@@ -716,6 +710,12 @@ if env["scu_build"]:
 # Must happen after the flags' definition, as configure is when most flags
 # are actually handled to change compile options, etc.
 detect.configure(env)
+
+if env["use_streamline"]:
+    if env["platform"] == "windows":
+        env.AppendUnique(CPPDEFINES=["STREAMLINE_ENABLED"])
+    else:
+        env["use_streamline"] = False
 
 platform_string = env["platform"]
 if env.get("simulator"):
