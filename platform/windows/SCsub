@@ -188,7 +188,13 @@ if env["d3d12"]:
         )
 
 streamline_sdk_root = os.path.normpath(env.subst(env["streamline_sdk_path"]))
-if env["use_streamline"] and env["arch"] == "x86_64" and streamline_sdk_root != "" and os.path.isdir(streamline_sdk_root):
+if (
+    env["use_streamline"]
+    and env["install_streamline_sdk"]
+    and env["arch"] == "x86_64"
+    and streamline_sdk_root != ""
+    and os.path.isdir(streamline_sdk_root)
+):
     src_root = os.path.join(streamline_sdk_root, "bin", "x64")
     if os.path.isdir(src_root):
         for root, dirs, filenames in os.walk(src_root):

@@ -240,6 +240,11 @@ def get_opts():
             "Path to the extracted NVIDIA Streamline SDK (Windows)",
             os.path.join(deps_folder, "streamline_sdk"),
         ),
+        BoolVariable(
+            "install_streamline_sdk",
+            "Fetch Streamline when missing and copy runtime DLLs to bin (no = no download and no copy; use a local setup)",
+            True,
+        ),
     ]
 
 
@@ -1070,12 +1075,23 @@ def configure_streamline(env: "SConsEnvironment") -> None:
         )
         return r.returncode == 0
 
-    if not os.path.isdir(sdk) or not os.path.isdir(bin_path):
-        if not _try_auto_install_streamline() or not os.path.isdir(sdk) or not os.path.isdir(bin_path):
+    sdk_ready = os.path.isdir(sdk) and os.path.isdir(bin_path)
+    if not sdk_ready:
+        if env["install_streamline_sdk"]:
+            if not _try_auto_install_streamline() or not os.path.isdir(sdk) or not os.path.isdir(bin_path):
+                print_warning(
+                    "Streamline support was requested, but the Streamline SDK is not available "
+                    "(expected `bin/x64` under the SDK root).\n"
+                    f"{install_hint}\n"
+                    "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+                )
+                env["use_streamline"] = False
+        else:
             print_warning(
-                "Streamline support was requested, but the Streamline SDK is not available "
-                "(expected `bin/x64` under the SDK root).\n"
+                "Streamline support was requested, but the SDK is missing or incomplete and "
+                "`install_streamline_sdk=no` (no automatic install).\n"
+                "Point `streamline_sdk_path` at a local tree with `bin/x64`, or run:\n\t"
                 f"{install_hint}\n"
-                "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+                "Alternatively use `use_streamline=no`."
             )
             env["use_streamline"] = False
