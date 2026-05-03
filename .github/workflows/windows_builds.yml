@@ -82,6 +82,11 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Download NVIDIA Streamline SDK
+        shell: sh
+        run: python ./misc/scripts/install_streamline_sdk.py
+        continue-on-error: true
+
       - name: Download pre-built ANGLE
         shell: sh
         id: angle-sdk
