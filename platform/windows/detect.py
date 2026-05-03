@@ -237,12 +237,12 @@ def get_opts():
         ),
         (
             "streamline_sdk_path",
-            "Path to the extracted NVIDIA Streamline SDK (Windows)",
+            "Root of the extracted NVIDIA Streamline SDK (expects bin/x64 under this path on x86_64)",
             os.path.join(deps_folder, "streamline_sdk"),
         ),
         BoolVariable(
             "install_streamline_sdk",
-            "Fetch Streamline when missing and copy runtime DLLs to bin (no = no download and no copy; use a local setup)",
+            "yes: download SDK if bin/x64 is missing, then copy DLLs into bin during build | no: never download or copy (you place DLLs next to the exe yourself)",
             True,
         ),
     ]
@@ -1033,29 +1033,34 @@ def check_d3d12_installed(env, suffix):
 
 
 def configure_streamline(env: "SConsEnvironment") -> None:
-    """Ensure the Streamline SDK exists (Windows, x86_64; official zips ship ``bin/x64`` only)."""
+    """Ensure the Streamline SDK exists (Windows x86_64; NVIDIA SDK layout uses bin/x64)."""
     if env["platform"] != "windows" or not env["use_streamline"]:
         return
     if env.GetOption("help"):
         return
 
-    install_hint = f"You can install it by running `python {os.path.join('misc', 'scripts', 'install_streamline_sdk.py')}`."
+    script_rel = os.path.join("misc", "scripts", "install_streamline_sdk.py")
+    manual_install = (
+        f"From the Godot repo root run: python {script_rel}\n"
+        "(optional: pass --extract_to <folder> to match your streamline_sdk_path)"
+    )
     sdk = os.path.normpath(os.path.expanduser(str(env.subst(env.get("streamline_sdk_path", "")))))
     if sdk == "" or sdk == os.path.normpath("."):
         print_warning(
-            "Streamline support was requested, but `streamline_sdk_path` is empty.\n"
-            f"{install_hint}\n"
-            "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+            "Streamline is enabled (`use_streamline=yes`) but `streamline_sdk_path` is empty.\n"
+            "Set `streamline_sdk_path` to the folder that contains `bin/x64`, or disable "
+            "Streamline with `use_streamline=no`.\n"
+            f"{manual_install}"
         )
         env["use_streamline"] = False
         return
     env["streamline_sdk_path"] = sdk
 
-    # Official Streamline SDK zips ship `bin/x64` only (no arm64/x86 tree in current releases).
     if env["arch"] != "x86_64":
         print_warning(
-            "The NVIDIA Streamline SDK is only distributed with `bin/x64` runtimes; Streamline is disabled for this architecture.\n"
-            "Build for x86_64 to use Streamline, or compile with `use_streamline=no` to silence this warning."
+            "Streamline only ships Windows x64 binaries (`bin/x64`). "
+            f"This build targets `{env['arch']}`, so Streamline is disabled.\n"
+            "Use `arch=x86_64`, or turn Streamline off with `use_streamline=no`."
         )
         env["use_streamline"] = False
         return
@@ -1064,10 +1069,10 @@ def configure_streamline(env: "SConsEnvironment") -> None:
 
     def _try_auto_install_streamline() -> bool:
         repo_root = env.Dir("#").abspath
-        script = os.path.join(repo_root, "misc", "scripts", "install_streamline_sdk.py")
+        script = os.path.join(repo_root, script_rel)
         if not os.path.isfile(script):
             return False
-        print("Streamline SDK missing or incomplete; downloading and extracting ...")
+        print("Streamline: SDK not found — downloading and extracting (install_streamline_sdk=yes) ...")
         r = subprocess.run(
             [sys.executable, script, "--extract_to", sdk],
             cwd=repo_root,
@@ -1080,18 +1085,20 @@ def configure_streamline(env: "SConsEnvironment") -> None:
         if env["install_streamline_sdk"]:
             if not _try_auto_install_streamline() or not os.path.isdir(sdk) or not os.path.isdir(bin_path):
                 print_warning(
-                    "Streamline support was requested, but the Streamline SDK is not available "
-                    "(expected `bin/x64` under the SDK root).\n"
-                    f"{install_hint}\n"
-                    "Alternatively, disable Streamline by compiling with `use_streamline=no` explicitly."
+                    "Streamline is enabled but the SDK is still missing after running the installer.\n"
+                    f"Expected folder: {bin_path}\n"
+                    "Check network access and disk space, fix `streamline_sdk_path`, or try manually:\n\t"
+                    f"python {script_rel}\n"
+                    "To disable Streamline for this build: `use_streamline=no`."
                 )
                 env["use_streamline"] = False
         else:
             print_warning(
-                "Streamline support was requested, but the SDK is missing or incomplete and "
-                "`install_streamline_sdk=no` (no automatic install).\n"
-                "Point `streamline_sdk_path` at a local tree with `bin/x64`, or run:\n\t"
-                f"{install_hint}\n"
-                "Alternatively use `use_streamline=no`."
+                "Streamline is enabled but no SDK found, and `install_streamline_sdk=no` "
+                "(the build will not download or copy SDK DLLs).\n"
+                f"Expected folder: {bin_path}\n"
+                "Either extract or install an SDK into `streamline_sdk_path`, enable "
+                "`install_streamline_sdk=yes`, or disable Streamline with `use_streamline=no`.\n"
+                f"{manual_install}"
             )
             env["use_streamline"] = False

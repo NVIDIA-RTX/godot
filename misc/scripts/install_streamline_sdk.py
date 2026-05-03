@@ -78,13 +78,12 @@ shutil.unpack_archive(streamline_archive, streamline_extract, "zip")
 os.remove(streamline_archive)
 
 if not _has_bin_directory(streamline_extract):
-    color_print(f"{Ansi.RED}Could not find a `bin` directory inside the Streamline SDK archive.")
+    color_print(
+        f"{Ansi.RED}Archive unpacked but no `bin` folder was found — the zip layout may have changed or the download is corrupt."
+    )
     raise SystemExit(1)
 
+color_print(f'{Ansi.GREEN}Streamline SDK {streamline_tag} extracted to "{streamline_extract}".')
 color_print(
-    f'{Ansi.GREEN}Streamline SDK {streamline_tag} was installed to "{streamline_extract}" successfully.'
-)
-color_print(
-    f"{Ansi.GREEN}SCons will copy runtime binaries from `bin/<arch>` next to the executable when building with "
-    "`use_streamline=yes` (default on Windows)."
+    f"{Ansi.GREEN}Rebuild with install_streamline_sdk=yes (default) so DLLs from bin/x64 are copied next to godot.exe."
 )
