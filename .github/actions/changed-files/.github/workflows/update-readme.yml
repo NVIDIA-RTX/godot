@@ -1,0 +1,54 @@
+name: Format README.md
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Run auto-doc
+        uses: tj-actions/auto-doc@b10ceedffd794ec29a8fa8700529f40c1b64a951 # v3.6.0
+        with:
+          use_code_blocks: true
+          use_major_version: true
+          use_tag_commit_hash: true
+
+      - name: Run remark
+        uses: tj-actions/remark@10fc40701928cbafcc4a2d241679579d218144ff # v3
+
+      - name: Verify Changed files
+        uses: tj-actions/verify-changed-files@a1c6acee9df209257a246f2cc6ae8cb6581c1edf # v20.0.4
+        id: verify_changed_files
+        with:
+          files: |
+            README.md
+
+      - name: README.md changed
+        if: steps.verify_changed_files.outputs.files_changed == 'true'
+        run: |
+          echo "README.md has uncommitted changes"
+          exit 1
+
+      - name: Create Pull Request
+        if: failure()
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
+        with:
+          base: "main"
+          labels: "merge when passing"
+          title: "Updated README.md"
+          branch: "chore/update-readme"
+          commit-message: "Updated README.md"
+          body: "Updated README.md"
+          sign-commits: true
+          token: ${{ secrets.GITHUB_TOKEN }}

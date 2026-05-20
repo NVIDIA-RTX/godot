@@ -1,0 +1,51 @@
+name: Test download asset
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  download:
+    strategy:
+      matrix:
+        runs-on:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+        version:
+          - 'tags/v0.1.18'
+          - '23960137'
+          - ''
+
+    name: Download
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Create a subdirectory
+        run: |
+          mkdir subdir
+      - name: Get a specific version
+        id: get_release
+        uses: ./
+        with:
+          repo: 'dsaltares/godot-wild-jam-18'
+          version: ${{ matrix.version }}
+          file: 'plague-linux.zip'
+          target: 'subdir/plague-linux.zip'
+      - name: Display the outputs
+        run: |
+          echo "${{ steps.get_release.outputs.version }}"
+          echo "${{ steps.get_release.outputs.name }}"
+          echo "${{ steps.get_release.outputs.body }}"
+      - name: Display the file (Linux, Mac)
+        run: ls -l subdir/plague-linux.zip
+        if: matrix.runs-on != 'windows-latest'
+      - name: Display the file (Windows)
+        run: dir subdir/plague-linux.zip
+        if: matrix.runs-on == 'windows-latest'
