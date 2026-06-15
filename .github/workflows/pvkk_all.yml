@@ -117,29 +117,24 @@ jobs:
             arch=x86_64 `
             debug_symbols=yes `
             d3d12=${{ steps.d3d12.outputs.enabled }}
-
-      # ─────────────────────────────────────────
-      # Validate output
-      # ─────────────────────────────────────────
+      
+      - name: Compute PDB path
+        id: paths
+        shell: pwsh
+        run: |
+          $pdb = "${{ matrix.bin }}" -replace "\.exe$", ".pdb"
+          echo "pdb=$pdb" >> $env:GITHUB_OUTPUT
+      
       - name: Validate build output
         shell: pwsh
         run: |
-          if (!(Test-Path "${{ matrix.bin }}")) {
-            throw "Missing EXE: ${{ matrix.bin }}"
-          }
-
-          $pdb = "${{ matrix.bin }}".Replace(".exe", ".pdb")
-          if (!(Test-Path $pdb)) {
-            throw "Missing PDB: $pdb"
-          }
-
-      # ─────────────────────────────────────────
-      # Upload EXE + PDB
-      # ─────────────────────────────────────────
+          if (!(Test-Path "${{ matrix.bin }}")) { throw "Missing EXE: ${{ matrix.bin }}" }
+          if (!(Test-Path "${{ steps.paths.outputs.pdb }}")) { throw "Missing PDB: ${{ steps.paths.outputs.pdb }}" }
+      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
             ${{ matrix.bin }}
-            ${{ matrix.bin }}.pdb
+            ${{ steps.paths.outputs.pdb }}
