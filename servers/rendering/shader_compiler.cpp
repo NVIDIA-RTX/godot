@@ -809,15 +809,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 
 				if (p_actions.entry_point_stages.has(fnode->name)) {
 					Stage stage = p_actions.entry_point_stages[fnode->name];
-					// In RT (suppress_varying_io) the vertex entry point has
-					// no separate shader stage -- its body and transitive
-					// helper deps are inlined into the fragment-equivalent
-					// closest_hit / any_hit shaders, so redirect them to
-					// STAGE_FRAGMENT. Other stages (fragment, intersection)
-					// still have their own shader translation units and must
-					// keep their deps in their own globals bucket so the
-					// generated code for that stage can actually reference
-					// those helpers.
 					Stage dep_stage = (p_default_actions.suppress_varying_io && stage == STAGE_VERTEX) ? STAGE_FRAGMENT : stage;
 					_dump_function_deps(pnode, fnode->name, function_code, r_gen_code.stage_globals[dep_stage], added_funcs_per_stage[dep_stage]);
 					r_gen_code.code[fnode->name] = function_code[fnode->name];
