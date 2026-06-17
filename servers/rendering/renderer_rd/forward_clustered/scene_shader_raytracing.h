@@ -78,6 +78,7 @@ public:
 		RT_FLAG_DLSS_RR_ENABLED = (1 << 1),
 		RT_FLAG_FOG_ENABLED = (1 << 2),
 		RT_FLAG_SER_ENABLED = (1 << 3),
+		RT_FLAG_RAY_QUERY_SHADOWS_ENABLED = (1 << 4),
 	};
 
 	constexpr static uint32_t RT_SAMPLE_COUNT_SHIFT = 21;
@@ -91,13 +92,15 @@ public:
 	// 2: shadow ray from closest_hit (NEE)
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
-	// Pathtracing parameter indices - aliased from the shared enum in rendering_server_enums.h.
-	static constexpr int RT_PARAM_VIS_MODE = RSE::PT_PARAM_VIS_MODE;
-	static constexpr int RT_PARAM_SAMPLE_COUNT = RSE::PT_PARAM_SAMPLE_COUNT;
-	static constexpr int RT_PARAM_MAX_BOUNCES = RSE::PT_PARAM_MAX_BOUNCES;
-	static constexpr int RT_PARAM_DENOISER = RSE::PT_PARAM_DENOISER;
-	static constexpr int RT_PARAM_LIGHT_COUNT = RSE::PT_PARAM_LIGHT_COUNT;
-	static constexpr int RT_PARAM_FRAME_INDEX = RSE::PT_PARAM_FRAME_INDEX;
+	// Pathtracing parameter indices for the float[16] params buffer.
+	// Must match RT_PARAM_* defines in raytracing_inc.glsl.
+	static constexpr int RT_PARAM_VIS_MODE = 0;
+	static constexpr int RT_PARAM_SAMPLE_COUNT = 1;
+	static constexpr int RT_PARAM_MAX_BOUNCES = 2;
+	static constexpr int RT_PARAM_DENOISER = 3;
+	// Indices 4-13 reserved for future use.
+	static constexpr int RT_PARAM_LIGHT_COUNT = 14;
+	static constexpr int RT_PARAM_FRAME_INDEX = 15;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
@@ -107,9 +110,9 @@ public:
 		return result;
 	}
 
-	// Build the full packed rt_flags from pathtracing environment params.
-	// `p_env_params` may be null (RT active with no pathtracing environment).
-	static uint32_t compute_rt_flags(const float *p_env_params, bool p_fog_enabled);
+	// Build the full packed rt_flags from pathtracing environment settings.
+	// `p_environment` may be invalid (RT active with no pathtracing environment).
+	static uint32_t compute_rt_flags(RID p_environment, bool p_fog_enabled);
 
 	struct ShaderSpecialization {
 		union {

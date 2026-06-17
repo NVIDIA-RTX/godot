@@ -2153,11 +2153,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	// Create TLAS for raytracing if enabled
 	if (scene_features.rt && rb_data.is_valid() && raytracing && raytracing->get_shader()) {
 		RENDER_TIMESTAMP("Build Acceleration Structures");
-		const float *env_params = (p_render_data && p_render_data->environment.is_valid())
-				? RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_params_ptr(p_render_data->environment)
-				: nullptr;
-		const bool fog_enabled = p_render_data && p_render_data->environment.is_valid() && environment_get_fog_enabled(p_render_data->environment);
-		rt_flags = SceneShaderRaytracing::compute_rt_flags(env_params, fog_enabled);
+		RID rt_environment = (p_render_data && p_render_data->environment.is_valid()) ? p_render_data->environment : RID();
+		const bool fog_enabled = rt_environment.is_valid() && environment_get_fog_enabled(rt_environment);
+		rt_flags = SceneShaderRaytracing::compute_rt_flags(rt_environment, fog_enabled);
 
 		const bool dlss_rr_enabled = (rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) != 0;
 		if (dlss_rr_enabled) {

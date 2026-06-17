@@ -38,6 +38,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
+#include "servers/rendering/storage/environment_storage.h"
 
 using namespace RendererSceneRenderImplementation;
 
@@ -63,6 +64,8 @@ struct RaygenShaderOption {
 static constexpr RaygenShaderOption RAYGEN_SHADER_OPTIONS[] = {
 	{ SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED, "#define DLSS_RR_ENABLED\n" },
 	{ SceneShaderRaytracing::RT_FLAG_SER_ENABLED, "#define USE_SER\n" },
+	{ SceneShaderRaytracing::RT_FLAG_RAY_QUERY_SHADOWS_ENABLED, "#define USE_RAY_QUERY_SHADOWS\n" },
+
 };
 
 static constexpr uint32_t RAYGEN_SHADER_OPTION_COUNT = sizeof(RAYGEN_SHADER_OPTIONS) / sizeof(RAYGEN_SHADER_OPTIONS[0]);
@@ -638,18 +641,25 @@ bool SceneShaderRaytracing::is_hg_ready_in_bundle(uint32_t p_slot_index, uint32_
 	return b.live_ready_mask[p_slot_index];
 }
 
-uint32_t SceneShaderRaytracing::compute_rt_flags(const float *p_env_params, bool p_fog_enabled) {
+uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_enabled) {
 	uint32_t flags = RT_FLAG_NONE;
 	uint32_t sample_count = 1;
 	uint32_t max_bounces = 3;
 
-	if (p_env_params) {
-		if (p_env_params[RT_PARAM_VIS_MODE] != 0.0f) {
+	if (p_environment.is_valid()) {
+		RendererEnvironmentStorage *env_storage = RendererEnvironmentStorage::get_singleton();
+
+		if (env_storage->environment_get_pathtracing_debug_mode(p_environment) != 0) {
 			flags |= RT_FLAG_DEBUG_VIS_ENABLED;
 		}
-		sample_count = MAX(1u, (uint32_t)p_env_params[RT_PARAM_SAMPLE_COUNT]);
-		max_bounces = MAX(1u, MIN(8u, (uint32_t)p_env_params[RT_PARAM_MAX_BOUNCES]));
-		if ((uint32_t)p_env_params[RT_PARAM_DENOISER] == RSE::PT_DENOISER_DLSS_RAY_RECONSTRUCTION) {
+
+		if (env_storage->environment_get_pathtracing_use_simple_shadows(p_environment)) {
+			flags |= RT_FLAG_RAY_QUERY_SHADOWS_ENABLED;
+		}
+
+		sample_count = MAX(1, env_storage->environment_get_pathtracing_samples_per_pixel(p_environment));
+		max_bounces = CLAMP(env_storage->environment_get_pathtracing_max_bounces(p_environment), 1, 8);
+		if (env_storage->environment_get_pathtracing_denoiser(p_environment) == RSE::PT_DENOISER_DLSS_RAY_RECONSTRUCTION) {
 			flags |= RT_FLAG_DLSS_RR_ENABLED;
 		}
 	}

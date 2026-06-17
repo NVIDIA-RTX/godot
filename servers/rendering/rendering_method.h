@@ -317,10 +317,14 @@ public:
 	virtual void environment_set_sdfgi_frames_to_update_light(RSE::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
 
 	// Pathtracing
-	virtual void environment_set_pathtracing(RID p_env, bool p_enable) = 0;
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_use_simple_shadows) = 0;
+
 	virtual bool environment_get_pathtracing_enabled(RID p_env) const = 0;
-	virtual void environment_set_pathtracing_params(RID p_env, const PackedFloat32Array &p_params) = 0;
-	virtual PackedFloat32Array environment_get_pathtracing_params(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_debug_mode(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_samples_per_pixel(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_max_bounces(RID p_env) const = 0;
+	virtual RSE::PathtracingDenoiser environment_get_pathtracing_denoiser(RID p_env) const = 0;
+	virtual bool environment_get_pathtracing_use_simple_shadows(RID p_env) const = 0;
 
 	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) = 0;
 

@@ -1399,6 +1399,18 @@
 				Configures glow for the specified environment RID. See [code]glow_*[/code] properties in [Environment] for more information.
 			</description>
 		</method>
+		<method name="environment_set_pathtracing">
+			<return type="void" />
+			<param index="0" name="env" type="RID" />
+			<param index="1" name="enable" type="bool" />
+			<param index="2" name="debug_mode" type="int" />
+			<param index="3" name="samples_per_pixel" type="int" />
+			<param index="4" name="max_bounces" type="int" />
+			<param index="5" name="denoiser" type="int" enum="RenderingServer.PathtracingDenoiser" />
+			<param index="6" name="use_simple_shadows" type="bool" />
+			<description>
+			</description>
+		</method>
 		<method name="environment_set_sdfgi">
 			<return type="void" />
 			<param index="0" name="env" type="RID" />

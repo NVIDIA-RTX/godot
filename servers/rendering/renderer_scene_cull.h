@@ -1386,11 +1386,14 @@ public:
 	PASS1(environment_set_sdfgi_frames_to_update_light, RSE::EnvironmentSDFGIFramesToUpdateLight)
 
 	// Pathtracing
-	PASS2(environment_set_pathtracing, RID, bool)
-	PASS2(environment_set_pathtracing_params, RID, const PackedFloat32Array &)
+	PASS7(environment_set_pathtracing, RID, bool, int, int, int, RSE::PathtracingDenoiser, bool)
 
 	PASS1RC(bool, environment_get_pathtracing_enabled, RID)
-	PASS1RC(PackedFloat32Array, environment_get_pathtracing_params, RID)
+	PASS1RC(int, environment_get_pathtracing_debug_mode, RID)
+	PASS1RC(int, environment_get_pathtracing_samples_per_pixel, RID)
+	PASS1RC(int, environment_get_pathtracing_max_bounces, RID)
+	PASS1RC(RSE::PathtracingDenoiser, environment_get_pathtracing_denoiser, RID)
+	PASS1RC(bool, environment_get_pathtracing_use_simple_shadows, RID)
 
 	// Adjustment
 	PASS7(environment_set_adjustment, RID, bool, float, float, float, bool, RID)

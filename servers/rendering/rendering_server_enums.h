@@ -756,18 +756,6 @@ enum PathtracingDenoiser {
 	PT_DENOISER_DLSS_RAY_RECONSTRUCTION = 1,
 };
 
-// Pathtracing parameter indices for the float[16] params buffer.
-// Must match RT_PARAM_* defines in raytracing_inc.glsl.
-enum PathtracingParamIndex {
-	PT_PARAM_VIS_MODE = 0,
-	PT_PARAM_SAMPLE_COUNT = 1,
-	PT_PARAM_MAX_BOUNCES = 2,
-	PT_PARAM_DENOISER = 3,
-	// Indices 4-13 reserved for future use.
-	PT_PARAM_LIGHT_COUNT = 14,
-	PT_PARAM_FRAME_INDEX = 15,
-};
-
 enum SubSurfaceScatteringQuality {
 	SUB_SURFACE_SCATTERING_QUALITY_DISABLED,
 	SUB_SURFACE_SCATTERING_QUALITY_LOW,

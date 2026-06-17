@@ -887,9 +887,7 @@ public:
 	FUNC1(environment_set_sdfgi_ray_count, RSE::EnvironmentSDFGIRayCount)
 	FUNC1(environment_set_sdfgi_frames_to_converge, RSE::EnvironmentSDFGIFramesToConverge)
 	FUNC1(environment_set_sdfgi_frames_to_update_light, RSE::EnvironmentSDFGIFramesToUpdateLight)
-	FUNC2(environment_set_pathtracing, RID, bool)
-	FUNC2(environment_set_pathtracing_params, RID, const PackedFloat32Array &)
-	FUNC1RC(PackedFloat32Array, environment_get_pathtracing_params, RID)
+	FUNC7(environment_set_pathtracing, RID, bool, int, int, int, RSE::PathtracingDenoiser, bool)
 
 	FUNC3R(Ref<Image>, environment_bake_panorama, RID, bool, const Size2i &)
 

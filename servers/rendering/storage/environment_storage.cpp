@@ -896,10 +896,15 @@ RSE::EnvironmentSDFGIYScale RendererEnvironmentStorage::environment_get_sdfgi_y_
 
 // Pathtracing
 
-void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_enable) {
+void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_use_simple_shadows) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
 	env->pathtracing_enabled = p_enable;
+	env->pathtracing_debug_mode = p_debug_mode;
+	env->pathtracing_samples_per_pixel = p_samples_per_pixel;
+	env->pathtracing_max_bounces = p_max_bounces;
+	env->pathtracing_denoiser = p_denoiser;
+	env->pathtracing_use_simple_shadows = p_use_simple_shadows;
 }
 
 bool RendererEnvironmentStorage::environment_get_pathtracing_enabled(RID p_env) const {
@@ -908,29 +913,34 @@ bool RendererEnvironmentStorage::environment_get_pathtracing_enabled(RID p_env) 
 	return env->pathtracing_enabled;
 }
 
-void RendererEnvironmentStorage::environment_set_pathtracing_params(RID p_env, const PackedFloat32Array &p_params) {
+int RendererEnvironmentStorage::environment_get_pathtracing_debug_mode(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL(env);
-	for (int i = 0; i < 16 && i < p_params.size(); i++) {
-		env->pathtracing_params[i] = p_params[i];
-	}
+	ERR_FAIL_NULL_V(env, 0);
+	return env->pathtracing_debug_mode;
 }
 
-PackedFloat32Array RendererEnvironmentStorage::environment_get_pathtracing_params(RID p_env) const {
+int RendererEnvironmentStorage::environment_get_pathtracing_samples_per_pixel(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, PackedFloat32Array());
-	PackedFloat32Array result;
-	result.resize(16);
-	for (int i = 0; i < 16; i++) {
-		result.write[i] = env->pathtracing_params[i];
-	}
-	return result;
+	ERR_FAIL_NULL_V(env, 1);
+	return env->pathtracing_samples_per_pixel;
 }
 
-const float *RendererEnvironmentStorage::environment_get_pathtracing_params_ptr(RID p_env) const {
+int RendererEnvironmentStorage::environment_get_pathtracing_max_bounces(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, nullptr);
-	return env->pathtracing_params;
+	ERR_FAIL_NULL_V(env, 3);
+	return env->pathtracing_max_bounces;
+}
+
+RSE::PathtracingDenoiser RendererEnvironmentStorage::environment_get_pathtracing_denoiser(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, RSE::PT_DENOISER_NONE);
+	return env->pathtracing_denoiser;
+}
+
+bool RendererEnvironmentStorage::environment_get_pathtracing_use_simple_shadows(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, false);
+	return env->pathtracing_use_simple_shadows;
 }
 
 // Adjustments

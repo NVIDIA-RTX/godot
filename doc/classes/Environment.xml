@@ -220,6 +220,10 @@
 			Number of ray samples cast per pixel per frame. Higher values reduce noise but increase GPU cost proportionally. When using a temporal denoiser such as DLSS Ray Reconstruction, a low sample count (1-2) is typically sufficient since the denoiser accumulates information across frames.
 			[b]Note:[/b] Only has an effect when [member pathtracing_enabled] is [code]true[/code].
 		</member>
+		<member name="pathtracing_use_simple_shadows" type="bool" setter="set_pathtracing_use_simple_shadows" getter="is_pathtracing_using_simple_shadows" default="true">
+			Whether Ray Queries or fully traced rays should be used for shadow rays. Ray Queries are significantly cheaper, but rely on a quick alpha estimation.
+			If you have materials with changing alpha textures Ray Queries will result in wrong shadows.
+		</member>
 		<member name="reflected_light_source" type="int" setter="set_reflection_source" getter="get_reflection_source" enum="Environment.ReflectionSource" default="0">
 			The reflected (specular) light source.
 		</member>

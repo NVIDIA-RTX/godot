@@ -650,16 +650,24 @@ RSE::PathtracingDenoiser Environment::get_pathtracing_denoiser() const {
 	return pathtracing_denoiser;
 }
 
-void Environment::_update_pathtracing() {
-	RS::get_singleton()->environment_set_pathtracing(environment, pathtracing_enabled);
+void Environment::set_pathtracing_use_simple_shadows(bool p_enabled) {
+	pathtracing_use_simple_shadows = p_enabled;
+	_update_pathtracing();
+}
 
-	PackedFloat32Array params;
-	params.resize(16);
-	params.write[RSE::PT_PARAM_VIS_MODE] = (float)pathtracing_debug_mode;
-	params.write[RSE::PT_PARAM_SAMPLE_COUNT] = (float)pathtracing_samples_per_pixel;
-	params.write[RSE::PT_PARAM_MAX_BOUNCES] = (float)pathtracing_max_bounces;
-	params.write[RSE::PT_PARAM_DENOISER] = (float)(int)pathtracing_denoiser;
-	RS::get_singleton()->environment_set_pathtracing_params(environment, params);
+bool Environment::is_pathtracing_using_simple_shadows() const {
+	return pathtracing_use_simple_shadows;
+}
+
+void Environment::_update_pathtracing() {
+	RS::get_singleton()->environment_set_pathtracing(
+			environment,
+			pathtracing_enabled,
+			(int)pathtracing_debug_mode,
+			pathtracing_samples_per_pixel,
+			pathtracing_max_bounces,
+			pathtracing_denoiser,
+			pathtracing_use_simple_shadows);
 }
 
 // Glow
@@ -1501,6 +1509,8 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_pathtracing_max_bounces"), &Environment::get_pathtracing_max_bounces);
 	ClassDB::bind_method(D_METHOD("set_pathtracing_denoiser", "denoiser"), &Environment::set_pathtracing_denoiser);
 	ClassDB::bind_method(D_METHOD("get_pathtracing_denoiser"), &Environment::get_pathtracing_denoiser);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_use_simple_shadows", "enabled"), &Environment::set_pathtracing_use_simple_shadows);
+	ClassDB::bind_method(D_METHOD("is_pathtracing_using_simple_shadows"), &Environment::is_pathtracing_using_simple_shadows);
 
 	ADD_GROUP("Pathtracing", "pathtracing_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_pathtracing_enabled", "is_pathtracing_enabled");
@@ -1508,6 +1518,7 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_samples_per_pixel", PROPERTY_HINT_RANGE, "1,16,1"), "set_pathtracing_samples_per_pixel", "get_pathtracing_samples_per_pixel");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_max_bounces", PROPERTY_HINT_RANGE, "1,8,1"), "set_pathtracing_max_bounces", "get_pathtracing_max_bounces");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_denoiser", PROPERTY_HINT_ENUM, "None,DLSS Ray Reconstruction"), "set_pathtracing_denoiser", "get_pathtracing_denoiser");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_use_simple_shadows"), "set_pathtracing_use_simple_shadows", "is_pathtracing_using_simple_shadows");
 
 	// Glow
 

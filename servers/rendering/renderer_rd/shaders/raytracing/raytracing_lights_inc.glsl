@@ -1,6 +1,6 @@
 // Light sampling and Next Event Estimation (NEE) for raytracing.
 // Requires: raytracing_inc.glsl, brdf_inc.glsl, tlas at binding 1, payload at location 0.
-// Note: ray_query_alpha_test() still requires GL_EXT_ray_query (used by DLSS-RR path).
+// Note: ray_query_alpha_test() still requires GL_EXT_ray_query (used by DLSS-RR path or when USE_RAY_QUERY_SHADOWS is defined).
 
 // ============================================================================
 // Light Types and Constants
@@ -189,7 +189,28 @@ bool ray_query_alpha_test(uint geometry_idx, uint primitive_id, vec2 candidate_b
 /// Uses SkipClosestHitShader so only any_hit (alpha test) and miss are invoked.
 /// TerminateOnFirstHit causes early exit on first confirmed opaque hit.
 bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout uint rng_state) {
-#ifdef USE_SER
+#ifdef USE_RAY_QUERY_SHADOWS
+	// Ray queries are significantly faster, but can not handle complex alpha materials
+	rayQueryEXT shadow_rq;
+	rayQueryInitializeEXT(shadow_rq, tlas,
+			gl_RayFlagsTerminateOnFirstHitEXT,
+			0xFF, origin, 0.001, direction, max_dist - 0.001);
+
+	while (rayQueryProceedEXT(shadow_rq)) {
+		if (rayQueryGetIntersectionTypeEXT(shadow_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
+			// quick and dirty way to check transparency by sampling the alpha texture
+			// this completely ignores the actual material, so might not be accurate
+			if (ray_query_alpha_test(
+						rayQueryGetIntersectionInstanceCustomIndexEXT(shadow_rq, false),
+						rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false),
+						rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false))) {
+				rayQueryConfirmIntersectionEXT(shadow_rq);
+			}
+		}
+	}
+
+	return rayQueryGetIntersectionTypeEXT(shadow_rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+#elif defined(USE_SER)
 	hitObjectEXT hitObject;
 	hitObjectTraceRayEXT(hitObject, tlas,
 			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,

@@ -709,20 +709,32 @@ RSE::EnvironmentSDFGIYScale RendererSceneRender::environment_get_sdfgi_y_scale(R
 
 // Raytracing
 
-void RendererSceneRender::environment_set_pathtracing(RID p_env, bool p_enable) {
-	environment_storage.environment_set_pathtracing(p_env, p_enable);
+void RendererSceneRender::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_use_simple_shadows) {
+	environment_storage.environment_set_pathtracing(p_env, p_enable, p_debug_mode, p_samples_per_pixel, p_max_bounces, p_denoiser, p_use_simple_shadows);
 }
 
 bool RendererSceneRender::environment_get_pathtracing_enabled(RID p_env) const {
 	return environment_storage.environment_get_pathtracing_enabled(p_env);
 }
 
-void RendererSceneRender::environment_set_pathtracing_params(RID p_env, const PackedFloat32Array &p_params) {
-	environment_storage.environment_set_pathtracing_params(p_env, p_params);
+int RendererSceneRender::environment_get_pathtracing_debug_mode(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_debug_mode(p_env);
 }
 
-PackedFloat32Array RendererSceneRender::environment_get_pathtracing_params(RID p_env) const {
-	return environment_storage.environment_get_pathtracing_params(p_env);
+int RendererSceneRender::environment_get_pathtracing_samples_per_pixel(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_samples_per_pixel(p_env);
+}
+
+int RendererSceneRender::environment_get_pathtracing_max_bounces(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_max_bounces(p_env);
+}
+
+RSE::PathtracingDenoiser RendererSceneRender::environment_get_pathtracing_denoiser(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_denoiser(p_env);
+}
+
+bool RendererSceneRender::environment_get_pathtracing_use_simple_shadows(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_use_simple_shadows(p_env);
 }
 
 void RendererSceneRender::environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) {

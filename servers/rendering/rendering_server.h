@@ -687,9 +687,7 @@ public:
 	virtual void environment_set_sdfgi_frames_to_update_light(RSE::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
 
 	// Pathtracing
-	virtual void environment_set_pathtracing(RID p_env, bool p_enable) = 0;
-	virtual void environment_set_pathtracing_params(RID p_env, const PackedFloat32Array &p_params) = 0;
-	virtual PackedFloat32Array environment_get_pathtracing_params(RID p_env) const = 0;
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_use_simple_shadows) = 0;
 
 	virtual void environment_set_fog(RID p_env, bool p_enable, const Color &p_light_color, float p_light_energy, float p_sun_scatter, float p_density, float p_height, float p_height_density, float p_aerial_perspective, float p_sky_affect, RSE::EnvironmentFogMode p_mode = RSE::EnvironmentFogMode::ENV_FOG_MODE_EXPONENTIAL) = 0;
 	virtual void environment_set_fog_depth(RID p_env, float p_curve, float p_begin, float p_end) = 0;
