@@ -2169,10 +2169,10 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 		multimesh->buffer_set = true;
 	}
 
-	// rendering/pathtracer/multimesh_cache_cpu_transforms: keep a CPU mirror of the
+	// rendering/pathtracing/multimesh_cache_cpu_transforms: keep a CPU mirror of the
 	// transform buffer so the path tracer never needs a GPU->CPU readback.
 	// Trade-off: CPU memory usage doubles for every MultiMesh that calls set_buffer().
-	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracer/multimesh_cache_cpu_transforms");
+	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracing/multimesh_cache_cpu_transforms");
 	if (keep_cpu_cache && multimesh->data_cache.size() == 0) {
 		// Initialize the data cache from the data we already have on CPU.
 		uint32_t cache_size = multimesh->instances * multimesh->stride_cache;

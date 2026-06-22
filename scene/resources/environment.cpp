@@ -650,15 +650,6 @@ RSE::PathtracingDenoiser Environment::get_pathtracing_denoiser() const {
 	return pathtracing_denoiser;
 }
 
-void Environment::set_pathtracing_use_simple_shadows(bool p_enabled) {
-	pathtracing_use_simple_shadows = p_enabled;
-	_update_pathtracing();
-}
-
-bool Environment::is_pathtracing_using_simple_shadows() const {
-	return pathtracing_use_simple_shadows;
-}
-
 void Environment::_update_pathtracing() {
 	RS::get_singleton()->environment_set_pathtracing(
 			environment,
@@ -666,8 +657,7 @@ void Environment::_update_pathtracing() {
 			(int)pathtracing_debug_mode,
 			pathtracing_samples_per_pixel,
 			pathtracing_max_bounces,
-			pathtracing_denoiser,
-			pathtracing_use_simple_shadows);
+			pathtracing_denoiser);
 }
 
 // Glow
@@ -1509,8 +1499,7 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_pathtracing_max_bounces"), &Environment::get_pathtracing_max_bounces);
 	ClassDB::bind_method(D_METHOD("set_pathtracing_denoiser", "denoiser"), &Environment::set_pathtracing_denoiser);
 	ClassDB::bind_method(D_METHOD("get_pathtracing_denoiser"), &Environment::get_pathtracing_denoiser);
-	ClassDB::bind_method(D_METHOD("set_pathtracing_use_simple_shadows", "enabled"), &Environment::set_pathtracing_use_simple_shadows);
-	ClassDB::bind_method(D_METHOD("is_pathtracing_using_simple_shadows"), &Environment::is_pathtracing_using_simple_shadows);
+	GLOBAL_DEF("rendering/pathtracing/use_simple_shadows", false);
 
 	ADD_GROUP("Pathtracing", "pathtracing_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_pathtracing_enabled", "is_pathtracing_enabled");
@@ -1518,7 +1507,6 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_samples_per_pixel", PROPERTY_HINT_RANGE, "1,16,1"), "set_pathtracing_samples_per_pixel", "get_pathtracing_samples_per_pixel");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_max_bounces", PROPERTY_HINT_RANGE, "1,8,1"), "set_pathtracing_max_bounces", "get_pathtracing_max_bounces");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_denoiser", PROPERTY_HINT_ENUM, "None,DLSS Ray Reconstruction"), "set_pathtracing_denoiser", "get_pathtracing_denoiser");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_use_simple_shadows"), "set_pathtracing_use_simple_shadows", "is_pathtracing_using_simple_shadows");
 
 	// Glow
 

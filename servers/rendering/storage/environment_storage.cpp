@@ -30,6 +30,8 @@
 
 #include "environment_storage.h"
 
+#include "core/config/project_settings.h"
+
 #ifdef DEBUG_ENABLED
 #include "core/os/os.h"
 #endif
@@ -896,7 +898,7 @@ RSE::EnvironmentSDFGIYScale RendererEnvironmentStorage::environment_get_sdfgi_y_
 
 // Pathtracing
 
-void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_use_simple_shadows) {
+void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
 	env->pathtracing_enabled = p_enable;
@@ -904,7 +906,6 @@ void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_e
 	env->pathtracing_samples_per_pixel = p_samples_per_pixel;
 	env->pathtracing_max_bounces = p_max_bounces;
 	env->pathtracing_denoiser = p_denoiser;
-	env->pathtracing_use_simple_shadows = p_use_simple_shadows;
 }
 
 bool RendererEnvironmentStorage::environment_get_pathtracing_enabled(RID p_env) const {
@@ -935,12 +936,6 @@ RSE::PathtracingDenoiser RendererEnvironmentStorage::environment_get_pathtracing
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, RSE::PT_DENOISER_NONE);
 	return env->pathtracing_denoiser;
-}
-
-bool RendererEnvironmentStorage::environment_get_pathtracing_use_simple_shadows(RID p_env) const {
-	Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, false);
-	return env->pathtracing_use_simple_shadows;
 }
 
 // Adjustments

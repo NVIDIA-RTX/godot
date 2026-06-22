@@ -477,6 +477,14 @@ void SceneShaderRaytracing::_finalize_uniforms_with_textures(
 		tui.buffer_offset = offset;
 		r_entry.texture_uniforms.push_back(tui);
 
+		if (tex.hint == ShaderLanguage::ShaderNode::Uniform::HINT_ALPHA) {
+			if (r_entry.alpha_texture_buffer_offset != UINT32_MAX) {
+				WARN_PRINT(vformat("Custom RT shader has multiple hint_alpha textures; '%s' will be ignored. Only one hint_alpha texture is supported for ray query alpha testing.", tex.name));
+			} else {
+				r_entry.alpha_texture_buffer_offset = offset;
+			}
+		}
+
 		r_entry.uniform_members += "uint m_" + tex.name + ";\n";
 		raw_uniform_end = offset + 4;
 	}
@@ -600,7 +608,7 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 }
 
 void SceneShaderRaytracing::finalize_custom_shaders() {
-	async_compilation_enabled = GLOBAL_GET_CACHED(bool, "rendering/pathtracer/async_shader_compilation");
+	async_compilation_enabled = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/async_shader_compilation");
 
 	_kick_rebuild_if_idle(); // Async dispatch only; sync drains below.
 
@@ -653,7 +661,7 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 			flags |= RT_FLAG_DEBUG_VIS_ENABLED;
 		}
 
-		if (env_storage->environment_get_pathtracing_use_simple_shadows(p_environment)) {
+		if (GLOBAL_GET("rendering/pathtracing/use_simple_shadows")) {
 			flags |= RT_FLAG_RAY_QUERY_SHADOWS_ENABLED;
 		}
 
@@ -668,7 +676,7 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 		flags |= RT_FLAG_FOG_ENABLED;
 	}
 
-	if (GLOBAL_GET("rendering/pathtracer/use_shader_execution_reordering")) {
+	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
 		flags |= RT_FLAG_SER_ENABLED;
 	}
 
@@ -1429,7 +1437,7 @@ void SceneShaderRaytracing::_join_lane_for_shutdown() {
 }
 
 void SceneShaderRaytracing::init(const String p_defines) {
-	async_compilation_enabled = (bool)GLOBAL_GET("rendering/pathtracer/async_shader_compilation");
+	async_compilation_enabled = (bool)GLOBAL_GET("rendering/pathtracing/async_shader_compilation");
 
 	// Raygen: one mode per bitmask of RAYGEN_SHADER_OPTIONS.
 	const uint32_t variant_count = 1u << RAYGEN_SHADER_OPTION_COUNT;

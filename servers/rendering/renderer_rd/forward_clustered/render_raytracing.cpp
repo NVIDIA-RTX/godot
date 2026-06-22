@@ -454,7 +454,7 @@ void RenderRaytracing::prepare_frame() {
 
 	// TTL-evict stale deformed-surface entries.
 	{
-		static const uint32_t DEFORMED_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracer/deformed_mesh_cache_ttl_frames");
+		static const uint32_t DEFORMED_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracing/deformed_mesh_cache_ttl_frames");
 		LocalVector<RID> live = deformed_pool.get_owned_list();
 		for (uint32_t i = 0; i < live.size(); i++) {
 			RTDeformedCacheEntry *e = deformed_pool.get_or_null(live[i]);
@@ -485,7 +485,7 @@ void RenderRaytracing::prepare_frame() {
 
 	// TTL-evict stale merged-MultiMesh entries.
 	{
-		static const uint32_t MM_BLAS_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracer/multimesh_blas_cache_ttl_frames");
+		static const uint32_t MM_BLAS_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_blas_cache_ttl_frames");
 		LocalVector<RID> live = merged_mm_pool.get_owned_list();
 		for (uint32_t i = 0; i < live.size(); i++) {
 			RTMergedMMEntry *e = merged_mm_pool.get_or_null(live[i]);
@@ -1570,6 +1570,15 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				}
 			}
 
+			// If the shader declared hint_alpha, mirror that bindless index into
+			// mat.albedo_texture_idx so ray_query_alpha_test() can sample it cheaply.
+			if (cse->alpha_texture_buffer_offset != UINT32_MAX &&
+					cse->alpha_texture_buffer_offset + 4 <= cse->uniform_total_size) {
+				uint32_t alpha_idx = 0;
+				memcpy(&alpha_idx, ubo_data.ptr() + cse->alpha_texture_buffer_offset, 4);
+				mat.albedo_texture_idx = alpha_idx;
+			}
+
 			// Try the suballoc pool first. Common materials (UBO <= slot size)
 			// just buffer_update an existing slot - O(1), no driver allocation,
 			// no per-frame storage_buffer_create cost.
@@ -1791,7 +1800,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	if (prim_count == 0 || vertex_count == 0) {
 		return false;
 	}
-	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracer/multimesh_merged_blas_max_triangles");
+	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
 	if ((uint64_t)p_mm_count * prim_count > MM_MERGED_BLAS_MAX_TRIANGLES) {
 		return false; // Too large; fall back to expanded TLAS.
 	}
@@ -2386,7 +2395,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				if (mat_data->rt_sbt_offset > 0) {
 					const SceneShaderRaytracing::CustomShaderEntry *cse =
 							rt_shader_singleton->get_custom_shader_entry(mat_data->rt_sbt_offset);
-					if (!cse || !cse->uses_alpha_clip) {
+					if (!cse || (!cse->uses_alpha_clip && cse->alpha_texture_buffer_offset == UINT32_MAX)) {
 						inst_flags |= RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT;
 					}
 				} else {
@@ -2551,10 +2560,10 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			}
 
 			if (mat_data->rt_sbt_offset > 0) {
-				// Custom shader: only enable any-hit if the shader uses alpha clip.
+				// Custom shader: enable any-hit if it uses alpha clip or has a hint_albedo texture.
 				const SceneShaderRaytracing::CustomShaderEntry *cse =
 						rt_shader_singleton->get_custom_shader_entry(mat_data->rt_sbt_offset);
-				if (!cse || !cse->uses_alpha_clip) {
+				if (!cse || (!cse->uses_alpha_clip && cse->alpha_texture_buffer_offset == UINT32_MAX)) {
 					inst_flags |= RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT;
 				}
 			} else {

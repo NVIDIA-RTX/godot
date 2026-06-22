@@ -6390,7 +6390,7 @@ VisualShaderNodeTransformParameter::VisualShaderNodeTransformParameter() {
 
 //////////////
 
-String get_sampler_hint(VisualShaderNodeTextureParameter::TextureType p_texture_type, VisualShaderNodeTextureParameter::ColorDefault p_color_default, VisualShaderNodeTextureParameter::TextureFilter p_texture_filter, VisualShaderNodeTextureParameter::TextureRepeat p_texture_repeat, VisualShaderNodeTextureParameter::TextureSource p_texture_source) {
+String get_sampler_hint(VisualShaderNodeTextureParameter::TextureType p_texture_type, bool p_alpha_hint, VisualShaderNodeTextureParameter::ColorDefault p_color_default, VisualShaderNodeTextureParameter::TextureFilter p_texture_filter, VisualShaderNodeTextureParameter::TextureRepeat p_texture_repeat, VisualShaderNodeTextureParameter::TextureSource p_texture_source) {
 	String code;
 	bool has_colon = false;
 
@@ -6426,6 +6426,11 @@ String get_sampler_hint(VisualShaderNodeTextureParameter::TextureType p_texture_
 
 		if (!type_code.is_empty()) {
 			code += " : " + type_code;
+			has_colon = true;
+		}
+
+		if (p_alpha_hint) {
+			code += has_colon ? ", hint_alpha" : " : hint_alpha";
 			has_colon = true;
 		}
 	}
@@ -6569,6 +6574,18 @@ VisualShaderNodeTextureParameter::TextureType VisualShaderNodeTextureParameter::
 	return texture_type;
 }
 
+void VisualShaderNodeTextureParameter::set_alpha_hint(bool p_alpha_hint) {
+	if (alpha_hint == p_alpha_hint) {
+		return;
+	}
+	alpha_hint = p_alpha_hint;
+	emit_changed();
+}
+
+bool VisualShaderNodeTextureParameter::get_alpha_hint() const {
+	return alpha_hint;
+}
+
 void VisualShaderNodeTextureParameter::set_color_default(ColorDefault p_color_default) {
 	ERR_FAIL_INDEX(int(p_color_default), int(COLOR_DEFAULT_MAX));
 	if (color_default == p_color_default) {
@@ -6626,6 +6643,7 @@ Vector<StringName> VisualShaderNodeTextureParameter::get_editable_properties() c
 	props.push_back("texture_type");
 	if (texture_type == TYPE_DATA || texture_type == TYPE_COLOR) {
 		props.push_back("color_default");
+		props.push_back("alpha_hint");
 	}
 	props.push_back("texture_filter");
 	props.push_back("texture_repeat");
@@ -6711,6 +6729,9 @@ void VisualShaderNodeTextureParameter::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_texture_type", "type"), &VisualShaderNodeTextureParameter::set_texture_type);
 	ClassDB::bind_method(D_METHOD("get_texture_type"), &VisualShaderNodeTextureParameter::get_texture_type);
 
+	ClassDB::bind_method(D_METHOD("set_alpha_hint", "alpha_hint"), &VisualShaderNodeTextureParameter::set_alpha_hint);
+	ClassDB::bind_method(D_METHOD("get_alpha_hint"), &VisualShaderNodeTextureParameter::get_alpha_hint);
+
 	ClassDB::bind_method(D_METHOD("set_color_default", "color"), &VisualShaderNodeTextureParameter::set_color_default);
 	ClassDB::bind_method(D_METHOD("get_color_default"), &VisualShaderNodeTextureParameter::get_color_default);
 
@@ -6724,6 +6745,7 @@ void VisualShaderNodeTextureParameter::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_texture_source"), &VisualShaderNodeTextureParameter::get_texture_source);
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_type", PROPERTY_HINT_ENUM, "Data,Color,Normal Map,Anisotropic"), "set_texture_type", "get_texture_type");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "alpha_hint"), "set_alpha_hint", "get_alpha_hint");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "color_default", PROPERTY_HINT_ENUM, "White,Black,Transparent"), "set_color_default", "get_color_default");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_filter", PROPERTY_HINT_ENUM, "Default,Nearest,Linear,Nearest Mipmap,Linear Mipmap,Nearest Mipmap Anisotropic,Linear Mipmap Anisotropic"), "set_texture_filter", "get_texture_filter");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_repeat", PROPERTY_HINT_ENUM, "Default,Enabled,Disabled"), "set_texture_repeat", "get_texture_repeat");
@@ -6801,7 +6823,7 @@ String VisualShaderNodeTexture2DParameter::get_output_port_name(int p_port) cons
 
 String VisualShaderNodeTexture2DParameter::generate_global(Shader::Mode p_mode, VisualShader::Type p_type, int p_id) const {
 	String code = _get_qual_str() + "uniform sampler2D " + get_parameter_name();
-	code += get_sampler_hint(texture_type, color_default, texture_filter, texture_repeat, texture_source);
+	code += get_sampler_hint(texture_type, alpha_hint, color_default, texture_filter, texture_repeat, texture_source);
 	code += ";\n";
 	return code;
 }
@@ -6901,7 +6923,7 @@ String VisualShaderNodeTextureParameterTriplanar::generate_global_per_func(Shade
 
 String VisualShaderNodeTextureParameterTriplanar::generate_global(Shader::Mode p_mode, VisualShader::Type p_type, int p_id) const {
 	String code = _get_qual_str() + "uniform sampler2D " + get_parameter_name();
-	code += get_sampler_hint(texture_type, color_default, texture_filter, texture_repeat, texture_source);
+	code += get_sampler_hint(texture_type, alpha_hint, color_default, texture_filter, texture_repeat, texture_source);
 	code += ";\n";
 	return code;
 }
@@ -6947,7 +6969,7 @@ String VisualShaderNodeTexture2DArrayParameter::get_output_port_name(int p_port)
 
 String VisualShaderNodeTexture2DArrayParameter::generate_global(Shader::Mode p_mode, VisualShader::Type p_type, int p_id) const {
 	String code = _get_qual_str() + "uniform sampler2DArray " + get_parameter_name();
-	code += get_sampler_hint(texture_type, color_default, texture_filter, texture_repeat, texture_source);
+	code += get_sampler_hint(texture_type, alpha_hint, color_default, texture_filter, texture_repeat, texture_source);
 	code += ";\n";
 	return code;
 }
@@ -6967,7 +6989,7 @@ String VisualShaderNodeTexture3DParameter::get_output_port_name(int p_port) cons
 
 String VisualShaderNodeTexture3DParameter::generate_global(Shader::Mode p_mode, VisualShader::Type p_type, int p_id) const {
 	String code = _get_qual_str() + "uniform sampler3D " + get_parameter_name();
-	code += get_sampler_hint(texture_type, color_default, texture_filter, texture_repeat, texture_source);
+	code += get_sampler_hint(texture_type, alpha_hint, color_default, texture_filter, texture_repeat, texture_source);
 	code += ";\n";
 	return code;
 }
@@ -6987,7 +7009,7 @@ String VisualShaderNodeCubemapParameter::get_output_port_name(int p_port) const 
 
 String VisualShaderNodeCubemapParameter::generate_global(Shader::Mode p_mode, VisualShader::Type p_type, int p_id) const {
 	String code = _get_qual_str() + "uniform samplerCube " + get_parameter_name();
-	code += get_sampler_hint(texture_type, color_default, texture_filter, texture_repeat, texture_source);
+	code += get_sampler_hint(texture_type, alpha_hint, color_default, texture_filter, texture_repeat, texture_source);
 	code += ";\n";
 	return code;
 }

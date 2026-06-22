@@ -1407,7 +1407,6 @@
 			<param index="3" name="samples_per_pixel" type="int" />
 			<param index="4" name="max_bounces" type="int" />
 			<param index="5" name="denoiser" type="int" enum="RenderingServer.PathtracingDenoiser" />
-			<param index="6" name="use_simple_shadows" type="bool" />
 			<description>
 			</description>
 		</method>
