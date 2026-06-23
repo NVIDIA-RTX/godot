@@ -63,6 +63,7 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 	friend SceneShaderRaytracing;
 	friend class RenderRaytracing;
 
+protected:
 	enum {
 		SCENE_UNIFORM_SET = 0,
 		RENDER_PASS_UNIFORM_SET = 1,
@@ -89,10 +90,6 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 	/* Scene Shader */
 
 	SceneShaderForwardClustered scene_shader;
-
-	/* Raytracing */
-
-	RenderRaytracing *raytracing = nullptr;
 
 public:
 	/* Framebuffer */
@@ -161,22 +158,6 @@ public:
 		RendererRD::MFXTemporalContext *get_mfx_temporal_context() const { return mfx_temporal_context; }
 #endif
 
-		// Raytracing support
-		void rt_ensure_textures();
-		bool rt_has_texture() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RAYTRACING); }
-		RID rt_get_texture() const { return render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RAYTRACING); }
-		bool rt_has_depth_texture() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH); }
-		RID rt_get_depth_texture() const { return render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH); }
-
-		// DLSS Ray Reconstruction output buffers
-		void dlss_rr_ensure_buffers();
-		void dlss_rr_free_buffers();
-		bool dlss_rr_has_buffers() const { return render_buffers->has_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_DIFFUSE_ALBEDO); }
-		RID dlss_rr_get_diffuse_albedo() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_DIFFUSE_ALBEDO); }
-		RID dlss_rr_get_specular_albedo() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_ALBEDO); }
-		RID dlss_rr_get_normal_roughness() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_NORMAL_ROUGHNESS); }
-		RID dlss_rr_get_specular_hit_dist() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_HIT_DIST); }
-
 		RID get_color_only_fb();
 		RID get_color_pass_fb(uint32_t p_color_pass_flags);
 		RID get_depth_fb(DepthFrameBufferType p_type = DEPTH_FB);
@@ -194,7 +175,7 @@ public:
 		static uint32_t get_voxelgi_usage_bits(bool p_resolve, bool p_msaa, bool p_storage);
 	};
 
-private:
+protected:
 	virtual void setup_render_buffer_data(Ref<RenderSceneBuffersRD> p_render_buffers) override;
 
 	RID render_base_uniform_set;
@@ -318,29 +299,6 @@ private:
 		INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_MASK = 0xFF,
 		INSTANCE_DATA_FLAGS_FADE_SHIFT = 24,
 		INSTANCE_DATA_FLAGS_FADE_MASK = 0xFFUL << INSTANCE_DATA_FLAGS_FADE_SHIFT
-	};
-
-	enum SceneFeature : uint32_t {
-		SCENE_FEATURE_SDFGI = (1 << 0),
-		SCENE_FEATURE_SSIL = (1 << 1),
-		SCENE_FEATURE_SSR = (1 << 2),
-		SCENE_FEATURE_SSAO = (1 << 3),
-		SCENE_FEATURE_VOXELGI = (1 << 4),
-		SCENE_FEATURE_DEPTH_PREPASS = (1 << 5),
-		SCENE_FEATURE_DEPTH_RECONSTRUCT = (1 << 6),
-	};
-
-	// Features that are fully disabled when raytracing is active.
-	constexpr static uint32_t RT_DISABLED_FEATURES =
-			SCENE_FEATURE_SDFGI | SCENE_FEATURE_SSIL | SCENE_FEATURE_SSR | SCENE_FEATURE_SSAO | SCENE_FEATURE_DEPTH_PREPASS;
-
-	struct SceneFeatures {
-		uint32_t raw = 0;
-		bool rt = false;
-
-		void set(uint32_t p_feature) { raw |= p_feature; }
-		uint32_t get() const { return rt ? (raw & ~RT_DISABLED_FEATURES) : raw; }
-		bool has(uint32_t p_feature) const { return (get() & p_feature) != 0; }
 	};
 
 	struct SceneState {
@@ -529,7 +487,6 @@ private:
 
 	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true);
 	void _fill_render_list(RenderListType p_render_list, const RenderDataRD *p_render_data, PassMode p_pass_mode, bool p_using_sdfgi = false, bool p_using_opaque_gi = false, bool p_using_motion_pass = false, bool p_append = false, bool p_alpha_only = false);
-	void _age_out_motion_vectors(const RenderDataRD *p_render_data);
 
 	HashMap<Size2i, RID> sdfgi_framebuffer_size_cache;
 
@@ -854,9 +811,6 @@ private:
 	void _pre_opaque_render(RenderDataRD *p_render_data, bool p_use_ssao, bool p_use_ssil, bool p_use_ssr, bool p_use_gi, const RID *p_normal_roughness_slices, RID p_voxel_gi_buffer);
 	void _process_sss(Ref<RenderSceneBuffersRD> p_render_buffers, const Projection &p_camera);
 
-	/* Raytracing */
-	bool _setup_rt();
-
 	/* Debug */
 	void _debug_draw_cluster(Ref<RenderSceneBuffersRD> p_render_buffers);
 
@@ -878,6 +832,29 @@ protected:
 
 	virtual void _render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) override;
 	virtual void _render_buffers_debug_draw(const RenderDataRD *p_render_data) override;
+
+	// 3D scaling/upscaling shared between the raster and raytraced render paths.
+	enum Scale3DMode {
+		SCALE_3D_NONE,
+		SCALE_3D_FSR2,
+		SCALE_3D_MFX,
+		SCALE_3D_DLSS,
+	};
+
+	// Optional DLSS Ray Reconstruction guide buffers. Supplied by the caller so
+	// the shared upscaler does not depend on the raytracing subsystem (the
+	// raytraced path fills these in; the raster path leaves them inactive).
+	struct DLSSRRGuideBuffers {
+		bool active = false;
+		RID diffuse_albedo;
+		RID specular_albedo;
+		RID normal_roughness;
+		RID specular_hit_dist;
+	};
+
+	Scale3DMode _resolve_scale_3d_mode(Ref<RenderSceneBuffersRD> p_render_buffers) const;
+	void _render_3d_upscaling(const RenderDataRD *p_render_data, Scale3DMode p_scale_type, bool p_using_taa, double p_time_step, const DLSSRRGuideBuffers &p_dlss_rr);
+	virtual void _free_rt_viewport_state(RenderSceneBuffersRD *p_render_buffers);
 
 	virtual void _render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region, float p_exposure_normalization) override;
 	virtual void _render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) override;
