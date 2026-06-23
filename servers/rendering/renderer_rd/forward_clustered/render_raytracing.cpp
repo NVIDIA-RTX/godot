@@ -3079,21 +3079,27 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	}
 
 	// Binding 7: Sky radiance octahedral map (for pathtracing sky sampling).
+	// Matches the shader's USE_RADIANCE_OCTMAP_ARRAY gating: a texture2DArray when
+	// array reflections are enabled (the desktop default), otherwise a plain 2D map.
 	{
 		RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+		const bool use_octmap_array = owner->is_using_radiance_octmap_array();
 		RID radiance_texture;
 
-		// Try to get radiance texture from sky
 		if (p_render_data && p_render_data->environment.is_valid()) {
 			RID sky_rid = owner->environment_get_sky(p_render_data->environment);
 			if (sky_rid.is_valid()) {
-				radiance_texture = owner->sky.sky_get_radiance_texture_rd(sky_rid);
+				radiance_texture = use_octmap_array
+						? owner->sky.sky_get_radiance_texture_rd(sky_rid)
+						: owner->sky.sky_get_radiance_2d_texture_rd(sky_rid);
 			}
 		}
 
-		// Fall back to default black texture if no sky
+		// Fall back to a default whose type matches the shader's declared binding.
 		if (!radiance_texture.is_valid()) {
-			radiance_texture = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+			radiance_texture = texture_storage->texture_rd_get_default(use_octmap_array
+							? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK
+							: RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
 		}
 
 		RD::Uniform u;

@@ -581,6 +581,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderingContextDriverVulkan::_debug_messenger_ca
 		return VK_FALSE;
 	}
 
+	// Suppress warning about incompatible drivers (-9), even though this should arguably be the loader's responsibility.
+	// This was generating noise on Linux when Mesa Dozen is provided.
+	if (strstr(p_callback_data->pMessage, "Received return code -9 from call to vkCreateInstance in ICD") != nullptr && strstr(p_callback_data->pMessage, "Skipping this driver") != nullptr) {
+		return VK_FALSE;
+	}
+
 	if (p_callback_data->pMessageIdName && strstr(p_callback_data->pMessageIdName, "UNASSIGNED-CoreValidation-DrawState-ClearCmdBeforeDraw") != nullptr) {
 		return VK_FALSE;
 	}

@@ -249,6 +249,7 @@ public:
 		static inline const int REAL_TIME_ROUGHNESS_LAYERS = 7;
 
 		RID radiance;
+		RID radiance_first_layer_slice;
 		RID quarter_res_pass;
 		RID quarter_res_framebuffer;
 		Size2i screen_size;
@@ -274,6 +275,8 @@ public:
 		SkyMaterialData *prev_material = nullptr;
 		Vector3 prev_position;
 		float prev_time;
+
+		void free_radiance();
 
 		void free();
 
@@ -313,6 +316,9 @@ public:
 
 	RID sky_get_material(RID p_sky) const;
 	RID sky_get_radiance_texture_rd(RID p_sky) const;
+	// Returns a TEXTURE_TYPE_2D view of the radiance octahedral map (layer 0 slice
+	// when the radiance is stored as a 2D array), for shaders that bind it as texture2D.
+	RID sky_get_radiance_2d_texture_rd(RID p_sky) const;
 	float sky_get_baked_exposure(RID p_sky) const;
 
 	RID allocate_sky_rid();

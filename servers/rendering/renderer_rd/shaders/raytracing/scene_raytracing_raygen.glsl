@@ -122,8 +122,34 @@ void main() {
 
 layout(location = 0) rayPayloadInEXT PathPayload payload;
 
+#ifdef USE_RADIANCE_OCTMAP_ARRAY
+
+layout(set = 0, binding = 7) uniform texture2DArray radiance_octmap;
+layout(set = 0, binding = 8) uniform sampler radiance_sampler;
+
+// Array-backed octahedral radiance: roughness selects the prefiltered array
+// layer (with a blend between adjacent layers). Ray/hit stages have no
+// screen-space derivatives, so the intra-layer mip is fixed at 0.0; roughness is
+// represented entirely by the layer selection.
+vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
+	float layer;
+	float blend = modf(clamp(p_roughness, 0.0, 1.0) * MAX_ROUGHNESS_LOD, layer);
+	vec3 a = textureLod(sampler2DArray(radiance_octmap, radiance_sampler), vec3(p_oct_uv, layer), 0.0).rgb;
+	vec3 b = textureLod(sampler2DArray(radiance_octmap, radiance_sampler), vec3(p_oct_uv, layer + 1.0), 0.0).rgb;
+	return mix(a, b, blend);
+}
+
+#else
+
 layout(set = 0, binding = 7) uniform texture2D radiance_octmap;
 layout(set = 0, binding = 8) uniform sampler radiance_sampler;
+
+// Single-texture octahedral radiance: roughness maps to the mip LOD.
+vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
+	return textureLod(sampler2D(radiance_octmap, radiance_sampler), p_oct_uv, clamp(p_roughness, 0.0, 1.0) * MAX_ROUGHNESS_LOD).rgb;
+}
+
+#endif // USE_RADIANCE_OCTMAP_ARRAY
 
 void main() {
 	PathState ps = path_unpack(payload);
@@ -178,14 +204,14 @@ void main() {
 			1.0 - scene_data_block.data.radiance_border_size * 2.0);
 	vec2 sky_uv = vec3_to_oct_with_border(sky_dir, border);
 
-	vec3 sky_color = textureLod(sampler2D(radiance_octmap, radiance_sampler), sky_uv, 0.0).rgb;
+	vec3 sky_color = radiance_octmap_sample(sky_uv, 0.0);
 	sky_color *= scene_data_block.data.IBL_exposure_normalization;
 
 	if ((RT_FLAGS & RT_FLAG_FOG_ENABLED) != 0u) {
 		vec3 fog_color = scene_data_block.data.fog_light_color;
 
 		if (scene_data_block.data.fog_aerial_perspective > 0.0) {
-			vec3 sky_fog = textureLod(sampler2D(radiance_octmap, radiance_sampler), sky_uv, 1.0).rgb;
+			vec3 sky_fog = radiance_octmap_sample(sky_uv, 1.0 / MAX_ROUGHNESS_LOD);
 			sky_fog *= scene_data_block.data.IBL_exposure_normalization;
 			fog_color = mix(fog_color, sky_fog, scene_data_block.data.fog_aerial_perspective);
 		}
@@ -285,8 +311,34 @@ layout(set = 0, binding = 32, std430) readonly buffer MotionTransforms {
 };
 // clang-format on
 
+#ifdef USE_RADIANCE_OCTMAP_ARRAY
+
+layout(set = 0, binding = 7) uniform texture2DArray radiance_octmap;
+layout(set = 0, binding = 8) uniform sampler radiance_sampler;
+
+// Array-backed octahedral radiance: roughness selects the prefiltered array
+// layer (with a blend between adjacent layers). Ray/hit stages have no
+// screen-space derivatives, so the intra-layer mip is fixed at 0.0; roughness is
+// represented entirely by the layer selection.
+vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
+	float layer;
+	float blend = modf(clamp(p_roughness, 0.0, 1.0) * MAX_ROUGHNESS_LOD, layer);
+	vec3 a = textureLod(sampler2DArray(radiance_octmap, radiance_sampler), vec3(p_oct_uv, layer), 0.0).rgb;
+	vec3 b = textureLod(sampler2DArray(radiance_octmap, radiance_sampler), vec3(p_oct_uv, layer + 1.0), 0.0).rgb;
+	return mix(a, b, blend);
+}
+
+#else
+
 layout(set = 0, binding = 7) uniform texture2D radiance_octmap;
 layout(set = 0, binding = 8) uniform sampler radiance_sampler;
+
+// Single-texture octahedral radiance: roughness maps to the mip LOD.
+vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
+	return textureLod(sampler2D(radiance_octmap, radiance_sampler), p_oct_uv, clamp(p_roughness, 0.0, 1.0) * MAX_ROUGHNESS_LOD).rgb;
+}
+
+#endif // USE_RADIANCE_OCTMAP_ARRAY
 
 // clang-format off
 #include "raytracing_material_eval_inc.glsl"

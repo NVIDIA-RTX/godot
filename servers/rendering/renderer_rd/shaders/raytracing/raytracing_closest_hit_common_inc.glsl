@@ -226,11 +226,12 @@ vec3 fog_get_directional_direction(uint index) {
 
 vec3 fog_sample_radiance(vec3 vertex, float mip_level) {
 	vec3 cube_view = scene_data_block.data.radiance_inverse_xform * vertex;
-	float roughness_lod = mip_level * MAX_ROUGHNESS_LOD;
 	vec2 border = vec2(scene_data_block.data.radiance_border_size,
 			1.0 - scene_data_block.data.radiance_border_size * 2.0);
 	vec2 cube_uv = vec3_to_oct_with_border(cube_view, border);
-	return textureLod(sampler2D(radiance_octmap, radiance_sampler), cube_uv, roughness_lod).rgb;
+	// mip_level is a normalized roughness (0..1); radiance_octmap_sample maps it
+	// onto the prefiltered roughness array layers.
+	return radiance_octmap_sample(cube_uv, mip_level);
 }
 
 #include "../fog_inc.glsl"
