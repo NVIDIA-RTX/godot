@@ -5227,9 +5227,9 @@ void EditorNode::get_preload_scene_modification_table(
 				new_additive_node_entry.owner = p_node->get_owner();
 				new_additive_node_entry.index = p_node->get_index();
 
-				Node2D *node_2d = Object::cast_to<Node2D>(p_node);
-				if (node_2d) {
-					new_additive_node_entry.transform_2d = node_2d->get_transform();
+				CanvasItem *canvas_item = Object::cast_to<CanvasItem>(p_node);
+				if (canvas_item) {
+					new_additive_node_entry.transform_2d = canvas_item->get_transform();
 				}
 				Node3D *node_3d = Object::cast_to<Node3D>(p_node);
 				if (node_3d) {
@@ -8572,13 +8572,13 @@ EditorNode::EditorNode() {
 		import_wav.instantiate();
 		ResourceFormatImporter::get_singleton()->add_importer(import_wav);
 
-		Ref<ResourceImporterOBJ> import_obj;
-		import_obj.instantiate();
-		ResourceFormatImporter::get_singleton()->add_importer(import_obj);
-
 		Ref<ResourceImporterShaderFile> import_shader_file;
 		import_shader_file.instantiate();
 		ResourceFormatImporter::get_singleton()->add_importer(import_shader_file);
+
+		Ref<ResourceImporterOBJ> import_obj;
+		import_obj.instantiate();
+		ResourceFormatImporter::get_singleton()->add_importer(import_obj);
 
 		Ref<ResourceImporterScene> import_model_as_scene;
 		import_model_as_scene.instantiate("PackedScene");
@@ -8725,12 +8725,17 @@ EditorNode::EditorNode() {
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_LEFT_UL, Rect2i(0, 0, 1, 3)));
 		dock_container->set_name("DockSlotLeftUL");
+		dock_container->add_margin_valid_drop(SIDE_RIGHT, EditorDock::DOCK_SLOT_LEFT_UR);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_LEFT_BL);
 		left_l_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_LEFT_BL, Rect2i(0, 3, 1, 3)));
 		dock_container->set_name("DockSlotLeftBL");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_LEFT_UL);
+		dock_container->add_margin_valid_drop(SIDE_RIGHT, EditorDock::DOCK_SLOT_LEFT_BR);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_BOTTOM_L);
 		left_l_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
@@ -8742,12 +8747,17 @@ EditorNode::EditorNode() {
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_LEFT_UR, Rect2i(1, 0, 1, 3)));
 		dock_container->set_name("DockSlotLeftUR");
+		dock_container->add_margin_valid_drop(SIDE_LEFT, EditorDock::DOCK_SLOT_LEFT_UL);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_LEFT_BR);
 		left_r_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_LEFT_BR, Rect2i(1, 3, 1, 3)));
 		dock_container->set_name("DockSlotLeftBR");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_LEFT_UR);
+		dock_container->add_margin_valid_drop(SIDE_LEFT, EditorDock::DOCK_SLOT_LEFT_BL);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_BOTTOM_L);
 		left_r_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
@@ -8771,12 +8781,17 @@ EditorNode::EditorNode() {
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_RIGHT_UL, Rect2i(6, 0, 1, 3)));
 		dock_container->set_name("DockSlotRightUL");
+		dock_container->add_margin_valid_drop(SIDE_RIGHT, EditorDock::DOCK_SLOT_RIGHT_UR);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_RIGHT_BL);
 		right_l_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_RIGHT_BL, Rect2i(6, 3, 1, 3)));
 		dock_container->set_name("DockSlotRightBL");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_RIGHT_UL);
+		dock_container->add_margin_valid_drop(SIDE_RIGHT, EditorDock::DOCK_SLOT_RIGHT_BR);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_BOTTOM_R);
 		right_l_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
@@ -8788,12 +8803,17 @@ EditorNode::EditorNode() {
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_RIGHT_UR, Rect2i(7, 0, 1, 3)));
 		dock_container->set_name("DockSlotRightUR");
+		dock_container->add_margin_valid_drop(SIDE_LEFT, EditorDock::DOCK_SLOT_RIGHT_UL);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_RIGHT_BR);
 		right_r_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
 	{
 		DockTabContainer *dock_container = memnew(SideDockTabContainer(EditorDock::DOCK_SLOT_RIGHT_BR, Rect2i(7, 3, 1, 3)));
 		dock_container->set_name("DockSlotRightBR");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_RIGHT_UR);
+		dock_container->add_margin_valid_drop(SIDE_LEFT, EditorDock::DOCK_SLOT_RIGHT_BL);
+		dock_container->add_margin_valid_drop(SIDE_BOTTOM, EditorDock::DOCK_SLOT_BOTTOM_R);
 		right_r_vsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
@@ -8804,12 +8824,16 @@ EditorNode::EditorNode() {
 	{
 		DockTabContainer *dock_container = memnew(BottomSideDockTabContainer(EditorDock::DOCK_SLOT_BOTTOM_L, Rect2i(0, 6, 4, 2)));
 		dock_container->set_name("DockSlotBottomL");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_LEFT_BL);
+		dock_container->add_margin_valid_drop(SIDE_RIGHT, EditorDock::DOCK_SLOT_BOTTOM_R);
 		bottom_hsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
 	{
 		DockTabContainer *dock_container = memnew(BottomSideDockTabContainer(EditorDock::DOCK_SLOT_BOTTOM_R, Rect2i(4, 6, 4, 2)));
 		dock_container->set_name("DockSlotBottomR");
+		dock_container->add_margin_valid_drop(SIDE_TOP, EditorDock::DOCK_SLOT_RIGHT_BR);
+		dock_container->add_margin_valid_drop(SIDE_LEFT, EditorDock::DOCK_SLOT_BOTTOM_L);
 		bottom_hsplit->add_child(dock_container);
 		dock_slots.push_back(dock_container);
 	}
@@ -9456,14 +9480,6 @@ EditorNode::EditorNode() {
 	resource_preview->add_preview_generator(Ref<EditorGradientPreviewPlugin>(memnew(EditorGradientPreviewPlugin)));
 
 	{
-		Ref<StandardMaterial3DConversionPlugin> spatial_mat_convert;
-		spatial_mat_convert.instantiate();
-		resource_conversion_plugins.push_back(spatial_mat_convert);
-
-		Ref<ORMMaterial3DConversionPlugin> orm_mat_convert;
-		orm_mat_convert.instantiate();
-		resource_conversion_plugins.push_back(orm_mat_convert);
-
 		Ref<CanvasItemMaterialConversionPlugin> canvas_item_mat_convert;
 		canvas_item_mat_convert.instantiate();
 		resource_conversion_plugins.push_back(canvas_item_mat_convert);
@@ -9475,6 +9491,14 @@ EditorNode::EditorNode() {
 		Ref<ParticleProcessMaterialConversionPlugin> particles_mat_convert;
 		particles_mat_convert.instantiate();
 		resource_conversion_plugins.push_back(particles_mat_convert);
+
+		Ref<StandardMaterial3DConversionPlugin> spatial_mat_convert;
+		spatial_mat_convert.instantiate();
+		resource_conversion_plugins.push_back(spatial_mat_convert);
+
+		Ref<ORMMaterial3DConversionPlugin> orm_mat_convert;
+		orm_mat_convert.instantiate();
+		resource_conversion_plugins.push_back(orm_mat_convert);
 
 		Ref<ProceduralSkyMaterialConversionPlugin> procedural_sky_mat_convert;
 		procedural_sky_mat_convert.instantiate();
@@ -9615,7 +9639,7 @@ EditorNode::EditorNode() {
 	ResourceLoader::set_load_callback(_resource_loaded);
 
 	// Apply setting presets in case the editor_settings file is missing values.
-	EditorSettingsDialog::update_navigation_preset();
+	EditorSettingsDialog::update_3d_navigation_preset();
 
 	screenshot_timer = memnew(Timer);
 	screenshot_timer->set_one_shot(true);

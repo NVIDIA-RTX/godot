@@ -692,24 +692,40 @@ static Vector<uint8_t> _parse_base64_uri(const String &p_uri) {
 	return buf;
 }
 
+static inline bool _all_buffers_empty(const Vector<Vector<uint8_t>> &p_buffers, int start_idx = 0) {
+	for (int i = start_idx; i < p_buffers.size(); i++) {
+		if (!p_buffers[i].is_empty()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_path) {
 	print_verbose("glTF: Total buffers: " + itos(p_state->buffers.size()));
 
-	if (p_state->buffers.is_empty()) {
+	if (p_state->buffers.is_empty() || _all_buffers_empty(p_state->buffers)) {
+		ERR_FAIL_COND_V_MSG(!p_state->buffer_views.is_empty(), ERR_INVALID_DATA, "glTF: Buffer views are present, but buffers are empty.");
 		return OK;
 	}
 	Array buffers;
-	if (!p_state->buffers.is_empty()) {
-		Vector<uint8_t> buffer_data = p_state->buffers[0];
-		Dictionary gltf_buffer;
+	Dictionary first_buffer;
 
-		gltf_buffer["byteLength"] = buffer_data.size();
-		buffers.push_back(gltf_buffer);
-	}
+	first_buffer["byteLength"] = p_state->buffers[0].size();
+	buffers.push_back(first_buffer);
 
 	for (GLTFBufferIndex i = 1; i < p_state->buffers.size(); i++) {
-		Vector<uint8_t> buffer_data = p_state->buffers[i];
+		const Vector<uint8_t> &buffer_data = p_state->buffers[i];
 		Dictionary gltf_buffer;
+		if (buffer_data.is_empty()) {
+			if (i < p_state->buffers.size() - 1 && !_all_buffers_empty(p_state->buffers, i + 1)) {
+				// Have to push back an empty buffer to avoid changing the buffer index, even though this is against spec.
+				WARN_PRINT("glTF: Buffer " + itos(i) + " is empty, but there are non-empty subsequent buffers.");
+				gltf_buffer["byteLength"] = 0;
+				buffers.push_back(gltf_buffer);
+			}
+			continue;
+		}
 		String filename = p_path.get_basename().get_file() + itos(i) + ".bin";
 		String path = p_path.get_base_dir() + "/" + filename;
 		Error err;
@@ -717,9 +733,7 @@ Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_p
 		if (file.is_null()) {
 			return err;
 		}
-		if (buffer_data.is_empty()) {
-			return OK;
-		}
+		file->create(FileAccess::ACCESS_RESOURCES);
 		file->store_buffer(buffer_data.ptr(), buffer_data.size());
 		gltf_buffer["uri"] = filename;
 		gltf_buffer["byteLength"] = buffer_data.size();
@@ -733,14 +747,24 @@ Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_p
 Error GLTFDocument::_encode_buffer_bins(Ref<GLTFState> p_state, const String &p_path) {
 	print_verbose("glTF: Total buffers: " + itos(p_state->buffers.size()));
 
-	if (p_state->buffers.is_empty()) {
+	if (p_state->buffers.is_empty() || _all_buffers_empty(p_state->buffers)) {
+		ERR_FAIL_COND_V_MSG(!p_state->buffer_views.is_empty(), ERR_INVALID_DATA, "glTF: Buffer views are present, but buffers are empty.");
 		return OK;
 	}
 	Array buffers;
 
 	for (GLTFBufferIndex i = 0; i < p_state->buffers.size(); i++) {
-		Vector<uint8_t> buffer_data = p_state->buffers[i];
+		const Vector<uint8_t> &buffer_data = p_state->buffers[i];
 		Dictionary gltf_buffer;
+		if (buffer_data.is_empty()) {
+			if (i < p_state->buffers.size() - 1 && !_all_buffers_empty(p_state->buffers, i + 1)) {
+				// Have to push back an empty buffer to avoid changing the buffer index, even though this is against spec.
+				WARN_PRINT("glTF: Buffer " + itos(i) + " is empty, but there are non-empty subsequent buffers.");
+				gltf_buffer["byteLength"] = 0;
+				buffers.push_back(gltf_buffer);
+			}
+			continue;
+		}
 		String filename = p_path.get_basename().get_file() + itos(i) + ".bin";
 		String path = p_path.get_base_dir() + "/" + filename;
 		Error err;
@@ -748,15 +772,14 @@ Error GLTFDocument::_encode_buffer_bins(Ref<GLTFState> p_state, const String &p_
 		if (file.is_null()) {
 			return err;
 		}
-		if (buffer_data.is_empty()) {
-			return OK;
-		}
 		file->store_buffer(buffer_data.ptr(), buffer_data.size());
 		gltf_buffer["uri"] = filename;
 		gltf_buffer["byteLength"] = buffer_data.size();
 		buffers.push_back(gltf_buffer);
 	}
-	p_state->json["buffers"] = buffers;
+	if (!buffers.is_empty()) {
+		p_state->json["buffers"] = buffers;
+	}
 
 	return OK;
 }
@@ -5328,7 +5351,7 @@ Ref<GLTFObjectModelProperty> GLTFDocument::import_object_model_property(Ref<GLTF
 	// It should check `split.size() > 4 and split[0] == "nodes" and split[2] == "extensions" and split[3] == "MY_ext"`
 	// at the start of the function to check if this JSON pointer applies to it, then it can handle `split[4]`.
 	if (!ret->has_node_paths()) {
-		for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+		for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 			ret = ext->import_object_model_property(p_state, split, partial_paths);
 			if (ret.is_valid() && ret->has_node_paths()) {
 				if (!ret->has_json_pointers()) {
@@ -5578,7 +5601,7 @@ Ref<GLTFObjectModelProperty> GLTFDocument::export_object_model_property(Ref<GLTF
 		ret->set_json_pointers(split_json_pointers);
 	} else {
 		// We don't have a mapping, so we need to ask GLTFDocumentExtension classes if they have a mapping.
-		for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+		for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 			ret = ext->export_object_model_property(p_state, p_node_path, p_godot_node, p_gltf_node_index, target_object, target_prop_depth);
 			if (ret.is_valid() && ret->has_json_pointers()) {
 				if (!ret->has_node_paths()) {
@@ -6563,7 +6586,7 @@ void GLTFDocument::_convert_animation(Ref<GLTFState> p_state, AnimationPlayer *p
 		// First, check if it's a Blend Shape track.
 		const Vector<StringName> subnames = track_path.get_subnames();
 		Animation::TrackType track_type = animation->track_get_type(track_index);
-		if (animation->track_get_type(track_index) == Animation::TYPE_BLEND_SHAPE || (subnames.size() == 1 && subnames[0].operator String().begins_with("blend_shapes/") && track_type == Animation::TYPE_VALUE)) {
+		if (animation->track_get_type(track_index) == Animation::TYPE_BLEND_SHAPE || (subnames.size() == 1 && subnames[0].string().begins_with("blend_shapes/") && track_type == Animation::TYPE_VALUE)) {
 			const MeshInstance3D *mesh_instance = Object::cast_to<MeshInstance3D>(animated_node);
 			ERR_CONTINUE_MSG(!mesh_instance, "glTF: Animation had a Blend Shape track, but the node wasn't a MeshInstance3D. Ignoring this track.");
 			Ref<Mesh> mesh = mesh_instance->get_mesh();
@@ -6720,7 +6743,7 @@ Error GLTFDocument::_parse(Ref<GLTFState> p_state, const String &p_path, Ref<Fil
 	ERR_FAIL_COND_V(err != OK, err);
 
 	document_extensions.clear();
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Ref<GLTFDocumentExtension> ext_dup = ext;
 		if (ClassDB::is_class_exposed(ext->get_class_name())) {
@@ -6951,8 +6974,10 @@ void GLTFDocument::_build_parent_hierarchy(Ref<GLTFState> p_state) {
 }
 
 Vector<Ref<GLTFDocumentExtension>> GLTFDocument::all_document_extensions;
+Mutex GLTFDocument::all_document_extensions_mutex;
 
 void GLTFDocument::register_gltf_document_extension(Ref<GLTFDocumentExtension> p_extension, bool p_first_priority) {
+	MutexLock lock(all_document_extensions_mutex);
 	if (!all_document_extensions.has(p_extension)) {
 		if (p_first_priority) {
 			all_document_extensions.insert(0, p_extension);
@@ -6963,14 +6988,17 @@ void GLTFDocument::register_gltf_document_extension(Ref<GLTFDocumentExtension> p
 }
 
 void GLTFDocument::unregister_gltf_document_extension(Ref<GLTFDocumentExtension> p_extension) {
+	MutexLock lock(all_document_extensions_mutex);
 	all_document_extensions.erase(p_extension);
 }
 
 void GLTFDocument::unregister_all_gltf_document_extensions() {
+	MutexLock lock(all_document_extensions_mutex);
 	all_document_extensions.clear();
 }
 
 Vector<Ref<GLTFDocumentExtension>> GLTFDocument::get_all_gltf_document_extensions() {
+	MutexLock lock(all_document_extensions_mutex);
 	return all_document_extensions;
 }
 
@@ -6996,7 +7024,7 @@ HashSet<String> GLTFDocument::get_supported_gltf_extensions_hashset() {
 	supported_extensions.insert("KHR_materials_unlit");
 	supported_extensions.insert("KHR_node_visibility");
 	supported_extensions.insert("KHR_texture_transform");
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Vector<String> ext_supported_extensions = ext->get_supported_extensions();
 		for (int i = 0; i < ext_supported_extensions.size(); ++i) {
@@ -7296,7 +7324,7 @@ Error GLTFDocument::append_from_scene(Node *p_node, Ref<GLTFState> p_state, uint
 	// Perform export preflight for document extensions. Only extensions that
 	// return OK will be used for the rest of the export steps.
 	document_extensions.clear();
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Ref<GLTFDocumentExtension> ext_dup = ext;
 		if (ClassDB::is_class_exposed(ext->get_class_name())) {
