@@ -316,6 +316,7 @@ struct RTViewportState {
 
 	RID light_buffer;
 	RID params_buffer;
+	RID scene_uniform_set;
 
 	uint32_t frame_counter = 0;
 };

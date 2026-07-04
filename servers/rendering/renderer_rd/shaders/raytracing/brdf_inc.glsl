@@ -1176,4 +1176,9 @@ float3 DLSSRR_computeSpecularAlbedo(float3 baseColor, float metalness, float die
 	return DLSSRR_envBRDFApprox(F0, roughness, NdotV);
 }
 
+// Fudges diffuse albedo so that is	never zero. Needed for stable demodulation.
+float3 DLSSRR_encodeDiffuseAlbedo(float3 diffuseAlbedo) {
+	return max(diffuseAlbedo, float3(0.04f));
+}
+
 #endif // BRDF_HLSLI

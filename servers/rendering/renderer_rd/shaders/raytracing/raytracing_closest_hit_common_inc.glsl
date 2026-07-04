@@ -485,11 +485,11 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
 		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 
-		vec3 diffuse_albedo = DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness);
+		vec3 diffuse_albedo = DLSSRR_encodeDiffuseAlbedo(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness));
 		imageStore(dlss_rr_diffuse_albedo, pixel, vec4(diffuse_albedo, 1.0));
 
 		vec3 specular_albedo = DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, brdf_mat.dielectricF0, m.roughness, NdotV);
-		imageStore(dlss_rr_specular_albedo, pixel, vec4(clamp(specular_albedo, vec3(0.0), vec3(1.0)), 1.0)); // match UNORM8 like before - fixes some issues with garbling..
+		imageStore(dlss_rr_specular_albedo, pixel, vec4(clamp(specular_albedo, vec3(0.04), vec3(1.0)), 1.0)); // match UNORM8 like before - fixes some issues with garbling..
 
 		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, m.roughness));
 

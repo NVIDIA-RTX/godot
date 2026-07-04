@@ -139,6 +139,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
+	if (p_state->scene_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->scene_uniform_set)) {
+		RD::get_singleton()->free_rid(p_state->scene_uniform_set);
+	}
 	memdelete(p_state);
 }
 
@@ -200,8 +203,9 @@ void RenderRaytracing::dlss_rr_ensure_buffers(RenderSceneBuffersRD *p_render_buf
 			RD::TEXTURE_USAGE_SAMPLING_BIT |
 			RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 
-	// Diffuse Albedo: RGB surface color for non-metals (RGBA8; fixes warbling on some surfaces).
-	p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_DIFFUSE_ALBEDO, RD::DATA_FORMAT_R8G8B8A8_UNORM, usage_bits, RD::TEXTURE_SAMPLES_1);
+	// Diffuse Albedo: linear RGB surface color for non-metals (RGBA16F; DLSS-RR expects
+	// linear albedo, and float precision avoids 8-bit dark-value banding without gamma packing).
+	p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_DIFFUSE_ALBEDO, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1);
 	// Specular Albedo: RGB specular reflection color (RGBA16F; needs the accuracy, fixes banding artifacts).
 	p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_ALBEDO, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1);
 	// Normal + Roughness: World space normals (RGB) + roughness (A).
@@ -3246,11 +3250,26 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 
 	RID result;
 	if (shader_rd.is_valid()) {
+		// Release the previous frame's scene uniform set now (before allocating
+		// this frame's). Disposal is deferred by RenderingDevice until the frame
+		// that used it has finished on the GPU, so this is safe and prevents the
+		// uniform_set_owner pool from leaking one RID per accumulated frame.
+		//
+		// The set references render-buffer resources, so RenderingDevice may have
+		// already auto-freed it via its dependency cascade (e.g. a texture/buffer
+		// it referenced was recreated). RID::is_valid() only checks for non-null,
+		// so we must query uniform_set_is_valid() to avoid a double free.
+		if (p_state->scene_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->scene_uniform_set)) {
+			RD::get_singleton()->free_rid(p_state->scene_uniform_set);
+		}
+		p_state->scene_uniform_set = RID();
+
 		result = RD::get_singleton()->uniform_set_create(
 				uniforms,
 				shader_rd,
 				RenderForwardClustered::SCENE_UNIFORM_SET,
 				/*p_linear_pool=*/true);
+		p_state->scene_uniform_set = result;
 
 		// === SET 1: Bindless textures ===
 		if (bindless_block && bindless_block->is_initialized()) {
