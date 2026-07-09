@@ -78,6 +78,8 @@ public:
 
 	/* Viewport data */
 	bool transparent_bg = false;
+	bool load_color_and_depth = false;
+	bool skip_post_and_tonemap = false;
 	Rect2i render_region;
 
 	/* Shadow data */

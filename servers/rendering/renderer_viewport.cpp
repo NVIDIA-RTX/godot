@@ -127,6 +127,11 @@ Vector<RendererViewport::Viewport *> RendererViewport::_sort_active_viewports() 
 }
 
 void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
+	if (p_viewport->shared_viewport.is_valid()) {
+		// Only the other viewport is allowed to configure the render buffers.
+		return;
+	}
+
 	if (p_viewport->render_buffers.is_valid()) {
 		if (p_viewport->size.width == 0 || p_viewport->size.height == 0) {
 			p_viewport->render_buffers.unref();
@@ -262,9 +267,6 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 				jitter_phase_count = 16;
 			}
 
-			p_viewport->internal_size = Size2(render_width, render_height);
-			p_viewport->jitter_phase_count = jitter_phase_count;
-
 			// At resolution scales lower than 1.0, use negative texture mipmap bias
 			// to compensate for the loss of sharpness.
 			const float texture_mipmap_bias = std::log2(MIN(scaling_3d_scale, 1.0)) + p_viewport->texture_mipmap_bias;
@@ -282,6 +284,7 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			rb_config.set_anisotropic_filtering_level(p_viewport->anisotropic_filtering_level);
 			rb_config.set_use_taa(use_taa);
 			rb_config.set_use_debanding(p_viewport->use_debanding);
+			rb_config.set_jitter_phase_count(jitter_phase_count);
 
 			p_viewport->render_buffers->configure(&rb_config);
 		}
@@ -315,7 +318,7 @@ void RendererViewport::_draw_3d(Viewport *p_viewport) {
 	}
 
 	float screen_mesh_lod_threshold = p_viewport->mesh_lod_threshold / float(p_viewport->size.width);
-	RSG::scene->render_camera(p_viewport->render_buffers, p_viewport->camera, p_viewport->scenario, p_viewport->self, p_viewport->internal_size, p_viewport->jitter_phase_count, screen_mesh_lod_threshold, p_viewport->shadow_atlas, xr_interface, &p_viewport->render_info);
+	RSG::scene->render_camera(p_viewport->render_buffers, p_viewport->camera, p_viewport->scenario, p_viewport->self, screen_mesh_lod_threshold, p_viewport->shadow_atlas, xr_interface, &p_viewport->render_info);
 
 	RENDER_TIMESTAMP("< Render 3D Scene");
 #endif // _3D_DISABLED
@@ -362,10 +365,22 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 	bool can_draw_3d = RSG::scene->is_camera(p_viewport->camera) && !p_viewport->disable_3d;
 
 	if ((scenario_draw_canvas_bg || can_draw_3d) && !p_viewport->render_buffers.is_valid()) {
-		//wants to draw 3D but there is no render buffer, create
-		p_viewport->render_buffers = RSG::scene->render_buffers_create();
+		if (p_viewport->shared_viewport.is_valid()) {
+			// Must use the render buffers from the shared viewport instead.
+			Viewport *shared_viewport = viewport_owner.get_or_null(p_viewport->shared_viewport);
+			ERR_FAIL_NULL(shared_viewport);
+			p_viewport->render_buffers = shared_viewport->render_buffers;
+		} else {
+			// Wants to draw 3D but there is no render buffer, create.
+			p_viewport->render_buffers = RSG::scene->render_buffers_create();
+		}
 
 		_configure_3d_render_buffers(p_viewport);
+
+		if (p_viewport->render_buffers.is_null()) {
+			// HACK: Wait for the next frame instead and just don't draw this frame.
+			return;
+		}
 	}
 
 	Color bgcolor = p_viewport->transparent_bg ? Color(0, 0, 0, 0) : RSG::texture_storage->get_default_clear_color();
@@ -1626,13 +1641,66 @@ void RendererViewport::viewport_set_vrs_texture(RID p_viewport, RID p_texture) {
 	_configure_3d_render_buffers(viewport);
 }
 
+void RendererViewport::viewport_set_shared_viewport(RID p_viewport, RID p_shared_viewport) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	Viewport *shared_viewport = viewport_owner.get_or_null(p_shared_viewport);
+	ERR_FAIL_NULL(viewport);
+
+	if (viewport->shared_viewport.is_valid()) {
+		// If this viewport was already sharing with a different viewport, decrease the active sharing count.
+		Viewport *previous_shared_viewport = viewport_owner.get_or_null(viewport->shared_viewport);
+		if (previous_shared_viewport != nullptr) {
+			previous_shared_viewport->sharing_to_viewport_count--;
+		}
+	}
+
+	if (shared_viewport != nullptr) {
+		if (viewport->shared_viewport.is_null() && viewport->render_target.is_valid()) {
+			// Free the allocated render target.
+			RSG::texture_storage->render_target_free(viewport->render_target);
+		}
+
+		// Share the render target with the shared viewport.
+		viewport->shared_viewport = p_shared_viewport;
+		viewport->render_target = shared_viewport->render_target;
+
+		// Increase the active sharing count.
+		shared_viewport->sharing_to_viewport_count++;
+	} else if (viewport->shared_viewport.is_valid()) {
+		// Make a render target again for the viewport.
+		viewport->render_target = RSG::texture_storage->render_target_create();
+		viewport->shared_viewport = RID();
+	}
+}
+
+RID RendererViewport::viewport_get_shared_viewport(RID p_viewport) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL_V(viewport, RID());
+	return viewport->shared_viewport;
+}
+
+uint32_t RendererViewport::viewport_get_sharing_to_viewport_count(RID p_viewport) const {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL_V(viewport, 0);
+	return viewport->sharing_to_viewport_count;
+}
+
 bool RendererViewport::free(RID p_rid) {
 	if (viewport_owner.owns(p_rid)) {
 		Viewport *viewport = viewport_owner.get_or_null(p_rid);
 
-		RSG::texture_storage->render_target_free(viewport->render_target);
+		if (viewport->shared_viewport.is_valid()) {
+			Viewport *shared_viewport = viewport_owner.get_or_null(viewport->shared_viewport);
+			if (shared_viewport != nullptr) {
+				shared_viewport->sharing_to_viewport_count--;
+			}
+		} else {
+			RSG::texture_storage->render_target_free(viewport->render_target);
+		}
+
 		RSG::light_storage->shadow_atlas_free(viewport->shadow_atlas);
-		if (viewport->render_buffers.is_valid()) {
+
+		if (viewport->shared_viewport.is_null() && viewport->render_buffers.is_valid()) {
 			viewport->render_buffers.unref();
 		}
 

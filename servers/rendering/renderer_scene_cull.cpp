@@ -2589,7 +2589,7 @@ bool RendererSceneCull::_light_instance_update_shadow(Instance *p_instance, cons
 	return animated_material_found;
 }
 
-void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_buffers, RID p_camera, RID p_scenario, RID p_viewport, Size2 p_viewport_size, uint32_t p_jitter_phase_count, float p_screen_mesh_lod_threshold, RID p_shadow_atlas, Ref<XRInterface> &p_xr_interface, RenderInfo *r_render_info) {
+void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_buffers, RID p_camera, RID p_scenario, RID p_viewport, float p_screen_mesh_lod_threshold, RID p_shadow_atlas, Ref<XRInterface> &p_xr_interface, RenderInfo *r_render_info) {
 #ifndef _3D_DISABLED
 
 	Camera *camera = camera_owner.get_or_null(p_camera);
@@ -2597,20 +2597,22 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 
 	Vector2 jitter;
 	float taa_frame_count = 0.0f;
-	if (p_jitter_phase_count > 0) {
+	uint32_t jitter_phase_count = p_render_buffers->get_jitter_phase_count();
+	Size2i viewport_size = p_render_buffers->get_internal_size();
+	if (jitter_phase_count > 0) {
 		uint32_t current_jitter_count = camera_jitter_array.size();
-		if (p_jitter_phase_count != current_jitter_count) {
+		if (jitter_phase_count != current_jitter_count) {
 			// Resize the jitter array and fill it with the pre-computed Halton sequence.
-			camera_jitter_array.resize(p_jitter_phase_count);
+			camera_jitter_array.resize(jitter_phase_count);
 
-			for (uint32_t i = current_jitter_count; i < p_jitter_phase_count; i++) {
+			for (uint32_t i = current_jitter_count; i < jitter_phase_count; i++) {
 				camera_jitter_array[i].x = get_halton_value(i, 2);
 				camera_jitter_array[i].y = get_halton_value(i, 3);
 			}
 		}
 
-		jitter = camera_jitter_array[RSG::rasterizer->get_frame_number() % p_jitter_phase_count] / p_viewport_size;
-		taa_frame_count = float(RSG::rasterizer->get_frame_number() % p_jitter_phase_count);
+		jitter = camera_jitter_array[RSG::rasterizer->get_frame_number() % jitter_phase_count] / viewport_size;
+		taa_frame_count = float(RSG::rasterizer->get_frame_number() % jitter_phase_count);
 	}
 
 	RendererSceneRender::CameraData camera_data;
@@ -2628,7 +2630,7 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 			case Camera::ORTHOGONAL: {
 				projection.set_orthogonal(
 						camera->size,
-						p_viewport_size.width / (float)p_viewport_size.height,
+						viewport_size.width / (float)viewport_size.height,
 						camera->znear,
 						camera->zfar,
 						camera->vaspect);
@@ -2637,7 +2639,7 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 			case Camera::PERSPECTIVE: {
 				projection.set_perspective(
 						camera->fov,
-						p_viewport_size.width / (float)p_viewport_size.height,
+						viewport_size.width / (float)viewport_size.height,
 						camera->znear,
 						camera->zfar,
 						camera->vaspect);
@@ -2646,7 +2648,7 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 			case Camera::FRUSTUM: {
 				projection.set_frustum(
 						camera->size,
-						p_viewport_size.width / (float)p_viewport_size.height,
+						viewport_size.width / (float)viewport_size.height,
 						camera->offset,
 						camera->znear,
 						camera->zfar,
@@ -2668,7 +2670,7 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 		uint32_t view_count = p_xr_interface->get_view_count();
 		ERR_FAIL_COND_MSG(view_count == 0 || view_count > RendererSceneRender::MAX_RENDER_VIEWS, "Requested view count is not supported");
 
-		float aspect = p_viewport_size.width / (float)p_viewport_size.height;
+		float aspect = viewport_size.width / (float)viewport_size.height;
 
 		Transform3D world_origin = xr_server->get_world_origin();
 
@@ -2688,7 +2690,7 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 		}
 
 		if (view_count == 1) {
-			camera_data.set_camera(transforms[0], projections[0], false, false, camera->vaspect, jitter, p_jitter_phase_count, camera->visible_layers);
+			camera_data.set_camera(transforms[0], projections[0], false, false, camera->vaspect, jitter, jitter_phase_count, camera->visible_layers);
 		} else if (view_count == 2) {
 			camera_data.set_multiview_camera(view_count, transforms, projections, false, false, camera->vaspect, camera->visible_layers);
 		} else {
@@ -3569,13 +3571,17 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	RID occluders_tex;
 	const RendererSceneRender::CameraData *prev_camera_data = p_camera_data;
+	bool load_color_and_depth = false;
+	bool skip_post_and_tonemap = false;
 	if (p_viewport.is_valid()) {
 		occluders_tex = RSG::viewport->viewport_get_occluder_debug_texture(p_viewport);
 		prev_camera_data = RSG::viewport->viewport_get_prev_camera_data(p_viewport);
+		load_color_and_depth = RSG::viewport->viewport_get_sharing_to_viewport_count(p_viewport) > 0;
+		skip_post_and_tonemap = RSG::viewport->viewport_get_shared_viewport(p_viewport).is_valid();
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
-	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, &sdfgi_update_data, r_render_info);
+	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, load_color_and_depth, skip_post_and_tonemap, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, &sdfgi_update_data, r_render_info);
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);
@@ -3642,7 +3648,7 @@ void RendererSceneCull::render_empty_scene(const Ref<RenderSceneBuffers> &p_rend
 	RendererSceneRender::CameraData camera_data;
 	camera_data.set_camera(Transform3D(), Projection(), true, false, false);
 
-	scene_render->render_scene(p_render_buffers, &camera_data, &camera_data, PagedArray<RenderGeometryInstance *>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), environment, RID(), compositor, p_shadow_atlas, RID(), scenario->reflection_atlas, RID(), 0, 0, nullptr, 0, nullptr, 0, nullptr);
+	scene_render->render_scene(p_render_buffers, &camera_data, &camera_data, false, false, PagedArray<RenderGeometryInstance *>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), environment, RID(), compositor, p_shadow_atlas, RID(), scenario->reflection_atlas, RID(), 0, 0, nullptr, 0, nullptr, 0, nullptr);
 #endif
 }
 
