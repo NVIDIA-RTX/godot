@@ -2,6 +2,19 @@ name: 🏗️ PVKK Multi-Platform Build
 
 on:
   workflow_dispatch:
+    inputs:
+      build_linux:
+        description: 'Build Linux editor'
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows all'
+        type: boolean
+        default: true
+      build_macos:
+        description: 'Build macOS editor'
+        type: boolean
+        default: true
 
 jobs:
   # ─────────────────────────────────────────────
@@ -9,6 +22,7 @@ jobs:
   # ─────────────────────────────────────────────
   build-linux-editor:
     name: 🐧 Linux Editor
+    if: ${{ inputs.build_linux }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
 
@@ -66,6 +80,7 @@ jobs:
   # ─────────────────────────────────────────────
   build-macos-editor:
     name: 🍎 macOS Editor (arm64)
+    if: ${{ inputs.build_macos }}
     runs-on: macos-latest
     timeout-minutes: 120
 
@@ -83,39 +98,62 @@ jobs:
 
       - name: Setup Python + SCons
         run: |
-          python3 -m pip install --upgrade pip
-          pip3 install scons requests
+          python3 -m pip install --upgrade pip --break-system-packages
+          pip3 install scons requests --break-system-packages
+
+      - name: Setup Vulkan SDK
+        id: vulkan-sdk
+        run: |
+          if sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "VULKAN_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS: Vulkan SDK installation failed, building without Vulkan support."
+            echo "VULKAN_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
 
       - name: Build – macOS Editor arm64
         run: |
-          scons target=editor platform=macos arch=arm64 -j$(sysctl -n hw.logicalcpu)
+          scons target=editor platform=macos arch=arm64 vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} generate_bundle=yes -j$(sysctl -n hw.logicalcpu)
 
       - name: Prepare artifact
         run: |
-          strip bin/godot.macos.editor.arm64
-          chmod +x bin/godot.macos.editor.arm64
+          # generate_bundle=yes makes scons wrap the binary into a .app
+          # using misc/dist/macos_tools.app as the template, and strip
+          # the raw binary inside it. Find whatever it produced rather
+          # than hardcoding a name, since the exact filename can shift
+          # between Godot versions.
+          APP_PATH=$(find bin -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app bundle found in bin/ after build"
+            exit 1
+          fi
+          mv "$APP_PATH" bin/Godot.app
+          chmod +x bin/Godot.app/Contents/MacOS/*
+          ditto -c -k --sequesterRsrc --keepParent bin/Godot.app bin/Godot-macos-editor-arm64.zip
 
       - name: Verify executable bit survived
         run: |
-          test -x bin/godot.macos.editor.arm64 || (echo "::error::godot.macos.editor.arm64 is not executable" && exit 1)
-          ls -l bin/godot.macos.editor.arm64
+          test -x bin/Godot.app/Contents/MacOS/Godot || (echo "::error::Godot binary inside the .app bundle is not executable" && exit 1)
+          ls -l bin/Godot.app/Contents/MacOS
 
       - name: Sanity check binary
         run: |
-          ./bin/godot.macos.editor.arm64 --version
-          ./bin/godot.macos.editor.arm64 --help
+          bin/Godot.app/Contents/MacOS/Godot --version
+          bin/Godot.app/Contents/MacOS/Godot --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: godot-macos-editor-arm64
-          path: bin/godot.macos.editor.arm64
+          path: bin/Godot-macos-editor-arm64.zip
 
   # ─────────────────────────────────────────────
   # Windows Builds (MSVC)
   # ─────────────────────────────────────────────
   build-windows:
     name: 🪟 Windows Builds
+    if: ${{ inputs.build_windows }}
     runs-on: windows-latest
     timeout-minutes: 120
 
@@ -176,20 +214,20 @@ jobs:
             arch=x86_64 `
             debug_symbols=yes `
             d3d12=${{ steps.d3d12.outputs.enabled }}
-      
+
       - name: Compute PDB path
         id: paths
         shell: pwsh
         run: |
           $pdb = "${{ matrix.bin }}" -replace "\.exe$", ".pdb"
           echo "pdb=$pdb" >> $env:GITHUB_OUTPUT
-      
+
       - name: Validate build output
         shell: pwsh
         run: |
           if (!(Test-Path "${{ matrix.bin }}")) { throw "Missing EXE: ${{ matrix.bin }}" }
           if (!(Test-Path "${{ steps.paths.outputs.pdb }}")) { throw "Missing PDB: ${{ steps.paths.outputs.pdb }}" }
-      
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
