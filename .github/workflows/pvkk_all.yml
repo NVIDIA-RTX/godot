@@ -53,6 +53,65 @@ jobs:
           path: bin/godot.linuxbsd.editor.x86_64
 
   # ─────────────────────────────────────────────
+  # macOS Editor (arm64 only)
+  # Apple Silicon has been the only Mac Apple sells
+  # since June 2023, and macOS 26+ dropped Intel
+  # support entirely — so this skips x86_64 and the
+  # lipo merge step to save build time. Built
+  # natively on a real Mac runner, so Apple's SDK
+  # is just preinstalled with Xcode (same approach
+  # Godot's own CI uses — no SDK-hosting workaround
+  # needed the way it would be cross-compiling on
+  # Linux).
+  # ─────────────────────────────────────────────
+  build-macos-editor:
+    name: 🍎 macOS Editor (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # See https://github.com/actions/runner-images/blob/main/images/macos
+      # for which Xcode versions are preinstalled on macos-latest; adjust
+      # the version below if it drifts out of date.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Setup Python + SCons
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install scons requests
+
+      - name: Build – macOS Editor arm64
+        run: |
+          scons target=editor platform=macos arch=arm64 -j$(sysctl -n hw.logicalcpu)
+
+      - name: Prepare artifact
+        run: |
+          strip bin/godot.macos.editor.arm64
+          chmod +x bin/godot.macos.editor.arm64
+
+      - name: Verify executable bit survived
+        run: |
+          test -x bin/godot.macos.editor.arm64 || (echo "::error::godot.macos.editor.arm64 is not executable" && exit 1)
+          ls -l bin/godot.macos.editor.arm64
+
+      - name: Sanity check binary
+        run: |
+          ./bin/godot.macos.editor.arm64 --version
+          ./bin/godot.macos.editor.arm64 --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-macos-editor-arm64
+          path: bin/godot.macos.editor.arm64
+
+  # ─────────────────────────────────────────────
   # Windows Builds (MSVC)
   # ─────────────────────────────────────────────
   build-windows:
