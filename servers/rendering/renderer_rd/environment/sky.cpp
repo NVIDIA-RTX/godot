@@ -1172,7 +1172,7 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 
 	Projection correction;
 	correction.set_depth_correction(p_render_data->scene_data->flip_y, true);
-	correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+	correction.add_jitter_offset(p_render_data->scene_data->taa_jitter * Vector2(1, -1));
 
 	Projection projection = p_render_data->scene_data->cam_projection;
 	if (p_render_data->scene_data->cam_frustum) {
