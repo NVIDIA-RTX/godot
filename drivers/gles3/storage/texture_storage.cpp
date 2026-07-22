@@ -1636,35 +1636,35 @@ void TextureStorage::texture_set_detect_roughness_callback(RID p_texture, RS::Te
 	texture->detect_roughness_callback_ud = p_userdata;
 }
 
-void TextureStorage::texture_debug_usage(List<RS::TextureInfo> *r_info) {
+void TextureStorage::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
 	for (const RID &rid : texture_owner.get_owned_list()) {
 		Texture *t = texture_owner.get_or_null(rid);
 		if (!t) {
 			continue;
 		}
-		RS::TextureInfo tinfo;
-		tinfo.path = t->path;
-		tinfo.format = t->format;
-		tinfo.width = t->alloc_width;
-		tinfo.height = t->alloc_height;
-		tinfo.bytes = t->total_data_size;
-		tinfo.type = static_cast<RenderingServer::TextureType>(t->type);
+
+		RS::ResourceInfo info;
+		info.path = t->path;
+		info.vram = t->total_data_size;
 
 		switch (t->type) {
-			case Texture::TYPE_3D:
-				tinfo.depth = t->depth;
+			case Texture::TYPE_2D:
+				info.type = "Texture2D";
+				info.format = itos(t->alloc_width) + "x" + itos(t->alloc_height) + " " + Image::get_format_name(t->format);
 				break;
-
 			case Texture::TYPE_LAYERED:
-				tinfo.depth = t->layers;
+				info.type = "TextureLayered";
+				info.format = itos(t->alloc_width) + "x" + itos(t->alloc_height) + "x" + itos(t->layers) + " " + Image::get_format_name(t->format);
 				break;
-
+			case Texture::TYPE_3D:
+				info.type = "Texture3D";
+				info.format = itos(t->alloc_width) + "x" + itos(t->alloc_height) + "x" + itos(t->depth) + " " + Image::get_format_name(t->format);
+				break;
 			default:
-				tinfo.depth = 0;
 				break;
 		}
 
-		r_info->push_back(tinfo);
+		r_info->push_back(info);
 	}
 }
 

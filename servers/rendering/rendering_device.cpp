@@ -238,6 +238,8 @@ RenderingDevice::Buffer *RenderingDevice::_get_buffer_from_owner(RID p_buffer) {
 }
 
 Error RenderingDevice::_buffer_initialize(Buffer *p_buffer, Span<uint8_t> p_data, uint32_t p_required_align) {
+	p_buffer->has_initial_data = true;
+
 	uint32_t transfer_worker_offset;
 	TransferWorker *transfer_worker = _acquire_transfer_worker(p_data.size(), p_required_align, transfer_worker_offset);
 	p_buffer->transfer_worker_index = transfer_worker->index;
@@ -1226,6 +1228,7 @@ RID RenderingDevice::texture_create_from_extension(TextureType p_type, DataForma
 	texture.usage_flags = p_usage;
 	texture.base_mipmap = 0;
 	texture.base_layer = 0;
+	texture.from_extension = true;
 	texture.allowed_shared_formats.push_back(RD::DATA_FORMAT_R8G8B8A8_UNORM);
 	texture.allowed_shared_formats.push_back(RD::DATA_FORMAT_R8G8B8A8_SRGB);
 
@@ -1242,6 +1245,7 @@ RID RenderingDevice::texture_create_from_extension(TextureType p_type, DataForma
 
 	texture.driver_id = driver->texture_create_from_extension(p_image, p_type, p_format, p_layers, (texture.usage_flags & (TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | TEXTURE_USAGE_DEPTH_RESOLVE_ATTACHMENT_BIT)), p_mipmaps);
 	ERR_FAIL_COND_V(!texture.driver_id, RID());
+
 
 	_texture_make_mutable(&texture, RID());
 
@@ -2298,6 +2302,15 @@ Size2i RenderingDevice::texture_size(RID p_texture) {
 	Texture *tex = texture_owner.get_or_null(p_texture);
 	ERR_FAIL_NULL_V(tex, Size2i());
 	return Size2i(tex->width, tex->height);
+}
+
+uint64_t RenderingDevice::texture_get_memory_usage(RID p_texture) {
+	ERR_RENDER_THREAD_GUARD_V(0);
+
+	Texture *tex = texture_owner.get_or_null(p_texture);
+	ERR_FAIL_NULL_V(tex, 0);
+
+	return driver->texture_get_allocation_size(tex->driver_id);
 }
 
 #ifndef DISABLE_DEPRECATED
@@ -6305,13 +6318,11 @@ void RenderingDevice::free_rid(RID p_rid) {
 }
 
 void RenderingDevice::_free_internal(RID p_id) {
-#ifdef DEV_ENABLED
 	String resource_name;
 	if (resource_names.has(p_id)) {
 		resource_name = resource_names[p_id];
 		resource_names.erase(p_id);
 	}
-#endif
 
 	// Push everything so it's disposed of next time this frame index is processed (means, it's safe to do it).
 	if (texture_owner.owns(p_id)) {
@@ -6471,9 +6482,8 @@ void RenderingDevice::set_resource_name(RID p_id, const String &p_name) {
 		ERR_PRINT("Attempted to name invalid ID: " + itos(p_id.get_id()));
 		return;
 	}
-#ifdef DEV_ENABLED
+
 	resource_names[p_id] = p_name;
-#endif
 }
 
 void RenderingDevice::_draw_command_begin_label(String p_label_name, const Color &p_color) {
@@ -6667,6 +6677,168 @@ uint64_t RenderingDevice::get_memory_usage(MemoryType p_type) const {
 			return 0;
 		}
 	}
+}
+
+
+Vector<RenderingDevice::MemoryUsage> RenderingDevice::get_memory_usage_details(MemoryType p_type, bool p_dynamic_resources_only) {
+	_THREAD_SAFE_METHOD_
+
+	Vector<RenderingDevice::MemoryUsage> usages;
+	if (p_type == MEMORY_BUFFERS || p_type == MEMORY_TOTAL) {
+		// Add all named buffers as separate entries.
+		uint64_t named_buffer_memory = 0;
+		uint64_t unnamed_vertex_buffer_memory = 0;
+		uint64_t unnamed_uniform_buffer_memory = 0;
+		uint64_t unnamed_texture_buffer_memory = 0;
+		uint64_t unnamed_storage_buffer_memory = 0;
+		uint64_t unnamed_index_buffer_memory = 0;
+		auto add_named_buffer = [&](RID p_rid, const Buffer *p_buffer, const String &p_format, uint64_t &r_unnamed_buffer_memory) {
+			auto it = resource_names.find(p_rid);
+			if (it != resource_names.end()) {
+				MemoryUsage buffer_usage;
+				buffer_usage.name = it->value;
+				buffer_usage.type = "Resource";
+				buffer_usage.format = p_format;
+				buffer_usage.vram = p_buffer->size;
+				usages.push_back(buffer_usage);
+
+				named_buffer_memory += p_buffer->size;
+			} else {
+				r_unnamed_buffer_memory += p_buffer->size;
+			}
+		};
+
+		auto add_buffer_owner = [&](RID_Owner<Buffer, true> &p_owner, const String &p_format, uint64_t &r_unnamed_buffer_memory) {
+			for (const RID &rid : p_owner.get_owned_list()) {
+				const Buffer *buffer = p_owner.get_or_null(rid);
+				if (buffer == nullptr || (p_dynamic_resources_only && buffer->has_initial_data)) {
+					continue;
+				}
+
+				add_named_buffer(rid, buffer, p_format, r_unnamed_buffer_memory);
+			}
+		};
+
+		add_buffer_owner(vertex_buffer_owner, "RD VertexBuffer", unnamed_vertex_buffer_memory);
+		add_buffer_owner(uniform_buffer_owner, "RD UniformBuffer", unnamed_uniform_buffer_memory);
+		add_buffer_owner(texture_buffer_owner, "RD TextureBuffer", unnamed_texture_buffer_memory);
+		add_buffer_owner(storage_buffer_owner, "RD StorageBuffer", unnamed_storage_buffer_memory);
+
+		for (const RID &rid : index_buffer_owner.get_owned_list()) {
+			const Buffer *buffer = index_buffer_owner.get_or_null(rid);
+			if (buffer == nullptr || (p_dynamic_resources_only && buffer->has_initial_data)) {
+				continue;
+			}
+
+			add_named_buffer(rid, buffer, "RD IndexBuffer", unnamed_index_buffer_memory);
+		}
+
+		auto add_unnamed_buffer_usage = [&](uint64_t p_unnamed_buffer_memory, const String &p_name, const String &p_format) {
+			if (p_unnamed_buffer_memory > 0) {
+				// Add unnamed buffers as one entry.
+				MemoryUsage unnamed_usage;
+				unnamed_usage.name = p_name ;
+				unnamed_usage.type = "Resource";
+				unnamed_usage.format = p_format;
+				unnamed_usage.vram = p_unnamed_buffer_memory;
+				usages.push_back(unnamed_usage);
+			}
+		};
+
+		add_unnamed_buffer_usage(unnamed_vertex_buffer_memory, "Unnamed Vertex Buffers", "RD VertexBuffers");
+		add_unnamed_buffer_usage(unnamed_uniform_buffer_memory, "Unnamed Uniform Buffers", "RD UniformBuffers");
+		add_unnamed_buffer_usage(unnamed_texture_buffer_memory, "Unnamed Texture Buffers", "RD TextureBuffers");
+		add_unnamed_buffer_usage(unnamed_storage_buffer_memory, "Unnamed Storage Buffers", "RD StorageBuffers");
+		add_unnamed_buffer_usage(unnamed_index_buffer_memory, "Unnamed Index Buffers", "RD IndexBuffers");
+
+		const uint64_t download_staging_size = download_staging_buffers.blocks.size() * download_staging_buffers.block_size;
+		const uint64_t upload_staging_size = upload_staging_buffers.blocks.size() * upload_staging_buffers.block_size;
+		uint64_t staging_buffer_memory = download_staging_size + upload_staging_size;
+		transfer_worker_pool_mutex.lock();
+		for (uint32_t i = 0; i < transfer_worker_pool.size(); i++) {
+			TransferWorker *worker = transfer_worker_pool[i];
+			worker->thread_mutex.lock();
+			staging_buffer_memory += worker->staging_buffer_size_allocated;
+			worker->thread_mutex.unlock();
+		}
+
+		transfer_worker_pool_mutex.unlock();
+
+		if (staging_buffer_memory > 0) {
+			MemoryUsage staging_usage;
+			staging_usage.name = "Staging Buffers";
+			staging_usage.type = "Resource";
+			staging_usage.format = "RD Buffers";
+			staging_usage.vram = staging_buffer_memory;
+			usages.push_back(staging_usage);
+		}
+	}
+
+	if (p_type == MEMORY_TEXTURES || p_type == MEMORY_TOTAL) {
+		// Add all named textures as separate entries.
+		uint64_t named_texture_memory = 0;
+		uint64_t unnamed_texture_memory = 0;
+		for (const RID &rid : texture_owner.get_owned_list()) {
+			const Texture *texture = texture_owner.get_or_null(rid);
+			if (texture == nullptr || texture->owner.is_valid() || texture->from_extension || (p_dynamic_resources_only && texture->has_initial_data)) {
+				// Ignore shared or external textures.
+				continue;
+			}
+
+			uint64_t vram = driver->texture_get_allocation_size(texture->driver_id);
+			auto it = resource_names.find(rid);
+			if (it != resource_names.end()) {
+				MemoryUsage texture_usage;
+				texture_usage.name = it->value;
+				texture_usage.type = "Resource";
+				texture_usage.vram = vram;
+
+				switch (texture->type) {
+					case TEXTURE_TYPE_1D:
+						texture_usage.format = "RD Texture1D " + itos(texture->width);
+						break;
+					case TEXTURE_TYPE_2D:
+						texture_usage.format = "RD Texture2D " + itos(texture->width) + "x" + itos(texture->height);
+						break;
+					case TEXTURE_TYPE_3D:
+						texture_usage.format = "RD Texture3D " + itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->depth);
+						break;
+					case TEXTURE_TYPE_CUBE:
+						texture_usage.format = "RD TextureCube " + itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->layers);
+						break;
+					case TEXTURE_TYPE_1D_ARRAY:
+						texture_usage.format = "RD Texture1DArray " + itos(texture->width) + "x" + itos(texture->layers);
+						break;
+					case TEXTURE_TYPE_2D_ARRAY:
+						texture_usage.format = "RD Texture2DArray " + itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->layers);
+						break;
+					case TEXTURE_TYPE_CUBE_ARRAY:
+						texture_usage.format = "RD TextureCubeArray " + itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->layers);
+						break;
+					default:
+						break;
+				}
+
+				usages.push_back(texture_usage);
+
+				named_texture_memory += vram;
+			} else {
+				unnamed_texture_memory += vram;
+			}
+		}
+
+		if (unnamed_texture_memory > 0) {
+			// Add unnamed textures as one entry.
+			MemoryUsage unnamed_usage;
+			unnamed_usage.name = "Unnamed Textures";
+			unnamed_usage.type = "Resource";
+			unnamed_usage.format = "RD Textures";
+			unnamed_usage.vram = unnamed_texture_memory;
+			usages.push_back(unnamed_usage);
+		}
+	}
+
+	return usages;
 }
 
 void RenderingDevice::_begin_frame(bool p_presented) {

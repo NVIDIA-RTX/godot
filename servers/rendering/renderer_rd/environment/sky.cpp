@@ -1596,6 +1596,8 @@ void SkyRD::update_dirty_skys() {
 
 				sky->reflection.update_reflection_data(w, MIN(mipmaps, layers), false, sky->radiance, 0, use_realtime, roughness_layers, texture_format, sky->uv_border_size);
 			}
+
+			RD::get_singleton()->set_resource_name(sky->radiance, "Sky Radiance");
 		}
 
 		sky->reflection.dirty = true;

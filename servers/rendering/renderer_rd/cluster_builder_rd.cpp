@@ -353,12 +353,16 @@ void ClusterBuilderRD::setup(Size2i p_screen_size, uint32_t p_max_elements, RID 
 	cluster_render_buffer_size = cluster_screen_size.x * cluster_screen_size.y * (element_tag_bits_size + element_tag_depth_bits_size) * 4; // Tag bits (element was used) and tag depth (depth range in which it was used).
 
 	cluster_render_buffer = RD::get_singleton()->storage_buffer_create(cluster_render_buffer_size);
+	RD::get_singleton()->set_resource_name(cluster_render_buffer, "ClusterBuilder Render");
+
 	cluster_buffer = RD::get_singleton()->storage_buffer_create(cluster_buffer_size);
+	RD::get_singleton()->set_resource_name(cluster_buffer, "ClusterBuilder Buffer");
 
 	render_elements = static_cast<RenderElementData *>(memalloc(sizeof(RenderElementData) * render_element_max));
 	render_element_count = 0;
 
 	element_buffer = RD::get_singleton()->storage_buffer_create(sizeof(RenderElementData) * render_element_max);
+	RD::get_singleton()->set_resource_name(element_buffer, "ClusterBuilder Elements");
 
 	uint32_t div_value = 1 << divisor;
 	if (use_msaa) {

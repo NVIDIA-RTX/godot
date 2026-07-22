@@ -229,8 +229,6 @@ public:
 
 	FUNC1RC(Image::Format, texture_get_format, RID)
 
-	FUNC1(texture_debug_usage, List<TextureInfo> *)
-
 	FUNC2(texture_set_force_redraw_if_visible, RID, bool)
 	FUNCRIDTEX2(texture_rd, const RID &, const RS::TextureLayeredType)
 	FUNC2RC(RID, texture_get_rd_texture, RID, bool)
@@ -388,8 +386,6 @@ public:
 
 	FUNC2(mesh_surface_remove, RID, int)
 	FUNC1(mesh_clear, RID)
-
-	FUNC1(mesh_debug_usage, List<MeshInfo> *)
 
 	/* MULTIMESH API */
 
@@ -1127,6 +1123,8 @@ public:
 	FUNC0RC(String, get_video_adapter_name)
 	FUNC0RC(String, get_video_adapter_vendor)
 	FUNC0RC(String, get_video_adapter_api_version)
+	FUNC1C(resource_debug_usage, List<ResourceInfo> *)
+
 #undef server_name
 #undef ServerName
 #undef WRITE_ACTION

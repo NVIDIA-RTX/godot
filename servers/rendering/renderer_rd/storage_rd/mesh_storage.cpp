@@ -441,6 +441,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RS::SurfaceData &p_surface)
 	if (mesh->blend_shape_count > 0) {
 		s->blend_shape_buffer = RD::get_singleton()->storage_buffer_create(new_surface.blend_shape_data.size(), new_surface.blend_shape_data);
 		s->blend_shape_buffer_size = new_surface.blend_shape_data.size();
+		RD::get_singleton()->set_resource_name(s->blend_shape_buffer, "Blend Shape");
 	}
 
 	if (use_as_storage) {
@@ -937,35 +938,6 @@ void MeshStorage::mesh_surface_remove(RID p_mesh, int p_surface) {
 	}
 }
 
-void MeshStorage::mesh_debug_usage(List<RS::MeshInfo> *r_info) {
-	for (const RID &mesh_rid : mesh_owner.get_owned_list()) {
-		Mesh *mesh = mesh_owner.get_or_null(mesh_rid);
-		if (!mesh) {
-			continue;
-		}
-		RS::MeshInfo mesh_info;
-		mesh_info.mesh = mesh_rid;
-		mesh_info.path = mesh->path;
-
-		for (uint32_t surface_index = 0; surface_index < mesh->surface_count; surface_index++) {
-			MeshStorage::Mesh::Surface *surface = mesh->surfaces[surface_index];
-
-			mesh_info.vertex_buffer_size += surface->vertex_buffer_size;
-			mesh_info.attribute_buffer_size += surface->attribute_buffer_size;
-			mesh_info.skin_buffer_size += surface->skin_buffer_size;
-			mesh_info.index_buffer_size += surface->index_buffer_size;
-			mesh_info.blend_shape_buffer_size += surface->blend_shape_buffer_size;
-			mesh_info.vertex_count += surface->vertex_count;
-
-			for (uint32_t lod_index = 0; lod_index < surface->lod_count; lod_index++) {
-				mesh_info.lod_index_buffers_size += surface->lods[lod_index].index_buffer_size;
-			}
-		}
-
-		r_info->push_back(mesh_info);
-	}
-}
-
 bool MeshStorage::mesh_needs_instance(RID p_mesh, bool p_has_skeleton) {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, false);
@@ -1044,6 +1016,7 @@ void MeshStorage::_mesh_instance_add_surface(MeshInstance *mi, Mesh *mesh, uint3
 			weight = 0;
 		}
 		mi->blend_weights_buffer = RD::get_singleton()->storage_buffer_create(sizeof(float) * mi->blend_weights.size(), mi->blend_weights.span().reinterpret<uint8_t>());
+		RD::get_singleton()->set_resource_name(mi->blend_weights_buffer, "Blend Weights");
 		mi->weights_dirty = true;
 	}
 
@@ -1592,6 +1565,7 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RS:
 	if (multimesh->instances) {
 		uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
 		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size);
+		RD::get_singleton()->set_resource_name(multimesh->buffer, "Multimesh");
 	}
 
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
@@ -1615,6 +1589,7 @@ void MeshStorage::_multimesh_enable_motion_vectors(MultiMesh *multimesh) {
 	uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	uint32_t new_buffer_size = buffer_size * 2;
 	RID new_buffer = RD::get_singleton()->storage_buffer_create(new_buffer_size);
+	RD::get_singleton()->set_resource_name(new_buffer, "Multimesh");
 
 	if (multimesh->buffer_set && multimesh->data_cache.is_empty()) {
 		// If the buffer was set but there's no data cached in the CPU, we copy the buffer directly on the GPU.
@@ -1686,8 +1661,9 @@ void MeshStorage::_multimesh_set_mesh(RID p_multimesh, RID p_mesh) {
 				newVector.set(i * sizeof(uint32_t) * INDIRECT_MULTIMESH_COMMAND_STRIDE + 3, static_cast<uint8_t>(count >> 24));
 			}
 
-			RID newBuffer = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * INDIRECT_MULTIMESH_COMMAND_STRIDE * mesh->surface_count, newVector, RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
-			multimesh->command_buffer = newBuffer;
+			RID new_buffer = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * INDIRECT_MULTIMESH_COMMAND_STRIDE * mesh->surface_count, newVector, RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
+			RD::get_singleton()->set_resource_name(new_buffer, "Multimesh Indirect");
+			multimesh->command_buffer = new_buffer;
 		}
 	}
 
@@ -2356,6 +2332,7 @@ void MeshStorage::skeleton_allocate_data(RID p_skeleton, int p_bones, bool p_2d_
 		skeleton->data.resize(skeleton->size * (skeleton->use_2d ? 8 : 12));
 		skeleton->buffer = RD::get_singleton()->storage_buffer_create(skeleton->data.size() * sizeof(float));
 		memset(skeleton->data.ptr(), 0, skeleton->data.size() * sizeof(float));
+		RD::get_singleton()->set_resource_name(skeleton->buffer, "Skeleton Data");
 
 		_skeleton_make_dirty(skeleton);
 
@@ -2509,4 +2486,38 @@ void MeshStorage::skeleton_update_dependency(RID p_skeleton, DependencyTracker *
 	ERR_FAIL_NULL(skeleton);
 
 	p_instance->update_dependency(&skeleton->dependency);
+}
+
+void MeshStorage::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
+	for (const RID &mesh_rid : mesh_owner.get_owned_list()) {
+		Mesh *mesh = mesh_owner.get_or_null(mesh_rid);
+		if (mesh == nullptr) {
+			continue;
+		}
+
+		RS::ResourceInfo info;
+		info.path = mesh->path;
+		info.type = "Mesh";
+
+		uint64_t vertex_count = 0;
+		for (uint32_t i = 0; i < mesh->surface_count; i++) {
+			MeshStorage::Mesh::Surface *surface = mesh->surfaces[i];
+			info.vram += surface->vertex_buffer_size;
+			info.vram += surface->attribute_buffer_size;
+			info.vram += surface->skin_buffer_size;
+			info.vram += surface->index_buffer_size;
+			info.vram += surface->blend_shape_buffer_size;
+
+			for (uint32_t j = 0; j < surface->lod_count; j++) {
+				info.vram += surface->lods[j].index_buffer_size;
+			}
+
+			vertex_count += surface->vertex_count;
+		}
+
+		if (vertex_count > 0 && info.vram > 0) {
+			info.format = itos(vertex_count) + " Vertices";
+			r_info->push_back(info);
+		}
+	}
 }

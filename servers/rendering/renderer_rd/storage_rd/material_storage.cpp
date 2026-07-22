@@ -1322,6 +1322,7 @@ MaterialStorage::MaterialStorage() {
 	global_shader_uniforms.buffer_dirty_regions = memnew_arr(bool, 1 + (global_shader_uniforms.buffer_size / GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE));
 	memset(global_shader_uniforms.buffer_dirty_regions, 0, sizeof(bool) * (1 + (global_shader_uniforms.buffer_size / GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE)));
 	global_shader_uniforms.buffer = RD::get_singleton()->storage_buffer_create(sizeof(GlobalShaderUniforms::Value) * global_shader_uniforms.buffer_size);
+	RD::get_singleton()->set_resource_name(global_shader_uniforms.buffer, "Global Shader Uniforms");
 }
 
 MaterialStorage::~MaterialStorage() {

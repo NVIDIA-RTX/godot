@@ -178,21 +178,6 @@ public:
 
 	typedef void (*TextureDetectRoughnessCallback)(void *, const String &, TextureDetectRoughnessChannel);
 	virtual void texture_set_detect_roughness_callback(RID p_texture, TextureDetectRoughnessCallback p_callback, void *p_userdata) = 0;
-
-	struct TextureInfo {
-		RID texture;
-		uint32_t width;
-		uint32_t height;
-		uint32_t depth;
-		Image::Format format;
-		int64_t bytes;
-		String path;
-		TextureType type;
-	};
-
-	virtual void texture_debug_usage(List<TextureInfo> *r_info) = 0;
-	Array _texture_debug_usage_bind();
-
 	virtual void texture_set_force_redraw_if_visible(RID p_texture, bool p_enable) = 0;
 
 	virtual RID texture_rd_create(const RID &p_rd_texture, const RenderingServer::TextureLayeredType p_layer_type = RenderingServer::TEXTURE_LAYERED_2D_ARRAY) = 0;
@@ -451,20 +436,6 @@ public:
 	virtual void mesh_surface_remove(RID p_mesh, int p_surface) = 0;
 	virtual void mesh_clear(RID p_mesh) = 0;
 
-	struct MeshInfo {
-		RID mesh;
-		String path;
-		uint32_t vertex_buffer_size = 0;
-		uint32_t attribute_buffer_size = 0;
-		uint32_t skin_buffer_size = 0;
-		uint32_t index_buffer_size = 0;
-		uint32_t blend_shape_buffer_size = 0;
-		uint32_t lod_index_buffers_size = 0;
-		uint64_t vertex_count = 0;
-	};
-
-	virtual void mesh_debug_usage(List<MeshInfo> *r_info) = 0;
-
 	/* MULTIMESH API */
 
 	virtual RID multimesh_create() = 0;
@@ -478,6 +449,21 @@ public:
 		MULTIMESH_INTERP_QUALITY_FAST,
 		MULTIMESH_INTERP_QUALITY_HIGH,
 	};
+
+    /* DEBUG API */
+
+	struct ResourceInfo {
+		String path;
+		String type;
+		String format;
+		uint64_t vram = 0;
+
+		bool operator<(const ResourceInfo &p_info) const {
+			return vram > p_info.vram;
+		}
+	};
+
+	virtual void resource_debug_usage(List<ResourceInfo> *r_info) const = 0;
 
 protected:
 #ifndef DISABLE_DEPRECATED

@@ -34,18 +34,8 @@
 
 class ServersDebugger {
 public:
-	// Memory usage
-	struct ResourceInfo {
-		String path;
-		String format;
-		String type;
-		RID id;
-		int vram = 0;
-		bool operator<(const ResourceInfo &p_img) const { return vram == p_img.vram ? id < p_img.id : vram > p_img.vram; }
-	};
-
 	struct ResourceUsage {
-		List<ResourceInfo> infos;
+		List<RS::ResourceInfo> infos;
 
 		Array serialize();
 		bool deserialize(const Array &p_arr);

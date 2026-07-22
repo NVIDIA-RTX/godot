@@ -569,8 +569,6 @@ public:
 	virtual void texture_set_detect_normal_callback(RID p_texture, RS::TextureDetectCallback p_callback, void *p_userdata) override;
 	virtual void texture_set_detect_roughness_callback(RID p_texture, RS::TextureDetectRoughnessCallback p_callback, void *p_userdata) override;
 
-	virtual void texture_debug_usage(List<RS::TextureInfo> *r_info) override;
-
 	virtual void texture_set_force_redraw_if_visible(RID p_texture, bool p_enable) override;
 
 	virtual Size2 texture_size_with_proxy(RID p_proxy) override;
@@ -731,6 +729,10 @@ public:
 	}
 
 	String get_framebuffer_error(GLenum p_status);
+
+	/* DEBUG */
+
+	virtual void resource_debug_usage(List<RS::ResourceInfo> *r_info) const override;
 };
 
 inline String TextureStorage::get_framebuffer_error(GLenum p_status) {

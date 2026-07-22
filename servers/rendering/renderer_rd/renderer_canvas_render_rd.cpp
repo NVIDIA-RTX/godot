@@ -1010,6 +1010,7 @@ void RendererCanvasRenderRD::_update_occluder_buffer(uint32_t p_size) {
 
 	if (needs_update) {
 		state.shadow_occluder_buffer = RD::get_singleton()->storage_buffer_create(state.shadow_occluder_buffer_size);
+		RD::get_singleton()->set_resource_name(state.shadow_occluder_buffer, "Shadow Occluder");
 
 		Vector<RD::Uniform> uniforms;
 

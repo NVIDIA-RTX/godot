@@ -53,24 +53,6 @@ RenderingServer *RenderingServer::create() {
 	return nullptr;
 }
 
-Array RenderingServer::_texture_debug_usage_bind() {
-	List<TextureInfo> list;
-	texture_debug_usage(&list);
-	Array arr;
-	for (const TextureInfo &E : list) {
-		Dictionary dict;
-		dict["texture"] = E.texture;
-		dict["width"] = E.width;
-		dict["height"] = E.height;
-		dict["depth"] = E.depth;
-		dict["format"] = E.format;
-		dict["bytes"] = E.bytes;
-		dict["path"] = E.path;
-		arr.push_back(dict);
-	}
-	return arr;
-}
-
 static PackedInt64Array to_int_array(const Vector<ObjectID> &ids) {
 	PackedInt64Array a;
 	a.resize(ids.size());

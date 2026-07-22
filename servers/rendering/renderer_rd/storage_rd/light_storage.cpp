@@ -596,12 +596,15 @@ void LightStorage::set_max_lights(const uint32_t p_max_lights) {
 	spot_lights = memnew_arr(LightData, max_lights);
 	spot_light_buffer = RD::get_singleton()->storage_buffer_create(light_buffer_size);
 	spot_light_sort = memnew_arr(LightInstanceDepthSort, max_lights);
-	//defines += "\n#define MAX_LIGHT_DATA_STRUCTS " + itos(max_lights) + "\n";
 
 	max_directional_lights = RendererSceneRender::MAX_DIRECTIONAL_LIGHTS;
 	uint32_t directional_light_buffer_size = max_directional_lights * sizeof(DirectionalLightData);
 	directional_lights = memnew_arr(DirectionalLightData, max_directional_lights);
 	directional_light_buffer = RD::get_singleton()->uniform_buffer_create(directional_light_buffer_size);
+
+	RD::get_singleton()->set_resource_name(omni_light_buffer, "Omni Lights");
+	RD::get_singleton()->set_resource_name(spot_light_buffer, "Spot Lights");
+	RD::get_singleton()->set_resource_name(directional_light_buffer, "Directional Lights");
 }
 
 void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const PagedArray<RID> &p_lights, const Transform3D &p_camera_transform, RID p_shadow_atlas, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_positional_light_count, bool &r_directional_light_soft_shadows) {
@@ -1541,6 +1544,7 @@ bool LightStorage::reflection_probe_instance_begin_render(RID p_instance, RID p_
 			tf.height = atlas->reflection_texture_size;
 			tf.usage_bits = get_reflection_probe_color_usage_bits(use_storage);
 			atlas->reflection = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(atlas->reflection, "Reflection Probe Atlas");
 		}
 		{
 			RD::TextureFormat tf;
@@ -1551,6 +1555,7 @@ bool LightStorage::reflection_probe_instance_begin_render(RID p_instance, RID p_
 			tf.height = atlas->size;
 			tf.usage_bits = get_reflection_probe_color_usage_bits(use_storage);
 			atlas->color_buffer = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(atlas->color_buffer, "Reflection Probe Color Buffer");
 		}
 		{
 			RD::TextureFormat tf;
@@ -1559,6 +1564,7 @@ bool LightStorage::reflection_probe_instance_begin_render(RID p_instance, RID p_
 			tf.height = atlas->size;
 			tf.usage_bits = get_reflection_probe_depth_usage_bits();
 			atlas->depth_buffer = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(atlas->depth_buffer, "Reflection Probe Depth Buffer");
 		}
 		atlas->reflections.resize(atlas->count);
 		for (int i = 0; i < atlas->count; i++) {
@@ -1741,6 +1747,7 @@ void LightStorage::set_max_reflection_probes(const uint32_t p_max_reflection_pro
 	reflections = memnew_arr(ReflectionData, max_reflections);
 	reflection_sort = memnew_arr(ReflectionProbeInstanceSort, max_reflections);
 	reflection_buffer = RD::get_singleton()->storage_buffer_create(sizeof(ReflectionData) * max_reflections);
+	RD::get_singleton()->set_resource_name(reflection_buffer, "Reflections");
 }
 
 void LightStorage::update_reflection_probe_buffer(RenderDataRD *p_render_data, const PagedArray<RID> &p_reflections, const Transform3D &p_camera_inverse_transform, RID p_environment) {
@@ -2146,6 +2153,8 @@ void LightStorage::_update_shadow_atlas(ShadowAtlas *shadow_atlas) {
 		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
 
 		shadow_atlas->depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(shadow_atlas->depth, "Shadow Atlas Depth");
+
 		Vector<RID> fb_tex;
 		fb_tex.push_back(shadow_atlas->depth);
 		shadow_atlas->fb = RD::get_singleton()->framebuffer_create(fb_tex);
@@ -2547,6 +2556,8 @@ void LightStorage::update_directional_shadow_atlas() {
 		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
 
 		directional_shadow.depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(directional_shadow.depth, "Directional Shadow Depth");
+
 		Vector<RID> fb_tex;
 		fb_tex.push_back(directional_shadow.depth);
 		directional_shadow.fb = RD::get_singleton()->framebuffer_create(fb_tex);
@@ -2636,6 +2647,7 @@ LightStorage::ShadowCubemap *LightStorage::_get_shadow_cubemap(int p_size) {
 			tf.array_layers = 6;
 			tf.usage_bits = get_cubemap_depth_usage_bits();
 			sc.cubemap = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(sc.cubemap, "Shadow Cubemap");
 		}
 
 		for (int i = 0; i < 6; i++) {
