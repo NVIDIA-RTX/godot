@@ -33,6 +33,11 @@
 #include "rendering_context_driver_vulkan.h"
 
 #include "core/config/engine.h"
+
+#if defined(USE_VOLK) && defined(STREAMLINE_ENABLED) && defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include "core/config/project_settings.h"
 #include "core/version.h"
 #include "drivers/vulkan/rendering_device_driver_vulkan.h"
@@ -456,6 +461,9 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 #else
 	bool want_debug_utils = OS::get_singleton()->is_stdout_verbose();
 #endif
+	if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+		want_debug_utils = true;
+	}
 	if (want_debug_utils) {
 		_register_requested_instance_extension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, false);
 	}
@@ -583,6 +591,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderingContextDriverVulkan::_debug_messenger_ca
 		return VK_FALSE;
 	}
 
+	// glslang emits DebugGlobalVariable referencing gl_WorkGroupSize as OpSpecConstantComposite, which is invalid per
+	// the NonSemantic.Shader.DebugInfo.100 spec. Nothing we can do about it from the shader side.
+	if (strstr(p_callback_data->pMessage, "DebugGlobalVariable: expected operand Variable must be a result id of OpVariable or OpConstant or DebugInfoNone") != nullptr) {
+		return VK_FALSE;
+	}
+
 	String type_string;
 	switch (p_message_type) {
 		case (VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT):
@@ -640,44 +654,47 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderingContextDriverVulkan::_debug_messenger_ca
 			"\n\t" + p_callback_data->pMessage +
 			objects_string + labels_string);
 
-	// Convert VK severity to our own log macros.
-	// Note: Which severity we receive depends on what's set in VkDebugUtilsMessengerCreateInfoEXT,
-	// we don't enable everything by default.
+	// Use fprintf to stderr directly to avoid re-entering the rendering device via EditorLog.
 	switch (p_message_severity) {
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-			print_verbose(error_message);
+			fprintf(stderr, "VERBOSE: %s\n", error_message.utf8().get_data());
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
-			print_line(error_message);
+			fprintf(stderr, "INFO: %s\n", error_message.utf8().get_data());
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
-			WARN_PRINT(error_message);
+			fprintf(stderr, "WARNING: %s\n", error_message.utf8().get_data());
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-			ERR_PRINT(error_message);
+			fprintf(stderr, "ERROR: %s\n", error_message.utf8().get_data());
 			CRASH_COND_MSG(Engine::get_singleton()->is_abort_on_gpu_errors_enabled(), "Crashing, because abort on GPU errors is enabled.");
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT:
-			break; // Shouldn't happen, only handling to make compilers happy.
+			break;
 	}
 
 	return VK_FALSE;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL RenderingContextDriverVulkan::_debug_report_callback(VkDebugReportFlagsEXT p_flags, VkDebugReportObjectTypeEXT p_object_type, uint64_t p_object, size_t p_location, int32_t p_message_code, const char *p_layer_prefix, const char *p_message, void *p_user_data) {
+	// Same glslang debug-info bug as filtered in _debug_messenger_callback.
+	if (strstr(p_message, "DebugGlobalVariable: expected operand Variable must be a result id of OpVariable or OpConstant or DebugInfoNone") != nullptr) {
+		return VK_FALSE;
+	}
+
 	String debug_message = String("Vulkan Debug Report: object - ") + String::num_int64(p_object) + "\n" + p_message;
 
 	switch (p_flags) {
 		case VK_DEBUG_REPORT_DEBUG_BIT_EXT:
 		case VK_DEBUG_REPORT_INFORMATION_BIT_EXT:
-			print_line(debug_message);
+			fprintf(stderr, "INFO: %s\n", debug_message.utf8().get_data());
 			break;
 		case VK_DEBUG_REPORT_WARNING_BIT_EXT:
 		case VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT:
-			WARN_PRINT(debug_message);
+			fprintf(stderr, "WARNING: %s\n", debug_message.utf8().get_data());
 			break;
 		case VK_DEBUG_REPORT_ERROR_BIT_EXT:
-			ERR_PRINT(debug_message);
+			fprintf(stderr, "ERROR: %s\n", debug_message.utf8().get_data());
 			break;
 	}
 
@@ -902,7 +919,19 @@ Error RenderingContextDriverVulkan::_create_vulkan_instance(const VkInstanceCrea
 Error RenderingContextDriverVulkan::initialize() {
 	Error err;
 
-#ifdef USE_VOLK
+#if defined(USE_VOLK) && defined(STREAMLINE_ENABLED) && defined(_WIN32)
+	HMODULE module;
+	module = LoadLibraryA("sl.interposer.dll");
+	if (module != nullptr) {
+		// note: function pointer is cast through void function pointer to silence cast-function-type warning on gcc8
+		PFN_vkGetInstanceProcAddr vk_getInstanceProcAddr = (PFN_vkGetInstanceProcAddr)(void (*)())GetProcAddress(module, "vkGetInstanceProcAddr");
+		volkInitializeCustom(vk_getInstanceProcAddr);
+	} else {
+		if (volkInitialize() != VK_SUCCESS) {
+			return FAILED;
+		}
+	}
+#elif defined(USE_VOLK)
 	if (volkInitialize() != VK_SUCCESS) {
 		return FAILED;
 	}

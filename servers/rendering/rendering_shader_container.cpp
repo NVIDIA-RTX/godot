@@ -296,22 +296,33 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 		const Vector<uint64_t> &dynamic_buffers = p_spirv[i].dynamic_buffers;
 
 		if (stage == RDC::SHADER_STAGE_COMPUTE) {
+			reflection.pipeline_type = RDC::PIPELINE_TYPE_COMPUTE;
 			ERR_FAIL_COND_V_MSG(spirv_size != 1, FAILED,
 					"Compute shaders can only receive one stage, dedicated to compute.");
 		}
-		ERR_FAIL_COND_V_MSG(reflection.stages_bits.has_flag(stage_flag), FAILED,
-				"Stage " + String(RDC::SHADER_STAGE_NAMES[stage]) + " submitted more than once.");
+		if (stage == RDC::SHADER_STAGE_RAYGEN || stage == RDC::SHADER_STAGE_ANY_HIT || stage == RDC::SHADER_STAGE_CLOSEST_HIT || stage == RDC::SHADER_STAGE_MISS || stage == RDC::SHADER_STAGE_INTERSECTION) {
+			reflection.pipeline_type = RDC::PIPELINE_TYPE_RAYTRACING;
+		}
+		// RT hit group stages (any_hit, closest_hit, intersection) may appear
+		// multiple times -- one per hit group in the pipeline.
+		bool is_rt_hit_stage = (stage == RDC::SHADER_STAGE_ANY_HIT ||
+				stage == RDC::SHADER_STAGE_CLOSEST_HIT ||
+				stage == RDC::SHADER_STAGE_INTERSECTION);
+		if (!is_rt_hit_stage) {
+			ERR_FAIL_COND_V_MSG(reflection.stages_bits.has_flag(stage_flag), FAILED,
+					"Stage " + String(RDC::SHADER_STAGE_NAMES[stage]) + " submitted more than once.");
+		}
 		reflection.stages_bits.set_flag(stage_flag);
 
 		// We make all raytracing stages visible to make our lives easier when creating raytracing pipelines.
 		// This makes no practical difference in current graphics drivers, since Vulkan is the outlier.
 		BitField<RDC::ShaderStage> uniform_stage_flags;
 		if (pipeline_type == RDC::PIPELINE_TYPE_RAYTRACING) {
-			uniform_stage_flags = RDC::SHADER_STAGE_RAYGEN |
-					RDC::SHADER_STAGE_ANY_HIT |
-					RDC::SHADER_STAGE_CLOSEST_HIT |
-					RDC::SHADER_STAGE_MISS |
-					RDC::SHADER_STAGE_INTERSECTION;
+			uniform_stage_flags = RDC::SHADER_STAGE_RAYGEN_BIT |
+					RDC::SHADER_STAGE_ANY_HIT_BIT |
+					RDC::SHADER_STAGE_CLOSEST_HIT_BIT |
+					RDC::SHADER_STAGE_MISS_BIT |
+					RDC::SHADER_STAGE_INTERSECTION_BIT;
 		} else {
 			uniform_stage_flags = stage_flag;
 		}
@@ -330,7 +341,7 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 				}
 			}
 
-			if (reflection.is_compute()) {
+			if (reflection.pipeline_type == RDC::PIPELINE_TYPE_COMPUTE) {
 				reflection.compute_local_size[0] = module.entry_points->local_size.x;
 				reflection.compute_local_size[1] = module.entry_points->local_size.y;
 				reflection.compute_local_size[2] = module.entry_points->local_size.z;
@@ -433,9 +444,16 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 					}
 
 					if (need_array_dimensions) {
-						uniform.length = 1;
-						for (uint32_t k = 0; k < binding.array.dims_count; k++) {
-							uniform.length *= binding.array.dims[k];
+						// Check for runtime array (unbounded): dims[0] == 0 means OpTypeRuntimeArray
+						if (binding.array.dims_count > 0 && binding.array.dims[0] == 0) {
+							uniform.unbounded = true;
+							uniform.length = 0;
+						} else {
+							uniform.unbounded = false;
+							uniform.length = 1;
+							for (uint32_t k = 0; k < binding.array.dims_count; k++) {
+								uniform.length *= binding.array.dims[k];
+							}
 						}
 					} else if (need_block_size) {
 						uniform.length = binding.block.size;
@@ -478,9 +496,22 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].type != uniform.type, FAILED,
 										"On shader stage '" + String(RDC::SHADER_STAGE_NAMES[stage]) + "', uniform '" + binding.name + "' trying to reuse location for set=" + itos(set) + ", binding=" + itos(uniform.binding) + " with different uniform type.");
 
-								// Also, verify that it's the same size.
-								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].length != uniform.length, FAILED,
+								// RT hit-group stages share descriptor layouts but may compile
+								// unsized arrays to different inferred sizes. Trust the first
+								// registration and just append the stage mask.
+								if (is_rt_hit_stage && (reflection.uniform_sets[set][k].length != uniform.length || reflection.uniform_sets[set][k].unbounded != uniform.unbounded)) {
+									reflection.uniform_sets[set][k].stages.set_flag(stage_flag);
+									exists = true;
+									break;
+								}
+
+								// Verify that it's the same size (unless unbounded).
+								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].length != uniform.length && !uniform.unbounded, FAILED,
 										"On shader stage '" + String(RDC::SHADER_STAGE_NAMES[stage]) + "', uniform '" + binding.name + "' trying to reuse location for set=" + itos(set) + ", binding=" + itos(uniform.binding) + " with different uniform size.");
+
+								// Verify that it has the same unbounded status.
+								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].unbounded != uniform.unbounded, FAILED,
+										"On shader stage '" + String(RDC::SHADER_STAGE_NAMES[stage]) + "', uniform '" + binding.name + "' trying to reuse location for set=" + itos(set) + ", binding=" + itos(uniform.binding) + " with different unbounded status.");
 
 								// Also, verify that it has the same writability.
 								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].writable != uniform.writable, FAILED,
@@ -702,6 +733,7 @@ void RenderingShaderContainer::set_from_shader_reflection(const ReflectShader &p
 			binding_data.stages = uint32_t(uniform.stages);
 			binding_data.length = uniform.length;
 			binding_data.writable = uint32_t(uniform.writable);
+			binding_data.unbounded = uint32_t(uniform.unbounded);
 			binding_data.texture_type = uniform.texture_type;
 			binding_data.texture_format = uniform.texture_format;
 			reflection_binding_set_uniforms_data.push_back(binding_data);
@@ -719,10 +751,10 @@ void RenderingShaderContainer::set_from_shader_reflection(const ReflectShader &p
 		reflection_specialization_data.push_back(specialization_data);
 	}
 
-	for (uint32_t i = 0; i < RDC::SHADER_STAGE_MAX; i++) {
-		if (p_reflection.stages_bits.has_flag(RDC::ShaderStage(1U << i))) {
-			reflection_shader_stages.push_back(RDC::ShaderStage(i));
-		}
+	// Build stage list from the actual shader stages to preserve duplicates
+	// (RT pipelines can have multiple hit groups with repeated stage types).
+	for (uint32_t i = 0; i < p_reflection.shader_stages.size(); i++) {
+		reflection_shader_stages.push_back(p_reflection.shader_stages[i].shader_stage);
 	}
 
 	reflection_data.stage_count = reflection_shader_stages.size();
@@ -763,6 +795,7 @@ RenderingDeviceCommons::ShaderReflection RenderingShaderContainer::get_shader_re
 			RDC::ShaderUniform &uniform = uniform_set.ptrw()[j];
 			uniform.type = RDC::UniformType(binding.type);
 			uniform.writable = binding.writable;
+			uniform.unbounded = binding.unbounded;
 			uniform.length = binding.length;
 			uniform.binding = binding.binding;
 			uniform.stages = binding.stages;
@@ -802,7 +835,7 @@ bool RenderingShaderContainer::from_bytes(const PackedByteArray &p_bytes) {
 	bytes_offset += _from_bytes_header_extra_data(&bytes_ptr[bytes_offset]);
 
 	ERR_FAIL_COND_V_MSG(container_header.magic_number != CONTAINER_MAGIC_NUMBER, false, "Incorrect magic number in shader container.");
-	ERR_FAIL_COND_V_MSG(container_header.version > CONTAINER_VERSION, false, "Unsupported version in shader container.");
+	ERR_FAIL_COND_V_MSG(container_header.version != CONTAINER_VERSION, false, "Shader container version mismatch (expected " + itos(CONTAINER_VERSION) + ", got " + itos(container_header.version) + ").");
 	ERR_FAIL_COND_V_MSG(container_header.format != _format(), false, "Incorrect format in shader container.");
 	ERR_FAIL_COND_V_MSG(container_header.format_version > _format_version(), false, "Unsupported format version in shader container.");
 

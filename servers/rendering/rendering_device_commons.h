@@ -955,6 +955,8 @@ public:
 		DRIVER_RESOURCE_BUFFER,
 		DRIVER_RESOURCE_COMPUTE_PIPELINE,
 		DRIVER_RESOURCE_RENDER_PIPELINE,
+		DRIVER_RESOURCE_TEXTURE_DEVICE_MEMORY,
+		DRIVER_RESOURCE_TEXTURE_USAGE_FLAGS,
 #ifndef DISABLE_DEPRECATED
 		DRIVER_RESOURCE_VULKAN_DEVICE = DRIVER_RESOURCE_LOGICAL_DEVICE,
 		DRIVER_RESOURCE_VULKAN_PHYSICAL_DEVICE = DRIVER_RESOURCE_PHYSICAL_DEVICE,
@@ -1113,14 +1115,15 @@ public:
 	struct ShaderUniform {
 		UniformType type = UniformType::UNIFORM_TYPE_MAX;
 		bool writable = false;
+		bool unbounded = false; // For runtime-sized arrays (e.g., sampler2D textures[])
 		uint32_t binding = 0;
 		BitField<ShaderStage> stages = {};
-		uint32_t length = 0; // Size of arrays (in total elements), or ubos (in bytes * total elements).
+		uint32_t length = 0; // Size of arrays (in total elements), or ubos (in bytes * total elements). 0 if unbounded.
 		TextureType texture_type = TEXTURE_TYPE_MAX;
 		DataFormat texture_format = DATA_FORMAT_MAX;
 
 		bool operator!=(const ShaderUniform &p_other) const {
-			return binding != p_other.binding || type != p_other.type || writable != p_other.writable || stages != p_other.stages || length != p_other.length;
+			return binding != p_other.binding || type != p_other.type || writable != p_other.writable || unbounded != p_other.unbounded || stages != p_other.stages || length != p_other.length;
 		}
 
 		bool operator<(const ShaderUniform &p_other) const {
@@ -1132,6 +1135,9 @@ public:
 			}
 			if (writable != p_other.writable) {
 				return writable < p_other.writable;
+			}
+			if (unbounded != p_other.unbounded) {
+				return unbounded < p_other.unbounded;
 			}
 			if (stages != p_other.stages) {
 				return stages < p_other.stages;

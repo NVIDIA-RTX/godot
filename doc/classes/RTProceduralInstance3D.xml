@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RTProceduralInstance3D" inherits="GeometryInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		A scene node that represents procedural ray tracing geometry using axis-aligned bounding boxes (AABBs).
+	</brief_description>
+	<description>
+		[RTProceduralInstance3D] adds a set of axis-aligned bounding boxes (AABBs) to the Top-Level Acceleration Structure (TLAS) as procedural geometry. Unlike mesh-based instances, procedural instances do not have triangle geometry; instead, intersection is handled entirely by a custom intersection shader in the ray tracing pipeline.
+		Each entry in [member bounds] defines one primitive AABB visible to intersection shaders via [code]gl_PrimitiveID[/code]. If [member bounds] is empty the node falls back to a single primitive using [member size] as the bounding box centered at the origin.
+		A zero-surface [ArrayMesh] is attached internally so the renderer classifies this node as a mesh instance. No vertex or index data is submitted to the raster pipeline; the node is invisible outside of ray tracing.
+		[b]Note:[/b] Requires a GPU with hardware ray tracing support and path tracing enabled in the [Environment].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="is_multi_aabb" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if [member bounds] contains at least one entry, meaning the node uses per-primitive AABBs rather than the single [member size]-derived bounding box.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bounds" type="AABB[]" setter="set_bounds" getter="get_bounds" default="[]">
+			Array of per-primitive axis-aligned bounding boxes submitted to the ray tracer. Each entry corresponds to one procedural primitive accessible via [code]gl_PrimitiveID[/code] in the intersection shader. When this array is empty, a single primitive is created using [member size].
+		</member>
+		<member name="custom_enclosing_aabb" type="AABB" setter="set_custom_enclosing_aabb" getter="get_custom_enclosing_aabb" default="AABB(0, 0, 0, 0, 0, 0)">
+			Optional override for the conservative bounding volume used to cull this instance in the TLAS. When set to a non-empty AABB (i.e., [method AABB.has_volume] returns [code]true[/code]), this value is used instead of the union of all [member bounds] entries. Useful when the logical extents of your procedural geometry exceed the individual AABBs.
+		</member>
+		<member name="expose_aabb_bounds" type="bool" setter="set_expose_aabb_bounds" getter="get_expose_aabb_bounds" default="false">
+			If [code]true[/code], the per-primitive AABBs from [member bounds] are made accessible to hit shaders, allowing intersection shaders to skip redundant ray-AABB tests using precomputed results.
+		</member>
+		<member name="size" type="Vector3" setter="set_size" getter="get_size" default="Vector3(1, 1, 1)">
+			The size of the single fallback bounding box used when [member bounds] is empty. The box is centered at the node origin. Has no effect when [member bounds] contains at least one entry.
+		</member>
+	</members>
+</class>

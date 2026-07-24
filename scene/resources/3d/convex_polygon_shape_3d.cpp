@@ -35,7 +35,7 @@
 #include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> ConvexPolygonShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> ConvexPolygonShape3D::_build_debug_mesh_lines() const {
 	Vector<Vector3> poly_points = get_points();
 
 	if (poly_points.size() > 1) { // Need at least 2 points for a line.
@@ -56,7 +56,7 @@ Vector<Vector3> ConvexPolygonShape3D::get_debug_mesh_lines() const {
 	return Vector<Vector3>();
 }
 
-Ref<ArrayMesh> ConvexPolygonShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> ConvexPolygonShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	const Vector<Vector3> hull_points = get_points();
 
 	Vector<Vector3> verts;
@@ -68,9 +68,8 @@ Ref<ArrayMesh> ConvexPolygonShape3D::get_debug_arraymesh_faces(const Color &p_mo
 		Error err = ConvexHullComputer::convex_hull(hull_points, md);
 		if (err == OK) {
 			verts = Vector<Vector3>(md.vertices);
-			for (int i = 0; i < verts.size(); i++) {
-				colors.push_back(p_modulate);
-			}
+			colors.resize(verts.size());
+			colors.fill(p_modulate);
 			for (const Geometry3D::MeshData::Face &face : md.faces) {
 				const int first_point = face.indices[0];
 				const int indices_count = face.indices.size();

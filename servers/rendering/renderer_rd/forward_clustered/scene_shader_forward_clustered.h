@@ -279,6 +279,25 @@ public:
 		uint64_t last_pass = 0;
 		uint32_t index = 0;
 
+		// RT Classification. Lazily allocated only when the shader has `#if defined(RT)` divergence.
+		struct RTClassification {
+			String code;
+			DepthDraw depth_draw = DEPTH_DRAW_OPAQUE;
+			DepthTest depth_test = DEPTH_TEST_ENABLED;
+			int blend_mode = BLEND_MODE_MIX;
+			int alpha_antialiasing_mode = ALPHA_ANTIALIASING_OFF;
+			RSE::CullMode cull_mode = RSE::CULL_MODE_BACK;
+			bool uses_alpha = false;
+			bool uses_blend_alpha = false;
+			bool uses_alpha_clip = false;
+			bool uses_alpha_antialiasing = false;
+			bool uses_depth_prepass_alpha = false;
+			bool uses_screen_texture = false;
+			bool uses_depth_texture = false;
+			bool uses_normal_texture = false;
+		};
+		RTClassification *rt = nullptr;
+
 		_FORCE_INLINE_ bool uses_alpha_pass() const {
 			bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture || uses_normal_texture;
 			bool has_base_alpha = (uses_alpha && (!uses_alpha_clip || uses_alpha_antialiasing)) || has_read_screen_alpha;
@@ -295,17 +314,45 @@ public:
 			return (uses_depth_prepass_alpha || uses_alpha_antialiasing) && !(no_depth_draw || no_depth_test);
 		}
 
+		// RT-side alpha-pass helpers; fall back to raster when no divergence.
+		_FORCE_INLINE_ bool rt_uses_alpha_pass() const {
+			if (!rt) {
+				return uses_alpha_pass();
+			}
+			bool has_read_screen_alpha = rt->uses_screen_texture || rt->uses_depth_texture || rt->uses_normal_texture;
+			bool has_base_alpha = (rt->uses_alpha && (!rt->uses_alpha_clip || rt->uses_alpha_antialiasing)) || has_read_screen_alpha;
+			bool has_blend_alpha = rt->uses_blend_alpha;
+			bool has_alpha = has_base_alpha || has_blend_alpha;
+			bool no_depth_draw = rt->depth_draw == DEPTH_DRAW_DISABLED;
+			bool no_depth_test = rt->depth_test != DEPTH_TEST_ENABLED;
+			return has_alpha || has_read_screen_alpha || no_depth_draw || no_depth_test;
+		}
+
+		_FORCE_INLINE_ bool rt_uses_depth_in_alpha_pass() const {
+			if (!rt) {
+				return uses_depth_in_alpha_pass();
+			}
+			bool no_depth_draw = rt->depth_draw == DEPTH_DRAW_DISABLED;
+			bool no_depth_test = rt->depth_test != DEPTH_TEST_ENABLED;
+			return (rt->uses_depth_prepass_alpha || rt->uses_alpha_antialiasing) && !(no_depth_draw || no_depth_test);
+		}
+
+		_FORCE_INLINE_ RSE::CullMode rt_cull_mode() const {
+			return rt ? rt->cull_mode : cull_mode;
+		}
+
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RSE::CULL_MODE_BACK;
 			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !wireframe && !uses_z_clip_scale && !stencil_enabled;
 		}
 
-		virtual void set_code(const String &p_Code);
+		virtual void set_code(const String &p_Code) override;
+		virtual void set_code_rt(const String &p_code_rt) override;
 
-		virtual bool is_animated() const;
-		virtual bool casts_shadows() const;
-		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const;
-		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const;
+		virtual bool is_animated() const override;
+		virtual bool casts_shadows() const override;
+		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const override;
+		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const override;
 		uint16_t _get_shader_version(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader) const;
 		RID _get_shader_variant(uint16_t p_shader_version) const;
 		void _clear_vertex_input_mask_cache();

@@ -98,6 +98,24 @@ bool Shape3D::get_debug_fill() const {
 	return debug_fill;
 }
 
+Vector<Vector3> Shape3D::get_debug_mesh_lines() {
+	if (debug_mesh_lines_cache_dirty) {
+		debug_mesh_lines_cache = _build_debug_mesh_lines();
+		debug_mesh_lines_cache_dirty = false;
+	}
+	return debug_mesh_lines_cache;
+}
+
+Ref<ArrayMesh> Shape3D::get_debug_arraymesh_faces(const Color &p_modulate) {
+	if (debug_arraymesh_faces_cache_valid && debug_arraymesh_faces_cache_modulate == p_modulate) {
+		return debug_arraymesh_faces_cache;
+	}
+	debug_arraymesh_faces_cache = _build_debug_arraymesh_faces(p_modulate);
+	debug_arraymesh_faces_cache_modulate = p_modulate;
+	debug_arraymesh_faces_cache_valid = true;
+	return debug_arraymesh_faces_cache;
+}
+
 Ref<ArrayMesh> Shape3D::get_debug_mesh() {
 	if (debug_mesh_cache.is_valid()) {
 		return debug_mesh_cache;
@@ -142,6 +160,10 @@ Ref<ArrayMesh> Shape3D::get_debug_mesh() {
 void Shape3D::_update_shape() {
 	emit_changed();
 	debug_mesh_cache.unref();
+	debug_mesh_lines_cache.clear();
+	debug_mesh_lines_cache_dirty = true;
+	debug_arraymesh_faces_cache.unref();
+	debug_arraymesh_faces_cache_valid = false;
 }
 
 void Shape3D::_bind_methods() {

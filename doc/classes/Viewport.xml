@@ -344,6 +344,9 @@
 		<member name="disable_3d" type="bool" setter="set_disable_3d" getter="is_3d_disabled" default="false">
 			Disable 3D rendering (but keep 2D rendering).
 		</member>
+		<member name="frame_generation" type="bool" setter="set_frame_generation" getter="get_frame_generation" default="false">
+			Enables Frame Generation technology on this viewport, if available. (currently DLSS 3.0 is supported - NVIDIA only)
+		</member>
 		<member name="fsr_sharpness" type="float" setter="set_fsr_sharpness" getter="get_fsr_sharpness" default="0.2">
 			Determines how sharp the upscaled image will be when using the FSR upscaling mode. Sharpness halves with every whole number. Values go from 0.0 (sharpest) to 2.0. Values above 2.0 won't make a visible difference.
 			To control this property on the root viewport, set the [member ProjectSettings.rendering/scaling_3d/fsr_sharpness] project setting.
@@ -579,7 +582,10 @@
 			Use nearest-neighbor filtering for the viewport's 3D buffer. This looks crisper than [constant SCALING_3D_MODE_BILINEAR] and has no additional rendering cost. The amount of scaling can be set using [member scaling_3d_scale]. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] disables scaling.
 			[b]Note:[/b] When using the [b]Nearest[/b] scaling mode, to avoid uneven pixel scaling, it's highly recommended to use a value equal to an integer divisor with a dividend of [code]1[/code]. For example, it's best to use a scale of [code]0.5[/code] (1/2), [code]0.3333[/code] (1/3), [code]0.25[/code] (1/4), [code]0.2[/code] (1/5), and so on.
 		</constant>
-		<constant name="SCALING_3D_MODE_MAX" value="6" enum="Scaling3DMode">
+		<constant name="SCALING_3D_MODE_DLSS" value="6" enum="Scaling3DMode">
+			Use NVIDIA DLSS upscaling for the viewport's 3D buffer. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values less than [code]1.0[/code] will result in the viewport being upscaled using DLSS Super Resolution or DLSS Ray Regeneration, depending on raytracing mode ON/OFF. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. Scaling values: 0.5 - Performance, 0.58 - Balanced, 0.66 - Quality, 1.0 - DLAA
+		</constant>
+		<constant name="SCALING_3D_MODE_MAX" value="7" enum="Scaling3DMode">
 			Represents the size of the [enum Scaling3DMode] enum.
 		</constant>
 		<constant name="MSAA_DISABLED" value="0" enum="MSAA">
@@ -636,7 +642,22 @@
 		<constant name="RENDER_INFO_DRAW_CALLS_IN_FRAME" value="2" enum="RenderInfo">
 			Amount of draw calls in frame.
 		</constant>
-		<constant name="RENDER_INFO_MAX" value="3" enum="RenderInfo">
+		<constant name="RENDER_INFO_RT_TLAS_INSTANCES" value="3" enum="RenderInfo">
+			Number of TLAS instances submitted this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_BLAS_BUILDS" value="4" enum="RenderInfo">
+			Number of full BLAS builds performed this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_BLAS_REFITS" value="5" enum="RenderInfo">
+			Number of BLAS refits performed this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_TRIANGLES_BUILT" value="6" enum="RenderInfo">
+			Total triangles processed by full BLAS builds this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="RenderInfo">
+			Total triangles processed by BLAS refits this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_MAX" value="8" enum="RenderInfo">
 			Represents the size of the [enum RenderInfo] enum.
 		</constant>
 		<constant name="RENDER_INFO_TYPE_VISIBLE" value="0" enum="RenderInfoType">
@@ -766,6 +787,21 @@
 		<constant name="DEBUG_DRAW_AREA_LIGHT_ATLAS" value="28" enum="DebugDraw">
 			Draws the atlas used by [AreaLight3D] nodes in the upper left quadrant of the [Viewport].
 			[b]Note:[/b] Only supported when using the Forward+ or Mobile rendering method.
+		</constant>
+		<constant name="DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="29" enum="DebugDraw">
+			Displays the diffuse albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="30" enum="DebugDraw">
+			Displays the specular albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="31" enum="DebugDraw">
+			Displays the packed normal and roughness input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="32" enum="DebugDraw">
+			Displays the specular ray hit distance input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="33" enum="DebugDraw">
+			Displays the depth buffer reconstructed by NVIDIA DLSS Ray Reconstruction after denoising. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
 		<constant name="DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST" value="0" enum="DefaultCanvasItemTextureFilter">
 			The texture filter reads from the nearest pixel only. This makes the texture look pixelated from up close, and grainy from a distance (due to mipmaps not being sampled).

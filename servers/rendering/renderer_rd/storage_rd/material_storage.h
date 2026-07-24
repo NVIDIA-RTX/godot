@@ -79,6 +79,10 @@ public:
 		virtual bool is_parameter_texture(const StringName &p_param) const;
 
 		virtual void set_code(const String &p_Code) = 0;
+		// Optional follow-up to `set_code` carrying the RT-preprocessed source.
+		// Default no-op; RT-aware subclasses override to extract RT-side
+		// classification flags.
+		virtual void set_code_rt(const String &p_code_rt) {}
 		virtual bool is_animated() const = 0;
 		virtual bool casts_shadows() const = 0;
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const = 0;
@@ -268,6 +272,10 @@ private:
 		Mutex *mutex = nullptr;
 		ShaderData *data = nullptr;
 		String code;
+		// Same source preprocessed with `RT=1`. Set by `shader_set_code_rt`.
+		String code_rt;
+		uint64_t code_rt_hash = 0;
+		uint64_t code_rt_hash_b = 0; // 128 bit hash
 		String path_hint;
 		ShaderType type;
 		HashMap<StringName, HashMap<int, RID>> default_texture_parameter;
@@ -300,6 +308,8 @@ private:
 		int32_t priority = 0;
 		RID next_pass;
 		SelfList<Material> update_element;
+
+		uint16_t rt_invalidation_counter = 0; ///< Bump on param changes for RT cache invalidation.
 
 		Dependency dependency;
 
@@ -455,6 +465,10 @@ public:
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) override;
 
 	RID global_shader_uniforms_get_storage_buffer() const;
+	/// Returns the override (or value) RID for a global texture parameter, or RID() if not found.
+	RID global_shader_uniform_get_texture(const StringName &p_name) const;
+	/// Returns the buffer index for a scalar/vector global shader parameter, or -1 if not found.
+	int32_t global_shader_uniform_get_buffer_index(const StringName &p_name) const;
 
 	/* SHADER API */
 
@@ -465,6 +479,7 @@ public:
 	virtual void shader_free(RID p_rid) override;
 
 	virtual void shader_set_code(RID p_shader, const String &p_code) override;
+	virtual void shader_set_code_rt(RID p_shader, const String &p_code_rt) override;
 	virtual void shader_set_path_hint(RID p_shader, const String &p_path) override;
 	virtual String shader_get_code(RID p_shader) const override;
 	virtual void get_shader_parameter_list(RID p_shader, List<PropertyInfo> *p_param_list) const override;
@@ -493,6 +508,12 @@ public:
 
 	virtual void material_set_shader(RID p_material, RID p_shader) override;
 	ShaderData *material_get_shader_data(RID p_material);
+
+	String material_get_shader_code(RID p_material) const;
+	// Falls back to raster code when no RT variant is set.
+	String material_get_shader_code_rt(RID p_material) const;
+	uint64_t material_get_shader_code_rt_hash(RID p_material) const;
+	uint64_t material_get_shader_code_rt_hash_b(RID p_material) const;
 
 	virtual void material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) override;
 	virtual Variant material_get_param(RID p_material, const StringName &p_param) const override;
@@ -523,6 +544,14 @@ public:
 		} else {
 			return material->data;
 		}
+	}
+
+	_FORCE_INLINE_ uint16_t material_get_rt_invalidation_counter(RID p_material) const {
+		Material *material = material_owner.get_or_null(p_material);
+		if (!material) {
+			return 0;
+		}
+		return material->rt_invalidation_counter;
 	}
 };
 

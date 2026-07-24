@@ -34,7 +34,7 @@
 #include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> ConcavePolygonShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> ConcavePolygonShape3D::_build_debug_mesh_lines() const {
 	HashSet<DrawEdge, DrawEdge> edges;
 
 	int index_count = faces.size();
@@ -61,12 +61,10 @@ Vector<Vector3> ConcavePolygonShape3D::get_debug_mesh_lines() const {
 	return points;
 }
 
-Ref<ArrayMesh> ConcavePolygonShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> ConcavePolygonShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	Vector<Color> colors;
-
-	for (int i = 0; i < faces.size(); i++) {
-		colors.push_back(p_modulate);
-	}
+	colors.resize(faces.size());
+	colors.fill(p_modulate);
 
 	Ref<ArrayMesh> mesh = memnew(ArrayMesh);
 	Array a;
@@ -108,6 +106,9 @@ Vector<Vector3> ConcavePolygonShape3D::get_faces() const {
 }
 
 void ConcavePolygonShape3D::set_backface_collision_enabled(bool p_enabled) {
+	if (backface_collision == p_enabled) {
+		return;
+	}
 	backface_collision = p_enabled;
 
 	if (!faces.is_empty()) {

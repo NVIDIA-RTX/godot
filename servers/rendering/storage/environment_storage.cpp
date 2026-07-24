@@ -30,6 +30,8 @@
 
 #include "environment_storage.h"
 
+#include "core/config/project_settings.h"
+
 #ifdef DEBUG_ENABLED
 #include "core/os/os.h"
 #endif
@@ -892,6 +894,48 @@ RSE::EnvironmentSDFGIYScale RendererEnvironmentStorage::environment_get_sdfgi_y_
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, RSE::ENV_SDFGI_Y_SCALE_75_PERCENT);
 	return env->sdfgi_y_scale;
+}
+
+// Pathtracing
+
+void RendererEnvironmentStorage::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL(env);
+	env->pathtracing_enabled = p_enable;
+	env->pathtracing_debug_mode = p_debug_mode;
+	env->pathtracing_samples_per_pixel = p_samples_per_pixel;
+	env->pathtracing_max_bounces = p_max_bounces;
+	env->pathtracing_denoiser = p_denoiser;
+}
+
+bool RendererEnvironmentStorage::environment_get_pathtracing_enabled(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, false);
+	return env->pathtracing_enabled;
+}
+
+int RendererEnvironmentStorage::environment_get_pathtracing_debug_mode(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 0);
+	return env->pathtracing_debug_mode;
+}
+
+int RendererEnvironmentStorage::environment_get_pathtracing_samples_per_pixel(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 1);
+	return env->pathtracing_samples_per_pixel;
+}
+
+int RendererEnvironmentStorage::environment_get_pathtracing_max_bounces(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 3);
+	return env->pathtracing_max_bounces;
+}
+
+RSE::PathtracingDenoiser RendererEnvironmentStorage::environment_get_pathtracing_denoiser(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, RSE::PT_DENOISER_NONE);
+	return env->pathtracing_denoiser;
 }
 
 // Adjustments

@@ -42,6 +42,8 @@
 #include "core/os/thread.h"
 #endif
 
+#include "drivers/streamline/streamline.h"
+
 #include <thirdparty/gamepadmotionhelpers/GamepadMotion.hpp>
 
 #define STANDARD_GRAVITY 9.80665f
@@ -873,7 +875,9 @@ void Input::_parse_input_event_impl(const Ref<InputEvent> &p_event, bool p_is_em
 	//   require additional handling by this class.
 
 	Ref<InputEventKey> k = p_event;
-	if (k.is_valid() && !k->is_echo() && k->get_keycode() != Key::NONE) {
+	if (k.is_valid() && !k->is_echo() && k->get_keycode() == Key::F13) {
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_PC_PING);
+	} else if (k.is_valid() && !k->is_echo() && k->get_keycode() != Key::NONE) {
 		if (k->is_pressed()) {
 			keys_pressed.insert(k->get_keycode());
 		} else {

@@ -38,6 +38,12 @@
 
 #include <thirdparty/misc/smolv.h>
 
+#if defined(STREAMLINE_ENABLED)
+#include "drivers/streamline/streamline.h"
+#endif
+
+#include "drivers/aftermath/aftermath.h"
+
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
 #include "platform/android/java_godot_wrapper.h"
 #include "platform/android/os_android.h"
@@ -584,7 +590,11 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false);
+	if (Engine::get_singleton()->is_raytracing_validation_enabled()) {
+		_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
+	}
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 
 	// We don't actually use this extension, but some runtime components on some platforms
@@ -593,6 +603,13 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 
 	if (Engine::get_singleton()->is_generate_spirv_debug_info_enabled()) {
 		_register_requested_device_extension(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, true);
+		_register_requested_device_extension(VK_KHR_SHADER_RELAXED_EXTENDED_INSTRUCTION_EXTENSION_NAME, false);
+	}
+
+	// Aftermath requires these two NV extensions when active.
+	if (Aftermath::get_singleton()->is_active()) {
+		_register_requested_device_extension(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME, false);
+		_register_requested_device_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, false);
 	}
 
 #if defined(VK_TRACK_DEVICE_MEMORY)
@@ -913,7 +930,9 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDevicePipelineCreationCacheControlFeatures pipeline_cache_control_features = {};
 		VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
+		VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT raytracing_invocation_reorder_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
+		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 
@@ -994,6 +1013,18 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &raytracing_pipeline_features;
 		}
 
+		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
+			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+			ray_query_features.pNext = next_features;
+			next_features = &ray_query_features;
+		}
+
+		if (enabled_device_extension_names.has(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME)) {
+			raytracing_invocation_reorder_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT;
+			raytracing_invocation_reorder_features.pNext = next_features;
+			next_features = &raytracing_invocation_reorder_features;
+		}
+
 		if (enabled_device_extension_names.has(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME)) {
 			raytracing_validation_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
 			raytracing_validation_features.pNext = next_features;
@@ -1026,6 +1057,11 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 				vulkan_memory_model_support = device_features_vk_1_2.vulkanMemoryModel;
 				vulkan_memory_model_device_scope_support = device_features_vk_1_2.vulkanMemoryModelDeviceScope;
 			}
+			// Descriptor indexing features (core in Vulkan 1.2).
+			descriptor_indexing_capabilities.shader_sampled_image_array_non_uniform_indexing = device_features_vk_1_2.shaderSampledImageArrayNonUniformIndexing;
+			descriptor_indexing_capabilities.descriptor_binding_partially_bound = device_features_vk_1_2.descriptorBindingPartiallyBound;
+			descriptor_indexing_capabilities.descriptor_binding_variable_descriptor_count = device_features_vk_1_2.descriptorBindingVariableDescriptorCount;
+			descriptor_indexing_capabilities.runtime_descriptor_array = device_features_vk_1_2.runtimeDescriptorArray;
 		} else {
 			if (enabled_device_extension_names.has(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME)) {
 				shader_capabilities.shader_float16_is_supported = shader_features.shaderFloat16;
@@ -1093,6 +1129,10 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		if (enabled_device_extension_names.has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
 			raytracing_capabilities.raytracing_pipeline_support = raytracing_pipeline_features.rayTracingPipeline;
 			raytracing_capabilities.validation = raytracing_validation_features.rayTracingValidation;
+		}
+
+		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
+			ray_query_support = ray_query_features.rayQuery;
 		}
 	}
 
@@ -1310,6 +1350,14 @@ Error RenderingDeviceDriverVulkan::_add_queue_create_info(LocalVector<VkDeviceQu
 	const uint32_t max_queue_count_per_family = 1;
 	static const float queue_priorities[max_queue_count_per_family] = {};
 	for (uint32_t i = 0; i < queue_family_count; i++) {
+#ifdef STREAMLINE_ENABLED
+		if (queue_family_properties[i].queueCount == 1 &&
+				(queue_family_properties[i].queueFlags & VK_QUEUE_OPTICAL_FLOW_BIT_NV) != 0 &&
+				(queue_family_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) {
+			// This queue is required by Streamline. Don't allocate it or Streamline 2.4.10 will fail in combination with DLSS-FG.
+			continue;
+		}
+#endif
 		if ((queue_family_properties[i].queueFlags & queue_flags_mask) == 0) {
 			// We ignore creating queues in families that don't support any of the operations we require.
 			continue;
@@ -1433,6 +1481,22 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &raytracing_pipeline_features;
 	}
 
+	VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+	if (ray_query_support) {
+		ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+		ray_query_features.pNext = create_info_next;
+		ray_query_features.rayQuery = ray_query_support;
+		create_info_next = &ray_query_features;
+	}
+
+	VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT raytracing_invocation_reorder_features = {};
+	if (raytracing_capabilities.raytracing_pipeline_support && enabled_device_extension_names.has(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME)) {
+		raytracing_invocation_reorder_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT;
+		raytracing_invocation_reorder_features.pNext = create_info_next;
+		raytracing_invocation_reorder_features.rayTracingInvocationReorder = VK_TRUE;
+		create_info_next = &raytracing_invocation_reorder_features;
+	}
+
 	VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 	if (raytracing_capabilities.validation) {
 		raytracing_validation_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
@@ -1442,11 +1506,27 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceVulkan11Features vulkan_1_1_features = {};
+	VkPhysicalDeviceVulkan12Features vulkan_1_2_features = {};
 	VkPhysicalDevice16BitStorageFeaturesKHR storage_features = {};
 	VkPhysicalDeviceMultiviewFeatures multiview_features = {};
 	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 	if (enable_1_2_features) {
 		// In Vulkan 1.2 and newer we use a newer struct to enable various features.
+		// Enable Vulkan 1.2 features (descriptor indexing, buffer device address, etc.).
+		vulkan_1_2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		vulkan_1_2_features.pNext = create_info_next;
+		vulkan_1_2_features.bufferDeviceAddress = buffer_device_address_support;
+		vulkan_1_2_features.vulkanMemoryModel = vulkan_memory_model_support;
+		vulkan_1_2_features.vulkanMemoryModelDeviceScope = vulkan_memory_model_device_scope_support;
+		vulkan_1_2_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
+		vulkan_1_2_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
+		// Descriptor indexing features for bindless textures.
+		vulkan_1_2_features.shaderSampledImageArrayNonUniformIndexing = descriptor_indexing_capabilities.shader_sampled_image_array_non_uniform_indexing;
+		vulkan_1_2_features.descriptorBindingPartiallyBound = descriptor_indexing_capabilities.descriptor_binding_partially_bound;
+		vulkan_1_2_features.descriptorBindingVariableDescriptorCount = descriptor_indexing_capabilities.descriptor_binding_variable_descriptor_count;
+		vulkan_1_2_features.runtimeDescriptorArray = descriptor_indexing_capabilities.runtime_descriptor_array;
+		create_info_next = &vulkan_1_2_features;
+
 		vulkan_1_1_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 		vulkan_1_1_features.pNext = create_info_next;
 		vulkan_1_1_features.storageBuffer16BitAccess = storage_buffer_capabilities.storage_buffer_16_bit_access_is_supported;
@@ -1480,6 +1560,15 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 			multiview_features.multiviewGeometryShader = multiview_capabilities.geometry_shader_is_supported;
 			multiview_features.multiviewTessellationShader = multiview_capabilities.tessellation_shader_is_supported;
 			create_info_next = &multiview_features;
+		}
+	}
+
+	if (Aftermath::get_singleton()->is_active() &&
+			enabled_device_extension_names.has(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME)) {
+		void *diag_config = Aftermath::get_singleton()->get_internal_parameter(AFTERMATH_INTERNAL_PARAM_VK_DEVICE_DIAGNOSTICS_CONFIG);
+		if (diag_config) {
+			static_cast<VkBaseOutStructure *>(diag_config)->pNext = static_cast<VkBaseOutStructure *>(create_info_next);
+			create_info_next = diag_config;
 		}
 	}
 
@@ -1851,6 +1940,12 @@ Error RenderingDeviceDriverVulkan::initialize(uint32_t p_device_index, uint32_t 
 	err = _check_device_capabilities();
 	ERR_FAIL_COND_V_MSG(err != OK, err, "Couldn't initialize Vulkan device capabilities. This may be caused by an incompatible or outdated graphics driver.");
 
+#ifdef STREAMLINE_ENABLED
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->set_internal_parameter("vulkan_physical_device", (void *)physical_device);
+	}
+#endif
+
 	LocalVector<VkDeviceQueueCreateInfo> queue_create_info;
 	err = _add_queue_create_info(queue_create_info);
 	ERR_FAIL_COND_V_MSG(err != OK, err, "Couldn't initialize Vulkan device queue. This may be caused by an incompatible or outdated graphics driver.");
@@ -1890,6 +1985,12 @@ Error RenderingDeviceDriverVulkan::initialize(uint32_t p_device_index, uint32_t 
 
 	pipeline_statistics.file_access->store_csv_line({ "name", "hash", "stage", "spec", "glslang", "re-spirv", "time" });
 	pipeline_statistics.file_access->flush();
+#endif
+
+#if defined(STREAMLINE_ENABLED)
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_AFTER_DEVICE_CREATION);
+	}
 #endif
 
 	return OK;
@@ -3311,6 +3412,12 @@ Error RenderingDeviceDriverVulkan::command_queue_execute_and_present(CommandQueu
 		present_info.pImageIndices = image_indices.ptr();
 		present_info.pResults = results.ptr();
 
+#ifdef STREAMLINE_ENABLED
+		if (Streamline::get_singleton()) {
+			Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEGIN_PRESENT);
+		}
+#endif
+
 		device_queue.submit_mutex.lock();
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
 		if (swappy_frame_pacer_enable) {
@@ -3323,6 +3430,10 @@ Error RenderingDeviceDriverVulkan::command_queue_execute_and_present(CommandQueu
 #endif
 
 		device_queue.submit_mutex.unlock();
+
+#ifdef STREAMLINE_ENABLED
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_END_PRESENT);
+#endif
 
 		// Set the index to an invalid value. If any of the swap chains returned out of date, indicate it should be resized the next time it's acquired.
 		bool any_result_is_out_of_date = false;
@@ -3674,6 +3785,11 @@ Error RenderingDeviceDriverVulkan::swap_chain_resize(CommandQueueID p_cmd_queue,
 
 	CommandQueue *command_queue = (CommandQueue *)(p_cmd_queue.id);
 	SwapChain *swap_chain = (SwapChain *)(p_swap_chain.id);
+
+#ifdef STREAMLINE_ENABLED
+	// Emit streamline event
+	Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_MODIFY_SWAPCHAIN);
+#endif
 
 	// Release all current contents of the swap chain.
 	_swap_chain_release(swap_chain);
@@ -4248,6 +4364,7 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 	}
 
 	// Set bindings.
+	static constexpr uint32_t VK_UNBOUNDED_DESCRIPTOR_COUNT = 128000;
 	Vector<Vector<VkDescriptorSetLayoutBinding>> vk_set_bindings;
 	vk_set_bindings.resize(shader_refl.uniform_sets.size());
 	for (uint32_t i = 0; i < shader_refl.uniform_sets.size(); i++) {
@@ -4282,11 +4399,12 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 				} break;
 				case UNIFORM_TYPE_SAMPLER_WITH_TEXTURE: {
 					layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-					layout_binding.descriptorCount = uniform.length;
+					// For unbounded arrays (bindless), use a large max count.
+					layout_binding.descriptorCount = uniform.unbounded ? VK_UNBOUNDED_DESCRIPTOR_COUNT : uniform.length;
 				} break;
 				case UNIFORM_TYPE_TEXTURE: {
 					layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-					layout_binding.descriptorCount = uniform.length;
+					layout_binding.descriptorCount = uniform.unbounded ? VK_UNBOUNDED_DESCRIPTOR_COUNT : uniform.length;
 				} break;
 				case UNIFORM_TYPE_IMAGE: {
 					layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -4332,7 +4450,22 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 	Vector<uint8_t> decompressed_code;
 	VkShaderModule vk_module;
 	PackedByteArray decoded_spirv;
-	const bool use_respv = (RESPV_ENABLED == 1) && !shader_container_format.get_debug_info_enabled();
+
+	// Check if any stage is a raytracing stage (RESPV is not compatible with raytracing shaders)
+	bool has_raytracing_stages = false;
+	for (int stage_idx = 0; stage_idx < shader_refl.stages_vector.size(); stage_idx++) {
+		ShaderStage stage = shader_refl.stages_vector[stage_idx];
+		if (stage == ShaderStage::SHADER_STAGE_RAYGEN ||
+				stage == ShaderStage::SHADER_STAGE_ANY_HIT ||
+				stage == ShaderStage::SHADER_STAGE_CLOSEST_HIT ||
+				stage == ShaderStage::SHADER_STAGE_MISS ||
+				stage == ShaderStage::SHADER_STAGE_INTERSECTION) {
+			has_raytracing_stages = true;
+			break;
+		}
+	}
+
+	const bool use_respv = (RESPV_ENABLED == 1) && !shader_container_format.get_debug_info_enabled() && !has_raytracing_stages;
 	const bool store_respv = use_respv && !shader_refl.specialization_constants.is_empty();
 	const int64_t stage_count = shader_refl.stages_vector.size();
 	shader_info.vk_stages_create_info.reserve(stage_count);
@@ -4410,6 +4543,8 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 		shader_info.spirv_stage_bytes.push_back(decoded_spirv);
 #endif
 
+		Aftermath::get_singleton()->register_shader(AFTERMATH_SHADER_SPIRV, decoded_spirv.ptr(), decoded_spirv.size());
+
 		VkShaderModuleCreateInfo shader_module_create_info = {};
 		shader_module_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 		shader_module_create_info.codeSize = decoded_spirv.size();
@@ -4439,11 +4574,41 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 		placeholder_binding.stageFlags = VK_SHADER_STAGE_ALL;
 
 		for (uint32_t i = 0; i < shader_refl.uniform_sets.size(); i++) {
+			// Check if any binding in this set is unbounded.
+			bool has_unbounded = false;
+			for (uint32_t j = 0; j < shader_refl.uniform_sets[i].size(); j++) {
+				if (shader_refl.uniform_sets[i][j].unbounded) {
+					has_unbounded = true;
+					break;
+				}
+			}
+
+			// Create binding flags for unbounded descriptors.
+			Vector<VkDescriptorBindingFlags> binding_flags;
+			VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info = {};
+			if (has_unbounded && descriptor_indexing_capabilities.descriptor_binding_partially_bound) {
+				binding_flags.resize(vk_set_bindings[i].size());
+				for (uint32_t j = 0; j < shader_refl.uniform_sets[i].size(); j++) {
+					if (shader_refl.uniform_sets[i][j].unbounded) {
+						binding_flags.write[j] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+								VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+					} else {
+						binding_flags.write[j] = 0;
+					}
+				}
+				binding_flags_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+				binding_flags_info.bindingCount = binding_flags.size();
+				binding_flags_info.pBindingFlags = binding_flags.ptr();
+			}
+
 			// Empty ones are fine if they were not used according to spec (binding count will be 0).
 			VkDescriptorSetLayoutCreateInfo layout_create_info = {};
 			layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 			layout_create_info.bindingCount = vk_set_bindings[i].size();
 			layout_create_info.pBindings = vk_set_bindings[i].ptr();
+			if (has_unbounded && descriptor_indexing_capabilities.descriptor_binding_partially_bound) {
+				layout_create_info.pNext = &binding_flags_info;
+			}
 
 			// ...not so fine on Adreno 5XX.
 			if (adreno_5xx_empty_descriptor_set_layout_workaround && layout_create_info.bindingCount == 0) {
@@ -4675,6 +4840,7 @@ RDD::UniformSetID RenderingDeviceDriverVulkan::uniform_set_create(VectorView<Bou
 	// Immutable samplers will be skipped so we need to track the number of vk_writes used.
 	VkWriteDescriptorSet *vk_writes = ALLOCA_ARRAY(VkWriteDescriptorSet, p_uniforms.size());
 	uint32_t writes_amount = 0;
+	uint32_t variable_descriptor_count = 0;
 	for (uint32_t i = 0; i < p_uniforms.size(); i++) {
 		const BoundUniform &uniform = p_uniforms[i];
 
@@ -4893,6 +5059,12 @@ RDD::UniformSetID RenderingDeviceDriverVulkan::uniform_set_create(VectorView<Bou
 		if (add_write) {
 			vk_writes[writes_amount].dstBinding = uniform.binding;
 			vk_writes[writes_amount].descriptorCount = num_descriptors;
+			if (uniform.variable_count) {
+				ERR_FAIL_COND_V_MSG(variable_descriptor_count > 0, UniformSetID(), "Trying to create a uniform set with multiple bindings that are variable. Only the last binding can be variable!");
+
+				variable_descriptor_count = num_descriptors;
+			}
+
 			writes_amount++;
 		}
 
@@ -4915,6 +5087,16 @@ RDD::UniformSetID RenderingDeviceDriverVulkan::uniform_set_create(VectorView<Bou
 	descriptor_set_allocate_info.descriptorSetCount = 1;
 	const ShaderInfo *shader_info = (const ShaderInfo *)p_shader.id;
 	descriptor_set_allocate_info.pSetLayouts = &shader_info->vk_descriptor_set_layouts[p_set_index];
+
+	VkDescriptorSetVariableDescriptorCountAllocateInfo variable_count_info = {};
+	if (variable_descriptor_count > 0) {
+		variable_count_info.pNext = nullptr;
+		variable_count_info.descriptorSetCount = 1;
+		variable_count_info.pDescriptorCounts = &variable_descriptor_count;
+		variable_count_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+
+		descriptor_set_allocate_info.pNext = &variable_count_info;
+	}
 
 	VkDescriptorSet vk_descriptor_set = VK_NULL_HANDLE;
 	for (KeyValue<VkDescriptorPool, uint32_t> &E : pool_sets_it->value) {
@@ -6159,6 +6341,8 @@ RDD::PipelineID RenderingDeviceDriverVulkan::render_pipeline_create(
 #endif
 
 					// Create the shader module with the optimized output.
+					Aftermath::get_singleton()->register_shader(AFTERMATH_SHADER_SPIRV,
+							reinterpret_cast<const uint8_t *>(respv_optimized_data.data()), respv_optimized_data.size());
 					VkShaderModule shader_module = VK_NULL_HANDLE;
 					VkShaderModuleCreateInfo shader_module_create_info = {};
 					shader_module_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -6277,7 +6461,7 @@ static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_B
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR));
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_LOW_MEMORY_BIT, VK_BUILD_ACCELERATION_STRUCTURE_LOW_MEMORY_BIT_KHR));
 
-// RDD::AccelerationStructureGeometryBits == VkGeometryFlagsKHR.
+// RDD::AccelerationStructureGeometryFlagBits == VkGeometryFlagsKHR.
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT, VK_GEOMETRY_OPAQUE_BIT_KHR));
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT, VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR));
 
@@ -6297,25 +6481,40 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(VectorView
 		VkAccelerationStructureGeometryKHR &vk_geometry = accel_info->geometries[i];
 		vk_geometry = {};
 		vk_geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-		vk_geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
 		vk_geometry.flags = geometry.flags;
 
-		vk_geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-		vk_geometry.geometry.triangles.vertexFormat = RD_TO_VK_FORMAT[geometry.vertex_format];
-		vk_geometry.geometry.triangles.vertexData.deviceAddress = buffer_get_device_address(geometry.vertex_buffer) + geometry.vertex_offset;
-		vk_geometry.geometry.triangles.vertexStride = geometry.vertex_stride;
-		// Number of vertices in vertexData minus one, aka max vertex index.
-		vk_geometry.geometry.triangles.maxVertex = (geometry.vertex_count ? (geometry.vertex_count - 1) : 0);
+		uint32_t primitive_count = 0;
+		switch (geometry.type) {
+			case AccelerationStructureGeometry::TYPE_TRIANGLES: {
+				const AccelerationStructureGeometry::Triangles &t = geometry.geometry.triangles;
+				vk_geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+				vk_geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+				vk_geometry.geometry.triangles.vertexFormat = RD_TO_VK_FORMAT[t.vertex_format];
+				vk_geometry.geometry.triangles.vertexData.deviceAddress = buffer_get_device_address(t.vertex_buffer) + t.vertex_offset;
+				vk_geometry.geometry.triangles.vertexStride = t.vertex_stride;
+				// Number of vertices in vertexData minus one, aka max vertex index.
+				vk_geometry.geometry.triangles.maxVertex = (t.vertex_count ? (t.vertex_count - 1) : 0);
 
-		// Info for building BLAS.
-		uint32_t primitive_count;
-		if (geometry.index_buffer != BufferID()) {
-			vk_geometry.geometry.triangles.indexType = (geometry.index_format == INDEX_BUFFER_FORMAT_UINT16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
-			vk_geometry.geometry.triangles.indexData.deviceAddress = buffer_get_device_address(geometry.index_buffer) + geometry.index_offset;
-			primitive_count = geometry.index_count / 3;
-		} else {
-			vk_geometry.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
-			primitive_count = geometry.vertex_count / 3;
+				if (t.index_buffer != BufferID()) {
+					vk_geometry.geometry.triangles.indexType = (t.index_format == INDEX_BUFFER_FORMAT_UINT16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+					vk_geometry.geometry.triangles.indexData.deviceAddress = buffer_get_device_address(t.index_buffer) + t.index_offset;
+					primitive_count = t.index_count / 3;
+				} else {
+					vk_geometry.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
+					primitive_count = t.vertex_count / 3;
+				}
+			} break;
+
+			case AccelerationStructureGeometry::TYPE_AABBS: {
+				const AccelerationStructureGeometry::Aabbs &a = geometry.geometry.aabbs;
+				ERR_FAIL_COND_V_MSG(a.stride < 24, AccelerationStructureID(), "AABB stride must be at least 24 bytes (two float3: min, max).");
+				vk_geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
+				vk_geometry.geometry.aabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+				vk_geometry.geometry.aabbs.pNext = nullptr;
+				vk_geometry.geometry.aabbs.data.deviceAddress = buffer_get_device_address(a.buffer) + a.offset;
+				vk_geometry.geometry.aabbs.stride = a.stride;
+				primitive_count = a.count;
+			} break;
 		}
 
 		VkAccelerationStructureBuildRangeInfoKHR &vk_range_info = accel_info->range_infos[i];
@@ -6403,7 +6602,7 @@ void RenderingDeviceDriverVulkan::acceleration_structure_instance_write(uint8_t 
 
 	if (p_instance.blas) {
 		const AccelerationStructureInfo *blas_info = (const AccelerationStructureInfo *)p_instance.blas.id;
-		vk_instance->accelerationStructureReference = buffer_get_device_address(blas_info->buffer);
+		vk_instance->accelerationStructureReference = blas_info->cached_device_address;
 	} else {
 		vk_instance->accelerationStructureReference = 0;
 	}
@@ -6423,7 +6622,13 @@ void RenderingDeviceDriverVulkan::_acceleration_structure_create(VkAccelerationS
 
 	// Scratch address must be a multiple of minAccelerationStructureScratchOffsetAlignment.
 	r_accel_info->scratch_alignment = acceleration_structure_capabilities.min_acceleration_structure_scratch_offset_alignment;
-	r_accel_info->scratch_size = p_size_info.buildScratchSize + r_accel_info->scratch_alignment;
+	// When ALLOW_UPDATE is requested, scratch must accommodate the larger of build/update sizes
+	// because the same scratch buffer is reused for both code paths.
+	VkDeviceSize required_scratch = p_size_info.buildScratchSize;
+	if (r_accel_info->build_info.flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR) {
+		required_scratch = MAX(required_scratch, p_size_info.updateScratchSize);
+	}
+	r_accel_info->scratch_size = required_scratch + r_accel_info->scratch_alignment;
 
 	VkAccelerationStructureCreateInfoKHR accel_create_info = {};
 	accel_create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
@@ -6433,6 +6638,7 @@ void RenderingDeviceDriverVulkan::_acceleration_structure_create(VkAccelerationS
 	VkResult err = device_functions.CreateAccelerationStructureKHR(vk_device, &accel_create_info, nullptr, &r_accel_info->vk_acceleration_structure);
 	ERR_FAIL_COND_MSG(err, vformat("Couldn't create Vulkan raytracing acceleration structure (VkResult error %d).", err));
 	r_accel_info->build_info.dstAccelerationStructure = r_accel_info->vk_acceleration_structure;
+	r_accel_info->cached_device_address = buffer_get_device_address(buffer);
 #endif
 }
 
@@ -6477,6 +6683,27 @@ void RenderingDeviceDriverVulkan::command_build_blas(CommandBufferID p_cmd_buffe
 	AccelerationStructureInfo *accel_info = (AccelerationStructureInfo *)p_acceleration_structure.id;
 
 	VkAccelerationStructureBuildGeometryInfoKHR *build_info = &accel_info->build_info;
+	build_info->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+	build_info->srcAccelerationStructure = VK_NULL_HANDLE;
+	build_info->dstAccelerationStructure = accel_info->vk_acceleration_structure;
+	VkDeviceAddress scratch_address = buffer_get_device_address(p_scratch_buffer);
+	build_info->scratchData.deviceAddress = _align_up_address(scratch_address, accel_info->scratch_alignment);
+
+	const VkAccelerationStructureBuildRangeInfoKHR *range_infos = accel_info->range_infos.ptr();
+
+	vkCmdBuildAccelerationStructuresKHR(command_buffer->vk_command_buffer, 1, build_info, &range_infos);
+#endif
+}
+
+void RenderingDeviceDriverVulkan::command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) {
+#if VULKAN_RAYTRACING_ENABLED
+	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
+	AccelerationStructureInfo *accel_info = (AccelerationStructureInfo *)p_acceleration_structure.id;
+
+	VkAccelerationStructureBuildGeometryInfoKHR *build_info = &accel_info->build_info;
+	build_info->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+	build_info->srcAccelerationStructure = accel_info->vk_acceleration_structure;
+	build_info->dstAccelerationStructure = accel_info->vk_acceleration_structure;
 	VkDeviceAddress scratch_address = buffer_get_device_address(p_scratch_buffer);
 	build_info->scratchData.deviceAddress = _align_up_address(scratch_address, accel_info->scratch_alignment);
 
@@ -6925,7 +7152,14 @@ void RenderingDeviceDriverVulkan::command_insert_breadcrumb(CommandBufferID p_cm
 #endif
 }
 
+void *RenderingDeviceDriverVulkan::command_buffer_get_native_handle(CommandBufferID p_cmd_buffer) {
+	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
+	return (void *)cmd_buf_info->vk_command_buffer;
+}
+
 void RenderingDeviceDriverVulkan::on_device_lost() const {
+	Aftermath::get_singleton()->emit_marker(AFTERMATH_MARKER_ON_DEVICE_LOST);
+
 	if (device_functions.GetDeviceFaultInfoEXT == nullptr) {
 		_err_print_error(FUNCTION_STR, __FILE__, __LINE__, "VK_EXT_device_fault not available.");
 		return;
@@ -7232,6 +7466,14 @@ uint64_t RenderingDeviceDriverVulkan::get_resource_native_handle(DriverResource 
 			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
 			return (uint64_t)tex_info->vk_view_create_info.format;
 		}
+		case DRIVER_RESOURCE_TEXTURE_DEVICE_MEMORY: {
+			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
+			return (uint64_t)tex_info->allocation.info.deviceMemory;
+		} break;
+		case DRIVER_RESOURCE_TEXTURE_USAGE_FLAGS: {
+			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
+			return (uint64_t)tex_info->vk_create_info.usage;
+		} break;
 		case DRIVER_RESOURCE_SAMPLER:
 		case DRIVER_RESOURCE_UNIFORM_SET:
 		case DRIVER_RESOURCE_BUFFER:
@@ -7480,6 +7722,13 @@ RenderingDeviceDriverVulkan::RenderingDeviceDriverVulkan(RenderingContextDriverV
 }
 
 RenderingDeviceDriverVulkan::~RenderingDeviceDriverVulkan() {
+#if defined(STREAMLINE_ENABLED)
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEFORE_DEVICE_DESTROY);
+	}
+#endif
+	Aftermath::get_singleton()->emit_marker(AFTERMATH_MARKER_BEFORE_DEVICE_DESTROY);
+
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
 	if (breadcrumb_buffer != BufferID()) {
 		buffer_free(breadcrumb_buffer);

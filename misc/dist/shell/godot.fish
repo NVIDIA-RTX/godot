@@ -85,6 +85,7 @@ complete -c godot -s b -l breakpoints -d "Specify the breakpoint list as source:
 complete -c godot -l profiling -d "Enable profiling in the script debugger"
 complete -c godot -l gpu-profile -d "Show a GPU profile of the tasks that took the most time during frame rendering"
 complete -c godot -l gpu-validation -d "Enable graphics API validation layers for debugging"
+complete -c godot -l raytracing-validation -d "Enable NVIDIA ray tracing validation layer (Vulkan only)"
 complete -c godot -l gpu-abort -d "Abort on graphics API usage errors (usually validation layer errors)"
 complete -c godot -l remote-debug -d "Enable remote debugging"
 complete -c godot -l debug-collisions -d "Show collision shapes when running the scene"

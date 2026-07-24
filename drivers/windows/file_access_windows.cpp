@@ -44,6 +44,7 @@
 #include <tchar.h>
 
 #include <cerrno>
+#include <cstring>
 #include <cwchar>
 
 #ifdef _MSC_VER
@@ -61,7 +62,9 @@ void FileAccessWindows::check_errors(bool p_write) const {
 			last_error = ERR_FILE_CANT_READ;
 		}
 	}
-	if (!p_write && feof(f)) {
+	// Use the logical EOF flag (see read_eof_seen) instead of feof(f). Only
+	// report EOF once the cache is also drained.
+	if (!p_write && read_eof_seen && read_cache_consumed >= read_cache_filled) {
 		last_error = ERR_FILE_EOF;
 	}
 }
@@ -230,6 +233,12 @@ Error FileAccessWindows::open_internal(const String &p_path, int p_mode_flags) {
 	} else {
 		last_error = OK;
 		flags = p_mode_flags;
+		// Fresh file: reset the read cache base to the CRT's starting position.
+		read_cache_filled = 0;
+		read_cache_consumed = 0;
+		read_eof_seen = false;
+		int64_t aux = _ftelli64(f);
+		read_cache_pos = (aux < 0) ? 0 : (uint64_t)aux;
 		return OK;
 	}
 }
@@ -239,6 +248,7 @@ void FileAccessWindows::_close() {
 		return;
 	}
 
+	_invalidate_read_cache();
 	fclose(f);
 	f = nullptr;
 
@@ -290,64 +300,226 @@ bool FileAccessWindows::is_open() const {
 	return (f != nullptr);
 }
 
+void FileAccessWindows::_invalidate_read_cache() const {
+	read_cache_filled = 0;
+	read_cache_consumed = 0;
+	read_eof_seen = false;
+	// read_cache_pos is re-established on the next fill / seek.
+}
+
+uint64_t FileAccessWindows::_fill_read_cache() const {
+	// Cache must be drained before refill; the CRT cursor is assumed to be at
+	// read_cache_pos + read_cache_filled, which after a drain equals the next
+	// byte to read. Record it as the new cache base.
+	read_cache_pos += read_cache_filled;
+	read_cache_filled = 0;
+	read_cache_consumed = 0;
+
+	// _fread_nolock bypasses the per-call FILE* critical section. Safe here:
+	// Godot's FileAccess instances are not shared across threads concurrently.
+	size_t n = _fread_nolock(read_cache, 1, READ_CACHE_SIZE, f);
+	read_cache_filled = (uint32_t)n;
+	// Only a zero-byte read means the caller has hit logical EOF. A short
+	// non-zero fill is just readahead finding less than a full chunk left;
+	// the caller still has bytes to consume from the cache.
+	if (n == 0) {
+		read_eof_seen = true;
+	}
+	return n;
+}
+
+void FileAccessWindows::_sync_for_write() const {
+	if (read_cache_consumed < read_cache_filled) {
+		// CRT cursor is past what the caller has logically consumed; realign.
+		_fseeki64(f, (int64_t)(read_cache_pos + read_cache_consumed), SEEK_SET);
+	}
+	_invalidate_read_cache();
+}
+
 void FileAccessWindows::seek(uint64_t p_position) {
 	ERR_FAIL_NULL(f);
 
-	if (_fseeki64(f, p_position, SEEK_SET)) {
-		check_errors();
+	// Fast path: seek landing inside the currently cached range needs no syscall.
+	if (read_cache_filled > 0 && p_position >= read_cache_pos && p_position <= read_cache_pos + read_cache_filled) {
+		read_cache_consumed = (uint32_t)(p_position - read_cache_pos);
+		read_eof_seen = false; // Seeking backwards clears any sticky EOF.
+		prev_op = 0;
+		return;
 	}
+
+	// Try the CRT seek first. Only invalidate the cache on success so that a
+	// failed seek leaves the caller's logical position intact (matching the
+	// CRT contract: "on error, the file position is not changed").
+	if (_fseeki64(f, p_position, SEEK_SET) != 0) {
+		check_errors();
+		prev_op = 0;
+		return;
+	}
+
+	_invalidate_read_cache();
+	read_cache_pos = p_position;
 	prev_op = 0;
 }
 
 void FileAccessWindows::seek_end(int64_t p_position) {
 	ERR_FAIL_NULL(f);
 
-	if (_fseeki64(f, p_position, SEEK_END)) {
+	// Same failure contract as seek(): keep the cache on error so the caller's
+	// logical position stays valid (e.g. seek_end(-len - 10) on a short file
+	// should be a no-op, not a trip to EOF).
+	if (_fseeki64(f, p_position, SEEK_END) != 0) {
 		check_errors();
+		prev_op = 0;
+		return;
 	}
+
+	_invalidate_read_cache();
+	int64_t aux = _ftelli64(f);
+	read_cache_pos = (aux < 0) ? 0 : (uint64_t)aux;
 	prev_op = 0;
 }
 
 uint64_t FileAccessWindows::get_position() const {
 	ERR_FAIL_NULL_V_MSG(f, 0, "File must be opened before use.");
 
+	// Logical position: base of cache plus bytes handed out to the caller.
+	// When the cache is empty this collapses to the CRT cursor.
+	if (read_cache_filled > 0) {
+		return read_cache_pos + read_cache_consumed;
+	}
+
 	int64_t aux_position = _ftelli64(f);
 	if (aux_position < 0) {
 		check_errors();
+		return 0;
 	}
-	return aux_position;
+	// Keep the cache base in sync for the next seek/refill fast-paths.
+	read_cache_pos = (uint64_t)aux_position;
+	return (uint64_t)aux_position;
 }
 
 uint64_t FileAccessWindows::get_length() const {
 	ERR_FAIL_NULL_V(f, 0);
 
-	uint64_t pos = get_position();
+	// CRT cursor currently sits at read_cache_pos + read_cache_filled. Save
+	// it, measure end, restore. Do not touch the cache itself.
+	const int64_t crt_pos = (read_cache_filled > 0)
+			? (int64_t)(read_cache_pos + read_cache_filled)
+			: _ftelli64(f);
 	_fseeki64(f, 0, SEEK_END);
-	uint64_t size = get_position();
-	_fseeki64(f, pos, SEEK_SET);
+	const int64_t size = _ftelli64(f);
+	_fseeki64(f, crt_pos, SEEK_SET);
 
-	return size;
+	return (size < 0) ? 0 : (uint64_t)size;
 }
 
 bool FileAccessWindows::eof_reached() const {
-	return feof(f);
+	// Logical EOF: cache drained AND we've actually observed a read that
+	// produced fewer bytes than asked for. Avoids false positives from a
+	// short readahead on a small file.
+	return read_eof_seen && read_cache_consumed >= read_cache_filled;
+}
+
+uint8_t FileAccessWindows::get_8() const {
+	ERR_FAIL_NULL_V(f, 0);
+	_ensure_read_mode();
+
+	if (read_cache_consumed < read_cache_filled) {
+		return read_cache[read_cache_consumed++];
+	}
+
+	// Cache empty: refill and serve. Base class returns 0 on EOF; match that.
+	if (_fill_read_cache() == 0) {
+		check_errors();
+		return 0;
+	}
+	check_errors();
+	return read_cache[read_cache_consumed++];
+}
+
+uint16_t FileAccessWindows::get_16() const {
+	ERR_FAIL_NULL_V(f, 0);
+	_ensure_read_mode();
+	uint16_t data = _get_cached_le<uint16_t>();
+	if (big_endian) {
+		data = BSWAP16(data);
+	}
+	return data;
+}
+
+uint32_t FileAccessWindows::get_32() const {
+	ERR_FAIL_NULL_V(f, 0);
+	_ensure_read_mode();
+	uint32_t data = _get_cached_le<uint32_t>();
+	if (big_endian) {
+		data = BSWAP32(data);
+	}
+	return data;
+}
+
+uint64_t FileAccessWindows::get_64() const {
+	ERR_FAIL_NULL_V(f, 0);
+	_ensure_read_mode();
+	uint64_t data = _get_cached_le<uint64_t>();
+	if (big_endian) {
+		data = BSWAP64(data);
+	}
+	return data;
 }
 
 uint64_t FileAccessWindows::get_buffer(uint8_t *p_dst, uint64_t p_length) const {
 	ERR_FAIL_NULL_V(f, -1);
 	ERR_FAIL_COND_V(!p_dst && p_length > 0, -1);
 
-	if (flags == READ_WRITE || flags == WRITE_READ) {
-		if (prev_op == WRITE) {
-			fflush(f);
-		}
-		prev_op = READ;
+	_ensure_read_mode();
+
+	if (p_length == 0) {
+		return 0;
 	}
 
-	uint64_t read = fread(p_dst, 1, p_length, f);
-	check_errors();
+	const uint64_t requested = p_length;
+	uint64_t total_read = 0;
 
-	return read;
+	// 1) Drain whatever is already sitting in the cache.
+	const uint32_t avail = read_cache_filled - read_cache_consumed;
+	if (avail > 0) {
+		const uint32_t to_copy = (uint32_t)MIN((uint64_t)avail, p_length);
+		memcpy(p_dst, &read_cache[read_cache_consumed], to_copy);
+		read_cache_consumed += to_copy;
+		total_read += to_copy;
+		p_dst += to_copy;
+		p_length -= to_copy;
+	}
+
+	if (p_length > 0) {
+		if (p_length >= READ_CACHE_SIZE) {
+			// 2) Bypass: request is large enough to skip the cache entirely.
+			read_cache_pos += read_cache_filled;
+			read_cache_filled = 0;
+			read_cache_consumed = 0;
+
+			const size_t n = _fread_nolock(p_dst, 1, p_length, f);
+			read_cache_pos += n;
+			total_read += n;
+		} else {
+			// 3) Small tail: refill cache and serve from it.
+			const uint64_t filled = _fill_read_cache();
+			if (filled > 0) {
+				const uint32_t to_copy = (uint32_t)MIN(filled, p_length);
+				memcpy(p_dst, &read_cache[0], to_copy);
+				read_cache_consumed += to_copy;
+				total_read += to_copy;
+			}
+		}
+	}
+
+	// A short overall read tells the caller they hit logical EOF during this
+	// operation, matching the original "feof set after short fread" contract.
+	if (total_read < requested) {
+		read_eof_seen = true;
+	}
+	check_errors();
+	return total_read;
 }
 
 Error FileAccessWindows::get_error() const {
@@ -356,6 +528,7 @@ Error FileAccessWindows::get_error() const {
 
 Error FileAccessWindows::resize(int64_t p_length) {
 	ERR_FAIL_NULL_V_MSG(f, FAILED, "File must be opened before use.");
+	_invalidate_read_cache();
 	errno_t res = _chsize_s(_fileno(f), p_length);
 	switch (res) {
 		case 0:
@@ -387,9 +560,9 @@ bool FileAccessWindows::store_buffer(const uint8_t *p_src, uint64_t p_length) {
 
 	if (flags == READ_WRITE || flags == WRITE_READ) {
 		if (prev_op == READ) {
-			if (last_error != ERR_FILE_EOF) {
-				fseek(f, 0, SEEK_CUR);
-			}
+			// Rewind the CRT cursor to the caller's logical position so the
+			// write lands where they expect, not past any buffered read-ahead.
+			_sync_for_write();
 		}
 		prev_op = WRITE;
 	}

@@ -208,6 +208,9 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 		}
 
 		ubo.flags |= render_scene_render->environment_get_fog_enabled(p_env) ? SCENE_DATA_FLAGS_USE_FOG : 0;
+		if (render_scene_render->environment_get_fog_mode(p_env) == RSE::ENV_FOG_MODE_DEPTH) {
+			ubo.flags |= SCENE_DATA_FLAGS_USE_DEPTH_FOG;
+		}
 		ubo.fog_density = render_scene_render->environment_get_fog_density(p_env);
 		ubo.fog_height = render_scene_render->environment_get_fog_height(p_env);
 		ubo.fog_height_density = render_scene_render->environment_get_fog_height_density(p_env);
@@ -225,6 +228,7 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 		ubo.fog_light_color[2] = fog_color.b * fog_energy;
 
 		ubo.fog_sun_scatter = render_scene_render->environment_get_fog_sun_scatter(p_env);
+		ubo.fog_sky_affect = render_scene_render->environment_get_fog_sky_affect(p_env);
 	} else {
 		if (!(p_reflection_probe_instance.is_valid() && RendererRD::LightStorage::get_singleton()->reflection_probe_is_interior(p_reflection_probe_instance))) {
 			ubo.flags |= SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT;

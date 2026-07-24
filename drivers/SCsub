@@ -68,6 +68,12 @@ if env["sdl"] and env["platform"] in ["linuxbsd", "macos", "windows", "ios", "vi
 # Core dependencies
 SConscript("png/SCsub")
 
+# Streamline
+SConscript("streamline/SCsub")
+
+# Aftermath
+SConscript("aftermath/SCsub")
+
 env.add_source_files(env.drivers_sources, "*.cpp")
 
 lib = env.add_library("drivers", env.drivers_sources)

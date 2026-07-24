@@ -172,6 +172,13 @@ private:
 		float sdfgi_probe_bias = 1.1;
 		RSE::EnvironmentSDFGIYScale sdfgi_y_scale = RSE::ENV_SDFGI_Y_SCALE_75_PERCENT;
 
+		// Pathtracing
+		bool pathtracing_enabled = false;
+		int pathtracing_debug_mode = 0;
+		int pathtracing_samples_per_pixel = 1;
+		int pathtracing_max_bounces = 3;
+		RSE::PathtracingDenoiser pathtracing_denoiser = RSE::PT_DENOISER_NONE;
+
 		// Adjustments
 		bool adjustments_enabled = false;
 		float adjustments_brightness = 1.0f;
@@ -323,6 +330,14 @@ public:
 	float environment_get_sdfgi_normal_bias(RID p_env) const;
 	float environment_get_sdfgi_probe_bias(RID p_env) const;
 	RSE::EnvironmentSDFGIYScale environment_get_sdfgi_y_scale(RID p_env) const;
+
+	// Pathtracing
+	void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser);
+	bool environment_get_pathtracing_enabled(RID p_env) const;
+	int environment_get_pathtracing_debug_mode(RID p_env) const;
+	int environment_get_pathtracing_samples_per_pixel(RID p_env) const;
+	int environment_get_pathtracing_max_bounces(RID p_env) const;
+	RSE::PathtracingDenoiser environment_get_pathtracing_denoiser(RID p_env) const;
 
 	// Adjustment
 	void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction);

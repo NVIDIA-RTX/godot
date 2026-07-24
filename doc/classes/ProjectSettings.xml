@@ -3255,6 +3255,34 @@
 			[b]Note:[/b] Enabling occlusion culling has a cost on the CPU. Only enable occlusion culling if you actually plan to use it. Large open scenes with few or no objects blocking the view will generally not benefit much from occlusion culling. Large open scenes generally benefit more from mesh LOD and visibility ranges ([member GeometryInstance3D.visibility_range_begin] and [member GeometryInstance3D.visibility_range_end]) compared to occlusion culling.
 			[b]Note:[/b] Due to memory constraints, occlusion culling is not supported by default in Web export templates. It can be enabled by compiling custom Web export templates with [code]module_raycast_enabled=yes[/code].
 		</member>
+		<member name="rendering/pathtracing/async_shader_compilation" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], path tracing ray hit shaders are compiled asynchronously in the background. This avoids frame stalls when new shader variants are first encountered during rendering. While a shader is compiling, a fallback shader may be used, which can cause temporary visual artifacts. Disable this if you require fully deterministic rendering from the first frame at the cost of potential stalls on shader warm-up.
+		</member>
+		<member name="rendering/pathtracing/deformed_mesh_cache_ttl_frames" type="int" setter="" getter="" default="60">
+			Number of frames a skinned or vertex-displaced deformed-mesh BLAS is kept alive in the path tracer cache after its last visible frame. Once this threshold is exceeded the BLAS and its associated buffers are freed. Increase this value if deformed meshes flicker back into view after brief occlusion; decrease it to reclaim GPU memory sooner.
+			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/multimesh_blas_cache_ttl_frames" type="int" setter="" getter="" default="3600">
+			Number of frames a merged MultiMesh BLAS is kept alive in the path tracer cache after its last visible frame. At 60 fps, the default of 3600 corresponds to approximately one minute. Once this threshold is exceeded the BLAS and all merged vertex, attribute, and index buffers are freed. Decrease this value to reclaim GPU memory when MultiMeshes disappear from the scene.
+			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/multimesh_cache_cpu_transforms" type="bool" setter="" getter="" default="false">
+			When enabled, setting [member MultiMesh.buffer] keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer. This allows the path tracer to read per-instance transforms without performing a GPU-to-CPU readback on first access, eliminating the one-time stall that occurs otherwise.
+			[b]Warning:[/b] Enabling this setting increases CPU memory usage. Every [MultiMesh] that assigns [member MultiMesh.buffer] will maintain a full duplicate of its transform data in RAM.
+			Enable this only when [MultiMesh] nodes with frequently updated transforms are present in path-traced scenes and the GPU readback stall is measurable.
+			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/multimesh_merged_blas_max_triangles" type="int" setter="" getter="" default="65536">
+			Maximum total triangle count ([code]instance_count * triangles_per_surface[/code]) for a [MultiMesh] surface to use a single merged BLAS in the path tracer. When the combined triangle count exceeds this value, the path tracer falls back to one TLAS entry per instance sharing a common BLAS instead. Lower this value to reduce peak GPU memory for large MultiMeshes; raise it to prefer the merged path (which avoids per-instance TLAS overhead).
+			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/use_shader_execution_reordering" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], enables NVIDIA Shader Execution Reordering in the path tracer. SET reorders ray tracing shader invocations at runtime to improve GPU occupancy and reduce divergence between threads executing different materials. This can significantly improve path tracing performance on NVIDIA Ada Lovelace and later GPUs. Has no effect on hardware that does not support SET.
+		</member>
+		<member name="rendering/pathtracing/use_simple_shadows" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick alpha texture fetch, which can produce incorrect shadows on materials with generated/animated alpha textures. Fully traced shadow rays are more accurate but incur a higher GPU cost.
+			[b]Note:[/b] Only has an effect when path tracing is enabled on the active [Environment].
+		</member>
 		<member name="rendering/reflections/reflection_atlas/reflection_count" type="int" setter="" getter="" default="64">
 			Number of cubemaps to store in the reflection atlas. The number of [ReflectionProbe]s in a scene will be limited by this amount. A higher number requires more VRAM.
 		</member>
@@ -3450,6 +3478,24 @@
 		</member>
 		<member name="rendering/shading/overrides/force_vertex_shading" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], forces vertex shading for all rendering. This can increase performance a lot, but also reduces quality immensely. Can be used to optimize performance on low-end mobile devices.
+		</member>
+		<member name="rendering/streamline/dlss_preset" type="String" setter="" getter="" default="&quot;?&quot;">
+			The default NVIDIA DLSS Super Resolution preset to use.
+		</member>
+		<member name="rendering/streamline/dlss_ray_reconstruction_preset" type="String" setter="" getter="" default="&quot;?&quot;">
+			The default NVIDIA DLSS Ray Reconstruction preset to use.
+		</member>
+		<member name="rendering/streamline/reflex_frame_limit_us" type="int" setter="" getter="" default="0">
+			If not [code]0[/code], enables NVIDIA Reflex Frame Rate Limiter, which intelligently reduces framerate whilst keeping latency as low as possible. The expected value is in micro-seconds. Example: 60 FPS = 16667 us (1,000,000 us / 60 FPS)
+		</member>
+		<member name="rendering/streamline/reflex_mode" type="int" setter="" getter="" default="0">
+			If [code]1[/code], enables NVIDIA Reflex, which reduces latency by rendering just before vertical sync. When the value is set to 2, will also enable low latency boost.
+		</member>
+		<member name="rendering/streamline/streamline_imgui" type="bool" setter="" getter="" default="false">
+			If [code]1[/code], enables Streamline ImgUI Plugin. Useful for debugging purposes.
+		</member>
+		<member name="rendering/streamline/streamline_log" type="bool" setter="" getter="" default="false">
+			If [code]1[/code], enables Streamline Logging. Useful for debugging purposes.
 		</member>
 		<member name="rendering/textures/basis_universal/rdo_dict_size" type="int" setter="" getter="" default="1024">
 			The dictionary size for Rate-Distortion Optimization (RDO) when importing textures as Basis Universal and when RDO is enabled, ranging from [code]64[/code] to [code]65536[/code]. Higher values reduce the file sizes further, but make encoding times significantly longer.

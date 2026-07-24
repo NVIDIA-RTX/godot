@@ -1119,6 +1119,30 @@ void RendererSceneCull::instance_set_custom_aabb(RID p_instance, AABB p_aabb) {
 	}
 }
 
+void RendererSceneCull::instance_set_rt_procedural(RID p_instance, bool p_procedural, AABB p_aabb) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+
+	if (instance->base_type == RSE::INSTANCE_MESH && instance->base_data) {
+		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
+		if (geom->geometry_instance) {
+			geom->geometry_instance->set_rt_procedural(p_procedural, p_aabb);
+		}
+	}
+}
+
+void RendererSceneCull::instance_set_rt_procedural_bounds(RID p_instance, const PackedFloat32Array &p_aabb_data, bool p_expose_bounds) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+
+	if (instance->base_type == RSE::INSTANCE_MESH && instance->base_data) {
+		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
+		if (geom->geometry_instance) {
+			geom->geometry_instance->set_rt_procedural_bounds(p_aabb_data, p_expose_bounds);
+		}
+	}
+}
+
 void RendererSceneCull::instance_attach_skeleton(RID p_instance, RID p_skeleton) {
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);
@@ -2802,6 +2826,9 @@ void RendererSceneCull::_visibility_cull(const VisibilityCullData &cull_data, ui
 		InstanceVisibilityData &vd = scenario->instance_visibility[i];
 		InstanceData &idata = scenario->instance_data[vd.array_index];
 
+		const uint32_t hidden_mask = InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN | InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN_CLOSE_RANGE;
+		const bool was_hidden = (idata.flags & hidden_mask) != 0;
+
 		if (idata.parent_array_index >= 0) {
 			uint32_t parent_flags = scenario->instance_data[idata.parent_array_index].flags;
 
@@ -2830,6 +2857,13 @@ void RendererSceneCull::_visibility_cull(const VisibilityCullData &cull_data, ui
 				idata.flags |= InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN;
 			} else {
 				idata.flags &= ~InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN;
+			}
+
+			if (was_hidden) {
+				const uint32_t base_type = idata.flags & InstanceData::FLAG_BASE_TYPE_MASK;
+				if ((1u << base_type) & RSE::INSTANCE_GEOMETRY_MASK) {
+					idata.instance_geometry->reset_motion_vectors();
+				}
 			}
 		}
 	}
@@ -2917,6 +2951,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 
 	for (uint64_t i = p_from; i < p_to; i++) {
 		bool mesh_visible = false;
+		bool in_frustum = false;
 
 		InstanceData &idata = cull_data.scenario->instance_data[i];
 		uint32_t visibility_flags = idata.flags & (InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN_CLOSE_RANGE | InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN | InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN);
@@ -2932,6 +2967,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 
 		if (!HIDDEN_BY_VISIBILITY_CHECKS) {
 			if ((LAYER_CHECK && IN_FRUSTUM(cull_data.cull->frustum) && VIS_CHECK && !OCCLUSION_CULLED) || (cull_data.scenario->instance_data[i].flags & InstanceData::FLAG_IGNORE_ALL_CULLING)) {
+				in_frustum = true;
 				uint32_t base_type = idata.flags & InstanceData::FLAG_BASE_TYPE_MASK;
 				if (base_type == RSE::INSTANCE_LIGHT) {
 					cull_result.lights.push_back(idata.instance);
@@ -3257,6 +3293,49 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 					}
 				}
 			}
+
+			// RT: collect ALL instances inside the camera AABB for TLAS and light gathering.
+			// Frustum-visible instances are guaranteed to be inside the AABB (superset),
+			// so skip the AABB test for them. Only test AABB for non-frustum instances.
+			// Mask out editor-only layers (20+) so gizmos/grid don't enter the TLAS.
+			//
+			// Visibility-range parity: instances that failed VIS_CHECK for raster (i.e. they
+			// have NEEDS_CHECK flags and are off-frustum) must be re-checked here, otherwise
+			// out-of-range distant meshes can still enter the TLAS.
+			//
+			// Visibility-parent binary fix: when a parent mesh is in the FADE_CHILDREN band
+			// (cross-fading with its LOD child in raster), we have no alpha blending in PT.
+			// Prefer the parent: exclude the child from RT until the parent becomes
+			// HIDDEN_CLOSE_RANGE (fully faded out), matching the point where raster
+			// switches over. In-frustum children are subject to the same rule.
+			if (cull_data.cull->rt_enabled && (idata.layer_mask & ((1 << 20) - 1))) {
+				// For off-frustum instances, also run VIS_CHECK to match raster gating.
+				bool rt_in_range = in_frustum || (cull_data.scenario->instance_aabbs[i].in_aabb(cull_data.cull->rt_aabb) && VIS_CHECK);
+				if (rt_in_range) {
+					// Exclude visibility-parent children while their parent is in the
+					// FADE_CHILDREN cross-fade band. PT is binary: only one LOD at a time.
+					bool excluded_by_parent_fade = false;
+					if (idata.parent_array_index >= 0) {
+						const uint32_t parent_flags = cull_data.scenario->instance_data[idata.parent_array_index].flags;
+						// FADE_CHILDREN set means the parent is still visible but fading out.
+						// Keep the parent in PT and suppress the child until parent is gone.
+						if (parent_flags & InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN) {
+							excluded_by_parent_fade = true;
+						}
+					}
+
+					if (!excluded_by_parent_fade) {
+						uint32_t base_type = idata.flags & InstanceData::FLAG_BASE_TYPE_MASK;
+						if (base_type == RSE::INSTANCE_LIGHT) {
+							cull_result.rt_light_instances.push_back(RID::from_uint64(idata.instance_data_rid));
+						} else if ((base_type == RSE::INSTANCE_MESH || base_type == RSE::INSTANCE_MULTIMESH) &&
+								!(idata.flags & InstanceData::FLAG_CAST_SHADOWS_ONLY)) {
+							cull_result.rt_geometry_instances.push_back(idata.instance_geometry);
+							mesh_visible = true; // For skinned/deformed meshes..
+						}
+					}
+				}
+			}
 		}
 
 #undef HIDDEN_BY_VISIBILITY_CHECKS
@@ -3356,6 +3435,15 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	Vector<Plane> planes = p_camera_data->main_projection.get_projection_planes(p_camera_data->main_transform);
 	cull.frustum = Frustum(planes);
+
+	// RT: build wider AABB cull volume for TLAS and light gathering.
+	cull.rt_enabled = p_environment.is_valid() &&
+			scene_render->environment_get_pathtracing_enabled(p_environment);
+	if (cull.rt_enabled) {
+		float z_far = p_camera_data->main_projection.get_z_far();
+		Vector3 cam_origin = p_camera_data->main_transform.origin;
+		cull.rt_aabb = AABB(cam_origin - Vector3(z_far, z_far, z_far), Vector3(z_far, z_far, z_far) * 2.0);
+	}
 
 	Vector<RID> directional_lights;
 	// directional lights
@@ -3708,7 +3796,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
-	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
+	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info, &scene_cull_result.rt_geometry_instances, &scene_cull_result.rt_light_instances);
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);

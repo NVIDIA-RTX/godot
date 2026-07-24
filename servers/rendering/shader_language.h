@@ -175,6 +175,7 @@ public:
 		TK_HINT_ROUGHNESS_A,
 		TK_HINT_ROUGHNESS_GRAY,
 		TK_HINT_ANISOTROPY_TEXTURE,
+		TK_HINT_ALPHA_TEXTURE,
 		TK_HINT_SOURCE_COLOR,
 		TK_HINT_COLOR_CONVERSION_DISABLED,
 		TK_HINT_RANGE,
@@ -678,6 +679,7 @@ public:
 				HINT_DEFAULT_WHITE,
 				HINT_DEFAULT_TRANSPARENT,
 				HINT_ANISOTROPY,
+				HINT_ALPHA,
 				HINT_SCREEN_TEXTURE,
 				HINT_BLIT_SOURCE0,
 				HINT_BLIT_SOURCE1,
@@ -962,6 +964,7 @@ public:
 
 		bool can_discard = false;
 		bool main_function = false;
+		bool allow_return = false;
 	};
 	static bool has_builtin(const HashMap<StringName, ShaderLanguage::FunctionInfo> &p_functions, const StringName &p_name, bool p_check_global_funcs = false);
 

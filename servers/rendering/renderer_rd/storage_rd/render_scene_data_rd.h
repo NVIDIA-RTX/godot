@@ -111,6 +111,7 @@ private:
 		SCENE_DATA_FLAGS_USE_UV2_MATERIAL = 1 << 5,
 		SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS = 1 << 6,
 		SCENE_DATA_FLAGS_IN_SHADOW_PASS = 1 << 7, // Only used by Forward+ renderer.
+		SCENE_DATA_FLAGS_USE_DEPTH_FOG = 1 << 8,
 		SCENE_DATA_FLAGS_MAX
 	};
 
@@ -181,6 +182,9 @@ private:
 		float IBL_exposure_normalization; // Adjusts for baked exposure.
 		uint32_t camera_visible_layers;
 		float pass_alpha_multiplier;
+
+		float fog_sky_affect;
+		float _pad_std140[3];
 	};
 
 	struct UBODATA {

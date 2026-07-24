@@ -49,6 +49,10 @@
 #include "modules/glslang/shader_compile.h"
 #endif
 
+#ifdef STREAMLINE_ENABLED
+#include "drivers/streamline/streamline_context.h"
+#endif
+
 #define FORCE_SEPARATE_PRESENT_QUEUE 0
 #define PRINT_FRAMEBUFFER_FORMAT 0
 
@@ -302,7 +306,7 @@ void RenderingDevice::_tlas_remove_blas_dependencies(AccelerationStructure *p_tl
 RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) {
 	ERR_FAIL_COND_V_MSG(!has_feature(SUPPORTS_RAYTRACING_PIPELINE) && !has_feature(SUPPORTS_RAY_QUERY), RID(), "The current rendering device has neither raytracing pipeline nor ray query support.");
 
-	thread_local LocalVector<RDD::AccelerationStructureGeometry> rdd_geometries;
+	LocalVector<RDD::AccelerationStructureGeometry> rdd_geometries;
 	rdd_geometries.resize(p_geometries.size());
 
 	Vector<RDG::ResourceTracker *> draw_trackers;
@@ -310,56 +314,96 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 	for (uint64_t i = 0; i < p_geometries.size(); i++) {
 		const AccelerationStructureGeometry &rd_geometry = p_geometries[i];
-		if (rd_geometry.index_buffer.is_valid()) {
-			ERR_FAIL_COND_V_MSG((rd_geometry.index_count % 3) != 0, RID(), "An indexed geometry must have an index count that is a multiple of 3.");
-		} else {
-			ERR_FAIL_COND_V_MSG((rd_geometry.vertex_count % 3) != 0, RID(), "A non-indexed geometry must have a vertex count that is a multiple of 3.");
-		}
 
 		RDD::AccelerationStructureGeometry &rdd_geometry = rdd_geometries[i];
-		rdd_geometry = {};
 		rdd_geometry.flags = rd_geometry.flags;
 
-		Buffer *vertex_buffer = vertex_buffer_owner.get_or_null(rd_geometry.vertex_buffer);
-		ERR_FAIL_NULL_V(vertex_buffer, RID());
+		switch (rd_geometry.type) {
+			case AccelerationStructureGeometry::TYPE_TRIANGLES: {
+				const AccelerationStructureGeometry::Triangles &t_in = rd_geometry.geometry.triangles;
+				RDD::AccelerationStructureGeometry::Triangles &t_out = rdd_geometry.geometry.triangles;
 
-		ERR_FAIL_COND_V_MSG((rd_geometry.vertex_offset + rd_geometry.vertex_count * rd_geometry.vertex_stride) > vertex_buffer->size, RID(), "The specified vertex offset and count are outside the range of the vertex buffer.");
-		ERR_FAIL_COND_V_MSG(rd_geometry.vertex_format >= DataFormat::DATA_FORMAT_MAX, RID(), "An invalid vertex format was specified.");
+				if (t_in.index_buffer.is_valid()) {
+					ERR_FAIL_COND_V_MSG((t_in.index_count % 3) != 0, RID(), "An indexed geometry must have an index count that is a multiple of 3.");
+				} else {
+					ERR_FAIL_COND_V_MSG((t_in.vertex_count % 3) != 0, RID(), "A non-indexed geometry must have a vertex count that is a multiple of 3.");
+				}
 
-		rdd_geometry.vertex_buffer = vertex_buffer->driver_id;
-		rdd_geometry.vertex_offset = rd_geometry.vertex_offset;
-		rdd_geometry.vertex_stride = rd_geometry.vertex_stride;
-		rdd_geometry.vertex_count = rd_geometry.vertex_count;
-		rdd_geometry.vertex_format = rd_geometry.vertex_format;
+				Buffer *vertex_buffer = vertex_buffer_owner.get_or_null(t_in.vertex_buffer);
+				ERR_FAIL_NULL_V(vertex_buffer, RID());
 
-		if (vertex_buffer->draw_tracker != nullptr) {
-			draw_trackers.push_back(vertex_buffer->draw_tracker);
-		} else {
-			untracked_buffers.insert(rd_geometry.vertex_buffer);
-		}
+				ERR_FAIL_COND_V_MSG((t_in.vertex_offset + t_in.vertex_count * t_in.vertex_stride) > vertex_buffer->size, RID(), "The specified vertex offset and count are outside the range of the vertex buffer.");
+				ERR_FAIL_COND_V_MSG(t_in.vertex_format >= DataFormat::DATA_FORMAT_MAX, RID(), "An invalid vertex format was specified.");
 
-		_check_transfer_worker_buffer(vertex_buffer);
+				rdd_geometry.type = RDD::AccelerationStructureGeometry::TYPE_TRIANGLES;
+				t_out.vertex_buffer = vertex_buffer->driver_id;
+				t_out.vertex_offset = t_in.vertex_offset;
+				t_out.vertex_stride = t_in.vertex_stride;
+				t_out.vertex_count = t_in.vertex_count;
+				t_out.vertex_format = t_in.vertex_format;
 
-		if (rd_geometry.index_buffer.is_valid()) {
-			IndexBuffer *index_buffer = index_buffer_owner.get_or_null(rd_geometry.index_buffer);
-			ERR_FAIL_NULL_V(index_buffer, RID());
+				if (vertex_buffer->draw_tracker != nullptr) {
+					draw_trackers.push_back(vertex_buffer->draw_tracker);
+				} else {
+					untracked_buffers.insert(t_in.vertex_buffer);
+				}
 
-			uint32_t index_stride = (index_buffer->format == INDEX_BUFFER_FORMAT_UINT32 ? sizeof(uint32_t) : sizeof(uint16_t));
-			ERR_FAIL_COND_V_MSG((rd_geometry.index_offset + rd_geometry.index_count * index_stride) > index_buffer->size, RID(), "The specified index offset and count are outside the range of the index buffer.");
-			ERR_FAIL_COND_V_MSG(index_buffer->max_index >= rd_geometry.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
+				_check_transfer_worker_buffer(vertex_buffer);
 
-			rdd_geometry.index_buffer = index_buffer->driver_id;
-			rdd_geometry.index_offset = rd_geometry.index_offset;
-			rdd_geometry.index_count = rd_geometry.index_count;
-			rdd_geometry.index_format = index_buffer->format;
+				if (t_in.index_buffer.is_valid()) {
+					IndexBuffer *index_buffer = index_buffer_owner.get_or_null(t_in.index_buffer);
+					ERR_FAIL_NULL_V(index_buffer, RID());
 
-			if (index_buffer->draw_tracker != nullptr) {
-				draw_trackers.push_back(index_buffer->draw_tracker);
-			} else {
-				untracked_buffers.insert(rd_geometry.index_buffer);
-			}
+					uint32_t index_stride = (index_buffer->format == INDEX_BUFFER_FORMAT_UINT32 ? sizeof(uint32_t) : sizeof(uint16_t));
+					ERR_FAIL_COND_V_MSG((t_in.index_offset + t_in.index_count * index_stride) > index_buffer->size, RID(), "The specified index offset and count are outside the range of the index buffer.");
+					ERR_FAIL_COND_V_MSG(index_buffer->max_index != 0xFFFFFFFFu && index_buffer->max_index >= t_in.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
 
-			_check_transfer_worker_buffer(index_buffer);
+					t_out.index_buffer = index_buffer->driver_id;
+					t_out.index_offset = t_in.index_offset;
+					t_out.index_count = t_in.index_count;
+					t_out.index_format = index_buffer->format;
+
+					if (index_buffer->draw_tracker != nullptr) {
+						draw_trackers.push_back(index_buffer->draw_tracker);
+					} else {
+						untracked_buffers.insert(t_in.index_buffer);
+					}
+
+					_check_transfer_worker_buffer(index_buffer);
+				} else {
+					// Non-indexed: clear index fields to avoid undefined data.
+					t_out.index_buffer = RDD::BufferID();
+					t_out.index_offset = 0;
+					t_out.index_count = 0;
+					t_out.index_format = {};
+				}
+			} break;
+
+			case AccelerationStructureGeometry::TYPE_AABBS: {
+				const AccelerationStructureGeometry::Aabbs &a_in = rd_geometry.geometry.aabbs;
+				RDD::AccelerationStructureGeometry::Aabbs &a_out = rdd_geometry.geometry.aabbs;
+
+				ERR_FAIL_COND_V_MSG(a_in.count == 0, RID(), "An AABB geometry must have at least one AABB.");
+				ERR_FAIL_COND_V_MSG(a_in.stride < 24, RID(), "AABB stride must be at least 24 bytes (two float3: min, max).");
+
+				Buffer *aabb_buffer = storage_buffer_owner.get_or_null(a_in.buffer);
+				ERR_FAIL_NULL_V_MSG(aabb_buffer, RID(), "The AABB buffer must be a valid storage buffer.");
+				ERR_FAIL_COND_V_MSG((a_in.offset + a_in.count * a_in.stride) > aabb_buffer->size, RID(), "The specified AABB offset/count/stride are outside the range of the AABB buffer.");
+
+				rdd_geometry.type = RDD::AccelerationStructureGeometry::TYPE_AABBS;
+				a_out.buffer = aabb_buffer->driver_id;
+				a_out.offset = a_in.offset;
+				a_out.stride = a_in.stride;
+				a_out.count = a_in.count;
+
+				if (aabb_buffer->draw_tracker != nullptr) {
+					draw_trackers.push_back(aabb_buffer->draw_tracker);
+				} else {
+					untracked_buffers.insert(a_in.buffer);
+				}
+
+				_check_transfer_worker_buffer(aabb_buffer);
+			} break;
 		}
 	}
 
@@ -383,10 +427,16 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 	for (uint32_t i = 0; i < p_geometries.size(); i++) {
 		const AccelerationStructureGeometry &geometry = p_geometries[i];
-		_add_dependency(id, geometry.vertex_buffer);
-
-		if (geometry.index_buffer.is_valid()) {
-			_add_dependency(id, geometry.index_buffer);
+		switch (geometry.type) {
+			case AccelerationStructureGeometry::TYPE_TRIANGLES: {
+				_add_dependency(id, geometry.geometry.triangles.vertex_buffer);
+				if (geometry.geometry.triangles.index_buffer.is_valid()) {
+					_add_dependency(id, geometry.geometry.triangles.index_buffer);
+				}
+			} break;
+			case AccelerationStructureGeometry::TYPE_AABBS: {
+				_add_dependency(id, geometry.geometry.aabbs.buffer);
+			} break;
 		}
 	}
 
@@ -462,6 +512,27 @@ Error RenderingDevice::blas_build(RID p_blas) {
 	return OK;
 }
 
+Error RenderingDevice::blas_update(RID p_blas) {
+	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
+
+	ERR_FAIL_COND_V_MSG(draw_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a draw list.");
+	ERR_FAIL_COND_V_MSG(compute_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a compute list.");
+	ERR_FAIL_COND_V_MSG(raytracing_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a raytracing list.");
+
+	AccelerationStructure *blas = acceleration_structure_owner.get_or_null(p_blas);
+	ERR_FAIL_NULL_V_MSG(blas, ERR_INVALID_PARAMETER, "BLAS argument is not valid.");
+
+	Error err = _acceleration_structure_scratch_buffer_create(blas);
+	ERR_FAIL_COND_V(err != OK, err);
+
+	draw_graph.add_blas_update(blas->driver_id, blas->scratch_buffer, blas->draw_tracker, blas->draw_trackers);
+
+	blas->invalidated = false;
+	_blas_remove_tlas_dependencies(blas, p_blas);
+
+	return OK;
+}
+
 Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
@@ -528,6 +599,12 @@ Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance
 	thread_local LocalVector<RDG::ResourceTracker *> draw_trackers;
 	draw_trackers.clear();
 
+	// Build instances into a CPU-side shadow buffer first then memcpy to the
+	// persistently-mapped (write-combined) GPU buffer in one shot. Scattered
+	// field writes to WC memory are orders of magnitude slower than a bulk copy.
+	LocalVector<uint8_t> shadow_buffer;
+	shadow_buffer.resize(instance_size * p_instances.size());
+
 	for (uint32_t i = 0; i < p_instances.size(); i++) {
 		const AccelerationStructureInstance &rd_instance = p_instances[i];
 
@@ -557,8 +634,10 @@ Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance
 			}
 		}
 
-		driver->acceleration_structure_instance_write(instance_buffer.data_ptr + instance_buffer_offset + (instance_size * i), rdd_instance);
+		driver->acceleration_structure_instance_write(shadow_buffer.ptr() + (instance_size * i), rdd_instance);
 	}
+
+	memcpy(instance_buffer.data_ptr + instance_buffer_offset, shadow_buffer.ptr(), instance_size * p_instances.size());
 
 	draw_graph.add_tlas_build(tlas->driver_id, tlas->scratch_buffer, instance_buffer.driver_id, instance_buffer_offset, p_instances.size(), tlas->draw_tracker, draw_trackers);
 
@@ -4395,10 +4474,12 @@ RID RenderingDevice::uniform_set_create(const VectorView<RD::Uniform> &p_uniform
 
 		// Mark immutable samplers to be skipped when creating uniform set.
 		driver_uniform.immutable_sampler = uniform.immutable_sampler;
+		driver_uniform.variable_count = uniform.variable_count;
 
 		switch (uniform.uniform_type) {
 			case UNIFORM_TYPE_SAMPLER: {
-				if (uniform.get_id_count() != (uint32_t)set_uniform.length) {
+				// Skip count validation for unbounded arrays (bindless).
+				if (!set_uniform.unbounded && uniform.get_id_count() != (uint32_t)set_uniform.length) {
 					if (set_uniform.length > 1) {
 						ERR_FAIL_V_MSG(RID(), "Sampler (binding: " + itos(uniform.binding) + ") is an array of (" + itos(set_uniform.length) + ") sampler elements, so it should be provided equal number of sampler IDs to satisfy it (IDs provided: " + itos(uniform.get_id_count()) + ").");
 					} else {
@@ -4414,7 +4495,8 @@ RID RenderingDevice::uniform_set_create(const VectorView<RD::Uniform> &p_uniform
 				}
 			} break;
 			case UNIFORM_TYPE_SAMPLER_WITH_TEXTURE: {
-				if (uniform.get_id_count() != (uint32_t)set_uniform.length * 2) {
+				// Skip count validation for unbounded arrays (bindless).
+				if (!set_uniform.unbounded && uniform.get_id_count() != (uint32_t)set_uniform.length * 2) {
 					if (set_uniform.length > 1) {
 						ERR_FAIL_V_MSG(RID(), "SamplerTexture (binding: " + itos(uniform.binding) + ") is an array of (" + itos(set_uniform.length) + ") sampler&texture elements, so it should provided twice the amount of IDs (sampler,texture pairs) to satisfy it (IDs provided: " + itos(uniform.get_id_count()) + ").");
 					} else {
@@ -4470,7 +4552,8 @@ RID RenderingDevice::uniform_set_create(const VectorView<RD::Uniform> &p_uniform
 				}
 			} break;
 			case UNIFORM_TYPE_TEXTURE: {
-				if (uniform.get_id_count() != (uint32_t)set_uniform.length) {
+				// Skip count validation for unbounded arrays (bindless).
+				if (!set_uniform.unbounded && uniform.get_id_count() != (uint32_t)set_uniform.length) {
 					if (set_uniform.length > 1) {
 						ERR_FAIL_V_MSG(RID(), "Texture (binding: " + itos(uniform.binding) + ") is an array of (" + itos(set_uniform.length) + ") textures, so it should be provided equal number of texture IDs to satisfy it (IDs provided: " + itos(uniform.get_id_count()) + ").");
 					} else {
@@ -4679,6 +4762,10 @@ RID RenderingDevice::uniform_set_create(const VectorView<RD::Uniform> &p_uniform
 					buffer = vertex_buffer_owner.get_or_null(buffer_id);
 
 					ERR_FAIL_COND_V_MSG(!(buffer->usage.has_flag(RDD::BUFFER_USAGE_STORAGE_BIT)), RID(), "Vertex buffer supplied (binding: " + itos(uniform.binding) + ") was not created with storage flag.");
+				} else if (index_buffer_owner.owns(buffer_id)) {
+					buffer = index_buffer_owner.get_or_null(buffer_id);
+
+					ERR_FAIL_COND_V_MSG(!(buffer->usage.has_flag(RDD::BUFFER_USAGE_STORAGE_BIT)), RID(), "Index buffer supplied (binding: " + itos(uniform.binding) + ") was not created with storage flag.");
 				}
 				ERR_FAIL_NULL_V_MSG(buffer, RID(), "Storage buffer supplied (binding: " + itos(uniform.binding) + ") is invalid.");
 
@@ -5173,105 +5260,122 @@ RID RenderingDevice::raytracing_pipeline_create(Span<PipelineShader> p_raygen_sh
 	hit_groups.clear();
 
 	RID layout_defining_shader_rid;
-	Shader *layout_defining_shader = nullptr;
+	RDD::ShaderID layout_defining_shader_driver_id;
+	uint32_t layout_defining_shader_layout_hash = 0;
+	Vector<uint32_t> layout_defining_shader_set_formats;
+	uint32_t layout_defining_shader_push_constant_size = 0;
 
-	auto _get_shader_index = [&](const PipelineShader &p_shader, ShaderStage p_shader_stage) -> uint32_t {
-		PipelineShaderKey shader_key;
-		shader_key.shader = p_shader.shader;
-		shader_key.specialization_constants = p_shader.specialization_constants;
-		shader_key.shader_stage = p_shader_stage;
+	// ===== Region 1: locked shader bookkeeping =====
+	{
+		_THREAD_SAFE_METHOD_
 
-		uint32_t &index = shader_indices[shader_key];
-		if (!index) {
-			Shader *shader = shader_owner.get_or_null(p_shader.shader);
-			ERR_FAIL_NULL_V(shader, UINT32_MAX);
-			ERR_FAIL_COND_V_MSG(shader->pipeline_type != PIPELINE_TYPE_RAYTRACING, UINT32_MAX, "Only raytracing shaders can be used in raytracing pipelines.");
-			ERR_FAIL_COND_V_MSG(!(shader->stages_bits & (1 << p_shader_stage)), UINT32_MAX, "Shader does not contain the required stage.");
+		Shader *layout_defining_shader = nullptr;
 
-			for (int i = 0; i < shader->specialization_constants.size(); i++) {
-				const ShaderSpecializationConstant &sc = shader->specialization_constants[i];
-				for (int j = 0; j < p_shader.specialization_constants.size(); j++) {
-					const PipelineSpecializationConstant &psc = p_shader.specialization_constants[j];
-					if (psc.constant_id == sc.constant_id) {
-						ERR_FAIL_COND_V_MSG(psc.type != sc.type, UINT32_MAX, "Specialization constant provided for id (" + itos(sc.constant_id) + ") is of the wrong type.");
-						break;
+		auto _get_shader_index = [&](const PipelineShader &p_shader, ShaderStage p_shader_stage) -> uint32_t {
+			PipelineShaderKey shader_key;
+			shader_key.shader = p_shader.shader;
+			shader_key.specialization_constants = p_shader.specialization_constants;
+			shader_key.shader_stage = p_shader_stage;
+
+			uint32_t &index = shader_indices[shader_key];
+			if (!index) {
+				Shader *shader = shader_owner.get_or_null(p_shader.shader);
+				ERR_FAIL_NULL_V(shader, UINT32_MAX);
+				ERR_FAIL_COND_V_MSG(shader->pipeline_type != PIPELINE_TYPE_RAYTRACING, UINT32_MAX, "Only raytracing shaders can be used in raytracing pipelines.");
+				ERR_FAIL_COND_V_MSG(!(shader->stages_bits & (1 << p_shader_stage)), UINT32_MAX, "Shader does not contain the required stage.");
+
+				for (int i = 0; i < shader->specialization_constants.size(); i++) {
+					const ShaderSpecializationConstant &sc = shader->specialization_constants[i];
+					for (int j = 0; j < p_shader.specialization_constants.size(); j++) {
+						const PipelineSpecializationConstant &psc = p_shader.specialization_constants[j];
+						if (psc.constant_id == sc.constant_id) {
+							ERR_FAIL_COND_V_MSG(psc.type != sc.type, UINT32_MAX, "Specialization constant provided for id (" + itos(sc.constant_id) + ") is of the wrong type.");
+							break;
+						}
 					}
 				}
-			}
 
-			if (layout_defining_shader) {
-				bool compatible_layout = true;
+				if (layout_defining_shader) {
+					bool compatible_layout = true;
 
-				for (uint32_t i = 0; i < MIN(layout_defining_shader->set_formats.size(), shader->set_formats.size()); i++) {
-					if (layout_defining_shader->set_formats[i] != shader->set_formats[i]) {
+					for (uint32_t i = 0; i < MIN(layout_defining_shader->set_formats.size(), shader->set_formats.size()); i++) {
+						if (layout_defining_shader->set_formats[i] != shader->set_formats[i]) {
+							compatible_layout = false;
+							break;
+						}
+					}
+
+					if (layout_defining_shader->push_constant_size != shader->push_constant_size || layout_defining_shader->push_constant_stages != shader->push_constant_stages) {
 						compatible_layout = false;
-						break;
 					}
+
+					ERR_FAIL_COND_V_MSG(!compatible_layout, UINT32_MAX, "All shaders must have compatible layouts.");
 				}
 
-				if (layout_defining_shader->push_constant_size != shader->push_constant_size || layout_defining_shader->push_constant_stages != shader->push_constant_stages) {
-					compatible_layout = false;
+				if (!layout_defining_shader || layout_defining_shader->set_formats.size() < shader->set_formats.size()) {
+					layout_defining_shader_rid = p_shader.shader;
+					layout_defining_shader = shader;
 				}
 
-				ERR_FAIL_COND_V_MSG(!compatible_layout, UINT32_MAX, "All shaders must have compatible layouts.");
+				index = shaders.size() + 1;
+
+				RDD::PipelineShader rdd_shader;
+				rdd_shader.shader = shader->driver_id;
+				rdd_shader.shader_stage = p_shader_stage;
+				rdd_shader.specialization_constants = p_shader.specialization_constants;
+				shaders.push_back(rdd_shader);
 			}
 
-			if (!layout_defining_shader || layout_defining_shader->set_formats.size() < shader->set_formats.size()) {
-				layout_defining_shader_rid = p_shader.shader;
-				layout_defining_shader = shader;
+			return index - 1;
+		};
+
+		for (uint32_t i = 0; i < p_raygen_shaders.size(); i++) {
+			uint32_t raygen_shader_index = _get_shader_index(p_raygen_shaders[i], SHADER_STAGE_RAYGEN);
+			ERR_FAIL_COND_V(raygen_shader_index == UINT32_MAX, RID());
+			raygen_and_miss_shader_indices.push_back(raygen_shader_index);
+		}
+
+		for (uint32_t i = 0; i < p_miss_shaders.size(); i++) {
+			uint32_t miss_shader_index = _get_shader_index(p_miss_shaders[i], SHADER_STAGE_MISS);
+			ERR_FAIL_COND_V(miss_shader_index == UINT32_MAX, RID());
+			raygen_and_miss_shader_indices.push_back(miss_shader_index);
+		}
+
+		for (uint32_t i = 0; i < p_hit_groups.size(); i++) {
+			const HitGroup &hit_group = p_hit_groups[i];
+
+			RDD::HitGroup rdd_hit_group;
+
+			if (hit_group.closest_hit_shader.is_valid()) {
+				rdd_hit_group.closest_hit_shader_index = _get_shader_index(hit_group.closest_hit_shader, SHADER_STAGE_CLOSEST_HIT);
+				ERR_FAIL_COND_V(rdd_hit_group.closest_hit_shader_index == UINT32_MAX, RID());
 			}
 
-			index = shaders.size() + 1;
+			if (hit_group.any_hit_shader.is_valid()) {
+				rdd_hit_group.any_hit_shader_index = _get_shader_index(hit_group.any_hit_shader, SHADER_STAGE_ANY_HIT);
+				ERR_FAIL_COND_V(rdd_hit_group.any_hit_shader_index == UINT32_MAX, RID());
+			}
 
-			RDD::PipelineShader rdd_shader;
-			rdd_shader.shader = shader->driver_id;
-			rdd_shader.shader_stage = p_shader_stage;
-			rdd_shader.specialization_constants = p_shader.specialization_constants;
-			shaders.push_back(rdd_shader);
+			if (hit_group.intersection_shader.is_valid()) {
+				rdd_hit_group.intersection_shader_index = _get_shader_index(hit_group.intersection_shader, SHADER_STAGE_INTERSECTION);
+				ERR_FAIL_COND_V(rdd_hit_group.intersection_shader_index == UINT32_MAX, RID());
+			}
+
+			hit_groups.push_back(rdd_hit_group);
 		}
 
-		return index - 1;
-	};
+		ERR_FAIL_NULL_V(layout_defining_shader, RID());
 
-	for (uint32_t i = 0; i < p_raygen_shaders.size(); i++) {
-		uint32_t raygen_shader_index = _get_shader_index(p_raygen_shaders[i], SHADER_STAGE_RAYGEN);
-		ERR_FAIL_COND_V(raygen_shader_index == UINT32_MAX, RID());
-
-		raygen_and_miss_shader_indices.push_back(raygen_shader_index);
+		// Snapshot the layout-defining shader's relevant fields under the lock so
+		// we don't need the Shader* (which lives in shader_owner) during the
+		// unlocked driver call.
+		layout_defining_shader_driver_id = layout_defining_shader->driver_id;
+		layout_defining_shader_layout_hash = layout_defining_shader->layout_hash;
+		layout_defining_shader_set_formats = layout_defining_shader->set_formats;
+		layout_defining_shader_push_constant_size = layout_defining_shader->push_constant_size;
 	}
 
-	for (uint32_t i = 0; i < p_miss_shaders.size(); i++) {
-		uint32_t miss_shader_index = _get_shader_index(p_miss_shaders[i], SHADER_STAGE_MISS);
-		ERR_FAIL_COND_V(miss_shader_index == UINT32_MAX, RID());
-
-		raygen_and_miss_shader_indices.push_back(miss_shader_index);
-	}
-
-	for (uint32_t i = 0; i < p_hit_groups.size(); i++) {
-		const HitGroup &hit_group = p_hit_groups[i];
-
-		RDD::HitGroup rdd_hit_group;
-
-		if (hit_group.closest_hit_shader.is_valid()) {
-			rdd_hit_group.closest_hit_shader_index = _get_shader_index(hit_group.closest_hit_shader, SHADER_STAGE_CLOSEST_HIT);
-			ERR_FAIL_COND_V(rdd_hit_group.closest_hit_shader_index == UINT32_MAX, RID());
-		}
-
-		if (hit_group.any_hit_shader.is_valid()) {
-			rdd_hit_group.any_hit_shader_index = _get_shader_index(hit_group.any_hit_shader, SHADER_STAGE_ANY_HIT);
-			ERR_FAIL_COND_V(rdd_hit_group.any_hit_shader_index == UINT32_MAX, RID());
-		}
-
-		if (hit_group.intersection_shader.is_valid()) {
-			rdd_hit_group.intersection_shader_index = _get_shader_index(hit_group.intersection_shader, SHADER_STAGE_INTERSECTION);
-			ERR_FAIL_COND_V(rdd_hit_group.intersection_shader_index == UINT32_MAX, RID());
-		}
-
-		hit_groups.push_back(rdd_hit_group);
-	}
-
-	ERR_FAIL_NULL_V(layout_defining_shader, RID());
-
+	// ===== Region 2: unlocked driver raytracing_pipeline_create =====
 	RaytracingPipeline pipeline;
 	pipeline.driver_id = driver->raytracing_pipeline_create(
 			shaders,
@@ -5279,19 +5383,15 @@ RID RenderingDevice::raytracing_pipeline_create(Span<PipelineShader> p_raygen_sh
 			VectorView(raygen_and_miss_shader_indices.ptr() + p_raygen_shaders.size(), p_miss_shaders.size()),
 			hit_groups,
 			p_max_trace_recursion_depth,
-			layout_defining_shader->driver_id);
+			layout_defining_shader_driver_id);
 
 	ERR_FAIL_COND_V(!pipeline.driver_id, RID());
 
-	if (pipeline_cache_enabled) {
-		update_pipeline_cache();
-	}
-
 	pipeline.layout_defining_shader = layout_defining_shader_rid;
-	pipeline.layout_defining_shader_driver_id = layout_defining_shader->driver_id;
-	pipeline.layout_defining_shader_layout_hash = layout_defining_shader->layout_hash;
-	pipeline.set_formats = layout_defining_shader->set_formats;
-	pipeline.push_constant_size = layout_defining_shader->push_constant_size;
+	pipeline.layout_defining_shader_driver_id = layout_defining_shader_driver_id;
+	pipeline.layout_defining_shader_layout_hash = layout_defining_shader_layout_hash;
+	pipeline.set_formats = layout_defining_shader_set_formats;
+	pipeline.push_constant_size = layout_defining_shader_push_constant_size;
 
 	Error err = _raytracing_pipeline_create_sbt_buffer(pipeline.driver_id, p_raygen_shaders.size(), p_miss_shaders.size(), pipeline.sbt_buffer);
 	if (unlikely(err != OK)) {
@@ -5303,32 +5403,40 @@ RID RenderingDevice::raytracing_pipeline_create(Span<PipelineShader> p_raygen_sh
 	pipeline.miss_shader_count = p_miss_shaders.size();
 	pipeline.hit_group_count = p_hit_groups.size();
 
-	// Create ID to associate with this pipeline.
-	RID id = raytracing_pipeline_owner.make_rid(pipeline);
+	// ===== Region 3: locked RID registration =====
+	RID id;
+	{
+		_THREAD_SAFE_METHOD_
+
+		if (pipeline_cache_enabled) {
+			update_pipeline_cache();
+		}
+
+		id = raytracing_pipeline_owner.make_rid(pipeline);
 #ifdef DEV_ENABLED
-	set_resource_name(id, "RID:" + itos(id.get_id()));
+		set_resource_name(id, "RID:" + itos(id.get_id()));
 #endif
 
-	// Now add all the dependencies.
-	for (uint32_t i = 0; i < p_raygen_shaders.size(); i++) {
-		_add_dependency(id, p_raygen_shaders[i].shader);
-	}
-	for (uint32_t i = 0; i < p_miss_shaders.size(); i++) {
-		_add_dependency(id, p_miss_shaders[i].shader);
-	}
-	for (uint32_t i = 0; i < p_hit_groups.size(); i++) {
-		const HitGroup &hit_group = p_hit_groups[i];
-
-		if (hit_group.closest_hit_shader.is_valid()) {
-			_add_dependency(id, hit_group.closest_hit_shader.shader);
+		for (uint32_t i = 0; i < p_raygen_shaders.size(); i++) {
+			_add_dependency(id, p_raygen_shaders[i].shader);
 		}
-
-		if (hit_group.any_hit_shader.is_valid()) {
-			_add_dependency(id, hit_group.any_hit_shader.shader);
+		for (uint32_t i = 0; i < p_miss_shaders.size(); i++) {
+			_add_dependency(id, p_miss_shaders[i].shader);
 		}
+		for (uint32_t i = 0; i < p_hit_groups.size(); i++) {
+			const HitGroup &hit_group = p_hit_groups[i];
 
-		if (hit_group.intersection_shader.is_valid()) {
-			_add_dependency(id, hit_group.intersection_shader.shader);
+			if (hit_group.closest_hit_shader.is_valid()) {
+				_add_dependency(id, hit_group.closest_hit_shader.shader);
+			}
+
+			if (hit_group.any_hit_shader.is_valid()) {
+				_add_dependency(id, hit_group.any_hit_shader.shader);
+			}
+
+			if (hit_group.intersection_shader.is_valid()) {
+				_add_dependency(id, hit_group.intersection_shader.shader);
+			}
 		}
 	}
 
@@ -6515,6 +6623,32 @@ void RenderingDevice::raytracing_list_set_push_constant(RaytracingListID p_list,
 #ifdef DEBUG_ENABLED
 	raytracing_list.validation.pipeline_push_constant_supplied = true;
 #endif
+}
+
+void RenderingDevice::raytracing_list_add_buffer_dependency(RaytracingListID p_list, RID p_buffer, bool p_writable) {
+	ERR_RENDER_THREAD_GUARD();
+
+	ERR_FAIL_COND(p_list != ID_TYPE_RAYTRACING_LIST);
+	ERR_FAIL_COND(!raytracing_list.active);
+
+	Buffer *buffer = _get_buffer_from_owner(p_buffer);
+	ERR_FAIL_NULL_MSG(buffer, "Buffer argument is not a valid buffer of any type.");
+
+	// Promote the buffer to mutable so it has a draw_tracker. First-time
+	// promotion also triggers a global synchronization point so any writes
+	// that happened before the buffer was made mutable are flushed.
+	if (_buffer_make_mutable(buffer, p_buffer)) {
+		draw_graph.add_synchronization();
+	}
+
+	if (buffer->draw_tracker != nullptr) {
+		RDG::ResourceUsage usage = p_writable
+				? RDG::RESOURCE_USAGE_STORAGE_BUFFER_READ_WRITE
+				: RDG::RESOURCE_USAGE_STORAGE_BUFFER_READ;
+		draw_graph.add_raytracing_list_usage(buffer->draw_tracker, usage);
+	}
+
+	_check_transfer_worker_buffer(buffer);
 }
 
 void RenderingDevice::raytracing_list_trace_rays(RaytracingListID p_list, uint32_t p_raygen_shader_index, RID p_hit_sbt, uint32_t p_width, uint32_t p_height, uint32_t p_depth) {
@@ -7805,6 +7939,9 @@ void RenderingDevice::draw_command_begin_label(const Span<char> p_label_name, co
 	ERR_RENDER_THREAD_GUARD();
 
 	if (!context->is_debug_utils_enabled()) {
+		if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+			WARN_PRINT_ONCE("GPU markers are unavailable for this rendering driver or build.");
+		}
 		return;
 	}
 
@@ -8364,12 +8501,18 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 		String rendering_method;
 		if (OS::get_singleton()->get_current_rendering_method() == "mobile") {
 			rendering_method = "Forward Mobile";
-		} else {
+		} else if (OS::get_singleton()->get_current_rendering_method() == "forward_plus") {
 			rendering_method = "Forward+";
+		} else {
+			rendering_method = "Unknown";
 		}
 
 		// Output our device version.
-		Engine::get_singleton()->print_header(vformat("%s %s - %s - Using Device #%d: %s - %s", get_device_api_name(), get_device_api_version(), rendering_method, device_index, _get_device_vendor_name(device), device.name));
+		String streamline_enabled = "";
+#ifdef STREAMLINE_ENABLED
+		streamline_enabled = (StreamlineContext::get().slInit != nullptr ? " - Streamline" : "");
+#endif
+		Engine::get_singleton()->print_header(vformat("%s %s - %s%s - Using Device #%d: %s - %s", get_device_api_name(), get_device_api_version(), rendering_method, streamline_enabled, device_index, _get_device_vendor_name(device), device.name));
 	}
 
 	// Pick the main queue family. It is worth noting we explicitly do not request the transfer bit, as apparently the specification defines
@@ -8712,7 +8855,9 @@ uint64_t RenderingDevice::get_driver_resource(DriverResource p_resource, RID p_r
 			break;
 		case DRIVER_RESOURCE_TEXTURE:
 		case DRIVER_RESOURCE_TEXTURE_VIEW:
-		case DRIVER_RESOURCE_TEXTURE_DATA_FORMAT: {
+		case DRIVER_RESOURCE_TEXTURE_DATA_FORMAT:
+		case DRIVER_RESOURCE_TEXTURE_DEVICE_MEMORY:
+		case DRIVER_RESOURCE_TEXTURE_USAGE_FLAGS: {
 			Texture *tex = texture_owner.get_or_null(p_rid);
 			ERR_FAIL_NULL_V(tex, 0);
 
@@ -9238,6 +9383,8 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_TEXTURE);
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_TEXTURE_VIEW);
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_TEXTURE_DATA_FORMAT);
+	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_TEXTURE_DEVICE_MEMORY);
+	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_TEXTURE_USAGE_FLAGS);
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_SAMPLER);
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_UNIFORM_SET);
 	BIND_ENUM_CONSTANT(DRIVER_RESOURCE_BUFFER);

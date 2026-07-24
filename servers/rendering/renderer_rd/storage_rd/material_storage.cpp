@@ -2024,6 +2024,26 @@ RID MaterialStorage::global_shader_uniforms_get_storage_buffer() const {
 	return global_shader_uniforms.buffer;
 }
 
+RID MaterialStorage::global_shader_uniform_get_texture(const StringName &p_name) const {
+	const GlobalShaderUniforms::Variable *v = global_shader_uniforms.variables.getptr(p_name);
+	if (!v || v->buffer_index >= 0) {
+		return RID();
+	}
+	RID rid = v->override;
+	if (!rid.is_valid()) {
+		rid = v->value;
+	}
+	return rid;
+}
+
+int32_t MaterialStorage::global_shader_uniform_get_buffer_index(const StringName &p_name) const {
+	const GlobalShaderUniforms::Variable *v = global_shader_uniforms.variables.getptr(p_name);
+	if (!v) {
+		return -1;
+	}
+	return v->buffer_index;
+}
+
 int32_t MaterialStorage::global_shader_parameters_instance_allocate(RID p_instance) {
 	ERR_FAIL_COND_V(global_shader_uniforms.instance_buffer_pos.has(p_instance), -1);
 	int32_t pos = _global_shader_uniform_allocate(ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES);
@@ -2277,12 +2297,49 @@ void MaterialStorage::shader_set_code(RID p_shader, const String &p_code) {
 	if (shader->data) {
 		shader->data->set_path_hint(shader->path_hint);
 		shader->data->set_code(p_code);
+		// rt_* fields are seeded from raster inside `set_code`; the
+		// authoritative RT classification arrives via the follow-up
+		// `shader_set_code_rt` from the resource layer.
 	}
 
 	for (Material *E : shader->owners) {
 		Material *material = E;
 		material->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MATERIAL);
 		_material_queue_update(material, true, true);
+	}
+}
+
+void MaterialStorage::shader_set_code_rt(RID p_shader, const String &p_code_rt) {
+	Shader *shader = shader_owner.get_or_null(p_shader);
+	ERR_FAIL_NULL(shader);
+
+	const bool changed = shader->code_rt != p_code_rt;
+	shader->code_rt = p_code_rt;
+	if (p_code_rt.is_empty()) {
+		shader->code_rt_hash = 0;
+		shader->code_rt_hash_b = 0;
+	} else {
+		// Two passes of hash64 with different bookends produce a 128-bit identity.
+		// Birthday problem is negligible for any realistic project shader count at 128 bit.
+		const String wrapped_a = String("RT_HG_A|") + p_code_rt + "|A_END";
+		const String wrapped_b = String("RT_HG_B|") + p_code_rt + "|B_END";
+		shader->code_rt_hash = wrapped_a.hash64();
+		shader->code_rt_hash_b = wrapped_b.hash64();
+	}
+
+	// Always forward: the preceding `shader_set_code()` reset rt_* to raster
+	// mirrors, so we must re-establish the RT classification even when the
+	// preprocessed text is byte-identical to the previous run.
+	if (shader->data) {
+		shader->data->set_code_rt(p_code_rt);
+	}
+
+	if (changed) {
+		for (Material *E : shader->owners) {
+			Material *material = E;
+			material->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MATERIAL);
+			_material_queue_update(material, false, false);
+		}
 	}
 }
 
@@ -2404,6 +2461,7 @@ void MaterialStorage::_material_uniform_set_erased(void *p_material) {
 			// if a texture is deleted, so re-create it.
 			MaterialStorage::get_singleton()->_material_queue_update(material, false, true);
 		}
+		material->rt_invalidation_counter++;
 		material->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MATERIAL);
 	}
 }
@@ -2482,6 +2540,9 @@ void MaterialStorage::material_set_shader(RID p_material, RID p_shader) {
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 
+	// Invalidate RT cache for this material (shader change).
+	material->rt_invalidation_counter++;
+
 	if (material->data) {
 		memdelete(material->data);
 		material->data = nullptr;
@@ -2537,6 +2598,48 @@ MaterialStorage::ShaderData *MaterialStorage::material_get_shader_data(RID p_mat
 	return nullptr;
 }
 
+String MaterialStorage::material_get_shader_code(RID p_material) const {
+	const Material *material = material_owner.get_or_null(p_material);
+	if (material && material->shader) {
+		return material->shader->code;
+	}
+	return String();
+}
+
+String MaterialStorage::material_get_shader_code_rt(RID p_material) const {
+	const Material *material = material_owner.get_or_null(p_material);
+	if (material && material->shader) {
+		if (!material->shader->code_rt.is_empty()) {
+			return material->shader->code_rt;
+		}
+		return material->shader->code;
+	}
+	return String();
+}
+
+uint64_t MaterialStorage::material_get_shader_code_rt_hash(RID p_material) const {
+	const Material *material = material_owner.get_or_null(p_material);
+	if (material && material->shader) {
+		if (material->shader->code_rt_hash != 0) {
+			return material->shader->code_rt_hash;
+		}
+		return material->shader->code.hash64();
+	}
+	return 0;
+}
+
+uint64_t MaterialStorage::material_get_shader_code_rt_hash_b(RID p_material) const {
+	const Material *material = material_owner.get_or_null(p_material);
+	if (material && material->shader) {
+		if (material->shader->code_rt_hash_b != 0) {
+			return material->shader->code_rt_hash_b;
+		}
+		const String wrapped_b = String("RT_HG_B|") + material->shader->code + "|B_END";
+		return wrapped_b.hash64();
+	}
+	return 0;
+}
+
 void MaterialStorage::material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) {
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
@@ -2547,6 +2650,9 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 		ERR_FAIL_COND(p_value.get_type() == Variant::OBJECT); //object not allowed
 		material->params[p_param] = p_value;
 	}
+
+	// Invalidate RT cache for this material.
+	material->rt_invalidation_counter++;
 
 	if (material->shader && material->shader->data) { //shader is valid
 		bool is_texture = material->shader->data->is_parameter_texture(p_param);

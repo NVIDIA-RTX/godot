@@ -1399,6 +1399,17 @@
 				Configures glow for the specified environment RID. See [code]glow_*[/code] properties in [Environment] for more information.
 			</description>
 		</method>
+		<method name="environment_set_pathtracing">
+			<return type="void" />
+			<param index="0" name="env" type="RID" />
+			<param index="1" name="enable" type="bool" />
+			<param index="2" name="debug_mode" type="int" />
+			<param index="3" name="samples_per_pixel" type="int" />
+			<param index="4" name="max_bounces" type="int" />
+			<param index="5" name="denoiser" type="int" enum="RenderingServer.PathtracingDenoiser" />
+			<description>
+			</description>
+		</method>
 		<method name="environment_set_sdfgi">
 			<return type="void" />
 			<param index="0" name="env" type="RID" />
@@ -2029,6 +2040,27 @@
 			<param index="2" name="use_aabb_center" type="bool" />
 			<description>
 				Sets the sorting offset and switches between using the bounding box or instance origin for depth sorting.
+			</description>
+		</method>
+		<method name="instance_set_rt_procedural">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="procedural" type="bool" />
+			<param index="2" name="aabb" type="AABB" />
+			<description>
+				Enables or disables procedural ray tracing geometry for the given [param instance]. When [param procedural] is [code]true[/code], the instance uses AABB-based intersection for ray tracing instead of triangle geometry. [param aabb] defines the conservative bounding volume used for culling the instance in the Top-Level Acceleration Structure (TLAS). The actual per-primitive AABBs must be provided separately via [method instance_set_rt_procedural_bounds].
+				[b]Note:[/b] Only supported on mesh instances. The mesh still drives CPU-side culling; only the ray tracing path is affected.
+			</description>
+		</method>
+		<method name="instance_set_rt_procedural_bounds">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="aabb_data" type="PackedFloat32Array" />
+			<param index="2" name="expose_bounds" type="bool" />
+			<description>
+				Sets the per-primitive axis-aligned bounding boxes used by the ray tracer for a procedural instance. [param aabb_data] is a flat array of [code skip-lint]float[/code] values, with each AABB occupying 6 consecutive values ([code]min_x, min_y, min_z, max_x, max_y, max_z[/code]). Each AABB corresponds to one procedural primitive visible to intersection shaders via [code]gl_PrimitiveID[/code].
+				If [param expose_bounds] is [code]true[/code], the AABBs are also accessible from ray hit shaders, which allows intersection shaders to skip the ray-AABB test and use precomputed results.
+				[b]Note:[/b] [method instance_set_rt_procedural] must be called with [code]procedural = true[/code] before this method has any effect.
 			</description>
 		</method>
 		<method name="instance_set_scenario">
@@ -4307,6 +4339,14 @@
 				Sets the viewport's environment mode which allows enabling or disabling rendering of 3D environment over 2D canvas. When disabled, 2D will not be affected by the environment. When enabled, 2D will be affected by the environment if the environment background mode is [constant ENV_BG_CANVAS]. The default behavior is to inherit the setting from the viewport's parent. If the topmost parent is also set to [constant VIEWPORT_ENVIRONMENT_INHERIT], then the behavior will be the same as if it was set to [constant VIEWPORT_ENVIRONMENT_ENABLED].
 			</description>
 		</method>
+		<method name="viewport_set_frame_generation">
+			<return type="void" />
+			<param index="0" name="viewport" type="RID" />
+			<param index="1" name="frame_generation" type="bool" />
+			<description>
+				Toggles Frame Generation technology on a viewport. (Currently supports DLSS 3.0 - NVIDIA only)
+			</description>
+		</method>
 		<method name="viewport_set_fsr_sharpness">
 			<return type="void" />
 			<param index="0" name="viewport" type="RID" />
@@ -5399,13 +5439,16 @@
 		</constant>
 		<constant name="VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL" value="4" enum="ViewportScaling3DMode">
 			Use MetalFX temporal upscaling for the viewport's 3D buffer. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values less than [code]1.0[/code] will result in the viewport being upscaled using MetalFX. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] will use MetalFX at native resolution as a TAA solution.
-			[b]Note:[/b] Only supported when the Metal rendering driver is in use, which limits this scaling mode to macOS and iOS.
+				[b]Note:[/b] Only supported when the Metal rendering driver is in use, which limits this scaling mode to macOS and iOS.
 		</constant>
 		<constant name="VIEWPORT_SCALING_3D_MODE_NEAREST" value="5" enum="ViewportScaling3DMode">
 			Use nearest-neighbor filtering for the viewport's 3D buffer. This looks crisper than [constant VIEWPORT_SCALING_3D_MODE_BILINEAR] and has no additional rendering cost. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] disables scaling.
 			[b]Note:[/b] When using the [b]Nearest[/b] scaling mode, to avoid uneven pixel scaling, it's highly recommended to use a value equal to an integer divisor with a dividend of [code]1[/code]. For example, it's best to use a scale of [code]0.5[/code] (1/2), [code]0.3333[/code] (1/3), [code]0.25[/code] (1/4), [code]0.2[/code] (1/5), and so on.
 		</constant>
-		<constant name="VIEWPORT_SCALING_3D_MODE_MAX" value="6" enum="ViewportScaling3DMode">
+		<constant name="VIEWPORT_SCALING_3D_MODE_DLSS" value="6" enum="ViewportScaling3DMode">
+			Use NVIDIA DLSS upscaling for the viewport's 3D buffer. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values less than [code]1.0[/code] will result in the viewport being upscaled using DLSS Super Resolution or DLSS Ray Regeneration, depending on raytracing mode. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] will use DLSS at native resolution as a TAA solution (DLAA).
+		</constant>
+		<constant name="VIEWPORT_SCALING_3D_MODE_MAX" value="7" enum="ViewportScaling3DMode">
 			Represents the size of the [enum ViewportScaling3DMode] enum.
 		</constant>
 		<constant name="VIEWPORT_UPDATE_DISABLED" value="0" enum="ViewportUpdateMode">
@@ -5534,7 +5577,22 @@
 		<constant name="VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME" value="2" enum="ViewportRenderInfo">
 			Number of draw calls during this frame.
 		</constant>
-		<constant name="VIEWPORT_RENDER_INFO_MAX" value="3" enum="ViewportRenderInfo">
+		<constant name="VIEWPORT_RENDER_INFO_RT_TLAS_INSTANCES" value="3" enum="ViewportRenderInfo">
+			Number of TLAS instances submitted this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_BLAS_BUILDS" value="4" enum="ViewportRenderInfo">
+			Number of full BLAS builds performed this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_BLAS_REFITS" value="5" enum="ViewportRenderInfo">
+			Number of BLAS refits (updates) performed this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_TRIANGLES_BUILT" value="6" enum="ViewportRenderInfo">
+			Total triangles processed by full BLAS builds this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="ViewportRenderInfo">
+			Total triangles processed by BLAS refits this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_MAX" value="8" enum="ViewportRenderInfo">
 			Represents the size of the [enum ViewportRenderInfo] enum.
 		</constant>
 		<constant name="VIEWPORT_RENDER_INFO_TYPE_VISIBLE" value="0" enum="ViewportRenderInfoType">
@@ -5655,6 +5713,21 @@
 		<constant name="VIEWPORT_DEBUG_DRAW_INTERNAL_BUFFER" value="26" enum="ViewportDebugDraw">
 			Internal buffer is drawn instead of regular scene so you can see the per-pixel output that will be used by post-processing effects.
 			[b]Note:[/b] Only supported when using the Forward+ or Mobile rendering methods.
+		</constant>
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="29" enum="ViewportDebugDraw">
+			Displays the diffuse albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="30" enum="ViewportDebugDraw">
+			Displays the specular albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="31" enum="ViewportDebugDraw">
+			Displays the packed normal and roughness input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="32" enum="ViewportDebugDraw">
+			Displays the specular ray hit distance input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		</constant>
+		<constant name="VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="33" enum="ViewportDebugDraw">
+			Displays the depth buffer reconstructed by NVIDIA DLSS Ray Reconstruction after denoising. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
 		<constant name="VIEWPORT_VRS_DISABLED" value="0" enum="ViewportVRSMode">
 			Variable rate shading is disabled.
@@ -5921,6 +5994,12 @@
 		</constant>
 		<constant name="ENV_SDFGI_UPDATE_LIGHT_MAX" value="5" enum="EnvironmentSDFGIFramesToUpdateLight">
 			Represents the size of the [enum EnvironmentSDFGIFramesToUpdateLight] enum.
+		</constant>
+		<constant name="PT_DENOISER_NONE" value="0" enum="PathtracingDenoiser">
+			No denoising is applied to the path-traced image. Noise will be visible unless [member Environment.pathtracing_samples_per_pixel] is set very high.
+		</constant>
+		<constant name="PT_DENOISER_DLSS_RAY_RECONSTRUCTION" value="1" enum="PathtracingDenoiser">
+			Uses NVIDIA DLSS Ray Reconstruction to denoise the path-traced image. DLSS Ray Reconstruction is a neural temporal denoiser that accumulates information across frames to produce a clean, high-quality result at low sample counts. Requires an NVIDIA RTX GPU and the Streamline plugin to be active.
 		</constant>
 		<constant name="SUB_SURFACE_SCATTERING_QUALITY_DISABLED" value="0" enum="SubSurfaceScatteringQuality">
 			Disables subsurface scattering entirely, even on materials that have [member BaseMaterial3D.subsurf_scatter_enabled] set to [code]true[/code]. This has the lowest GPU requirements.

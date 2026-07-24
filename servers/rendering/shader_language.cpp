@@ -214,6 +214,7 @@ const char *ShaderLanguage::token_names[TK_MAX] = {
 	"HINT_ROUGHNESS_A",
 	"HINT_ROUGHNESS_GRAY",
 	"HINT_ANISOTROPY_TEXTURE",
+	"HINT_ALPHA_TEXTURE",
 	"HINT_SOURCE_COLOR",
 	"HINT_COLOR_CONVERSION_DISABLED",
 	"HINT_RANGE",
@@ -388,6 +389,7 @@ const ShaderLanguage::KeyWord ShaderLanguage::keyword_list[] = {
 	{ TK_HINT_DEFAULT_BLACK_TEXTURE, "hint_default_black", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_DEFAULT_TRANSPARENT_TEXTURE, "hint_default_transparent", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_ANISOTROPY_TEXTURE, "hint_anisotropy", CF_UNSPECIFIED, {}, {} },
+	{ TK_HINT_ALPHA_TEXTURE, "hint_alpha", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_ROUGHNESS_R, "hint_roughness_r", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_ROUGHNESS_G, "hint_roughness_g", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_ROUGHNESS_B, "hint_roughness_b", CF_UNSPECIFIED, {}, {} },
@@ -1237,6 +1239,9 @@ String ShaderLanguage::get_uniform_hint_name(ShaderNode::Uniform::Hint p_hint) {
 		} break;
 		case ShaderNode::Uniform::HINT_ANISOTROPY: {
 			result = "hint_anisotropy";
+		} break;
+		case ShaderNode::Uniform::HINT_ALPHA: {
+			result = "hint_alpha";
 		} break;
 		case ShaderNode::Uniform::HINT_SCREEN_TEXTURE: {
 			result = "hint_screen_texture";
@@ -8914,7 +8919,7 @@ Error ShaderLanguage::_parse_block(BlockNode *p_block, const FunctionInfo &p_fun
 				return ERR_BUG;
 			}
 
-			if (b->parent_function && p_function_info.main_function) {
+			if (b->parent_function && p_function_info.main_function && !p_function_info.allow_return) {
 				_set_error(vformat(RTR("Using '%s' in the '%s' processor function is incorrect."), "return", b->parent_function->name));
 				return ERR_PARSE_ERROR;
 			}
@@ -9927,6 +9932,9 @@ Error ShaderLanguage::_parse_shader(const HashMap<StringName, FunctionInfo> &p_f
 								} break;
 								case TK_HINT_ANISOTROPY_TEXTURE: {
 									new_hint = ShaderNode::Uniform::HINT_ANISOTROPY;
+								} break;
+								case TK_HINT_ALPHA_TEXTURE: {
+									new_hint = ShaderNode::Uniform::HINT_ALPHA;
 								} break;
 								case TK_HINT_RANGE: {
 									if (type != TYPE_FLOAT && type != TYPE_INT) {

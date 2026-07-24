@@ -79,6 +79,7 @@ ShaderTypes::ShaderTypes() {
 	e_scalar.real = Math::E;
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["TIME"] = constt(ShaderLanguage::TYPE_FLOAT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["PREV_TIME"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["EXPOSURE"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_SHADOW_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["PI"] = constvt(ShaderLanguage::TYPE_FLOAT, { pi_scalar });
@@ -232,6 +233,40 @@ ShaderTypes::ShaderTypes() {
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].can_discard = true;
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].main_function = true;
+
+	// RT intersection entry point (procedural geometry).
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["ORIGIN"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["DIRECTION"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["WORLD_ORIGIN"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["WORLD_DIRECTION"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["T_MIN"] = constt(ShaderLanguage::TYPE_FLOAT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["T_MAX"] = constt(ShaderLanguage::TYPE_FLOAT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["MODEL_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["INV_MODEL_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["VIEW_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["INV_VIEW_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["PROJECTION_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["INV_PROJECTION_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["VIEWPORT_SIZE"] = constt(ShaderLanguage::TYPE_VEC2);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["Z_NEAR"] = constt(ShaderLanguage::TYPE_FLOAT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["Z_FAR"] = constt(ShaderLanguage::TYPE_FLOAT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["HIT_UV"] = ShaderLanguage::TYPE_VEC2;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["HIT_NORMAL"] = ShaderLanguage::TYPE_VEC3;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["HIT_TANGENT"] = ShaderLanguage::TYPE_VEC3;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["PREV_POSITION"] = ShaderLanguage::TYPE_VEC3;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["AABB_MIN"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].built_ins["AABB_MAX"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].can_discard = false;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].main_function = true;
+	shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].allow_return = true;
+
+	{
+		ShaderLanguage::StageFunctionInfo report_func;
+		report_func.arguments.push_back(ShaderLanguage::StageFunctionInfo::Argument("t_hit", ShaderLanguage::TYPE_FLOAT));
+		report_func.arguments.push_back(ShaderLanguage::StageFunctionInfo::Argument("kind", ShaderLanguage::TYPE_UINT));
+		report_func.return_type = ShaderLanguage::TYPE_VOID;
+		shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].stage_functions["report_intersection"] = report_func;
+	}
 
 	// spatial render modes
 	{

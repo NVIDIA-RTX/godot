@@ -1068,6 +1068,8 @@ public:
 		uint32_t binding = 0; // Binding index as specified in shader.
 		// This flag specifies that this is an immutable sampler to be set when creating pipeline layout.
 		bool immutable_sampler = false;
+		// This flag specifies that this uniform uses descriptor indexing. Note that his can only be used by the last uniform in the set.
+		bool variable_count = false;
 
 	private:
 		// In most cases only one ID is provided per binding, so avoid allocating memory unnecessarily for performance.
@@ -1357,16 +1359,47 @@ private:
 	RID_Owner<AccelerationStructure, true> acceleration_structure_owner;
 
 public:
+	// RD-layer BLAS geometry entry. Mirrors RDD::AccelerationStructureGeometry
+	// but uses RIDs instead of BufferIDs, and tracks dependencies on those
+	// resources so the BLAS is invalidated / recreated appropriately.
 	struct AccelerationStructureGeometry {
+		enum Type {
+			TYPE_TRIANGLES,
+			TYPE_AABBS,
+		};
+
+		struct Triangles {
+			RID vertex_buffer;
+			uint32_t vertex_offset = 0;
+			uint32_t vertex_stride = 0;
+			uint32_t vertex_count = 0;
+			DataFormat vertex_format = DATA_FORMAT_MAX;
+			RID index_buffer;
+			uint32_t index_offset = 0;
+			uint32_t index_count = 0;
+		};
+
+		// Procedural geometry: buffer of float3 (min, max) AABB pairs.
+		struct Aabbs {
+			RID buffer;
+			uint32_t offset = 0;
+			uint32_t stride = 24;
+			uint32_t count = 0;
+		};
+
+		// RIDs have a non-trivial destructor, so the variants live in parallel
+		// fields (not a C-style union). Only the fields matching `type` are
+		// read by `blas_create()`. Kept inside a `Geometry` sub-struct so the
+		// access syntax (`g.geometry.triangles.*`) matches the driver-layer
+		// AccelerationStructureGeometry::geometry union.
+		struct Geometry {
+			Triangles triangles;
+			Aabbs aabbs;
+		};
+
+		Type type = TYPE_TRIANGLES;
 		BitField<AccelerationStructureGeometryFlagBits> flags = {};
-		RID vertex_buffer;
-		uint32_t vertex_offset = 0;
-		uint32_t vertex_stride = 0;
-		uint32_t vertex_count = 0;
-		DataFormat vertex_format = DATA_FORMAT_MAX;
-		RID index_buffer;
-		uint32_t index_offset = 0;
-		uint32_t index_count = 0;
+		Geometry geometry;
 	};
 
 	RID blas_create(Span<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags);
@@ -1384,6 +1417,7 @@ public:
 	};
 
 	Error blas_build(RID p_blas);
+	Error blas_update(RID p_blas);
 	Error tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
 
 private:
@@ -1395,7 +1429,7 @@ private:
 		RID raytracing_pipeline_id;
 		RDD::RaytracingPipelineID raytracing_pipeline;
 		uint32_t index_offset = 0;
-		uint32_t raytracing_pipeline_hit_group_count = 0; // Used for validation.
+		uint32_t raytracing_pipeline_hit_group_count = 0;
 
 		Vector<uint32_t> hit_group_indices;
 		uint32_t used_hit_group_count = 0;
@@ -1621,6 +1655,7 @@ public:
 	void raytracing_list_bind_raytracing_pipeline(RaytracingListID p_list, RID p_raytracing_pipeline);
 	void raytracing_list_bind_uniform_set(RaytracingListID p_list, RID p_uniform_set, uint32_t p_index);
 	void raytracing_list_set_push_constant(RaytracingListID p_list, const void *p_data, uint32_t p_data_size);
+	void raytracing_list_add_buffer_dependency(RaytracingListID p_list, RID p_buffer, bool p_writable = false);
 	void raytracing_list_trace_rays(RaytracingListID p_list, uint32_t p_raygen_shader_index, RID p_hit_sbt, uint32_t p_width, uint32_t p_height, uint32_t p_depth);
 	void raytracing_list_end();
 

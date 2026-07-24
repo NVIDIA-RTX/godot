@@ -71,6 +71,10 @@ void main() {
 #define FLAG_ALPHA_TO_ONE (1 << 5)
 #define FLAG_LINEAR (1 << 6)
 #define FLAG_NORMAL (1 << 7)
+#define FLAG_MODE_SHIFT 28
+#define FLAG_MODE_MASK 0xF
+#define FLAG_MODE_LOG_LUMINANCE 1
+#define FLAG_MODE_ALPHA_TO_LUMINANCE 2
 
 layout(push_constant, std430) uniform Params {
 	vec4 section;
@@ -82,6 +86,10 @@ layout(push_constant, std430) uniform Params {
 }
 params;
 
+#ifdef MODE_COPY_DEPTH
+layout(location = 0) in vec2 uv_interp;
+layout(set = 0, binding = 0) uniform sampler2D source_depth;
+#else /* !MODE_COPY_DEPTH */
 #ifndef MODE_SET_COLOR
 #ifdef USE_MULTIVIEW
 layout(location = 0) in vec3 uv_interp;
@@ -104,6 +112,7 @@ layout(set = 1, binding = 0) uniform sampler2D source_color2;
 #endif /* !SET_COLOR */
 
 layout(location = 0) out vec4 frag_color;
+#endif /* MODE_COPY_DEPTH */
 
 vec3 linear_to_srgb(vec3 color) {
 	const vec3 a = vec3(0.055f);
@@ -115,7 +124,10 @@ vec3 srgb_to_linear(vec3 color) {
 }
 
 void main() {
-#ifdef MODE_SET_COLOR
+#if defined(MODE_COPY_DEPTH)
+	gl_FragDepth = textureLod(source_depth, uv_interp, 0.0).r;
+	return;
+#elif defined(MODE_SET_COLOR)
 	frag_color = params.color;
 #else
 
@@ -169,7 +181,11 @@ void main() {
 #endif /* MODE_TWO_SOURCES */
 #endif /* USE_MULTIVIEW */
 
-	if (bool(params.flags & FLAG_FORCE_LUMINANCE)) {
+	uint flag_mode = (params.flags >> FLAG_MODE_SHIFT) & FLAG_MODE_MASK;
+
+	if (flag_mode == FLAG_MODE_ALPHA_TO_LUMINANCE) {
+		color.rgb = vec3(color.a);
+	} else if (bool(params.flags & FLAG_FORCE_LUMINANCE)) {
 		color.rgb = vec3(max(max(color.r, color.g), color.b));
 	}
 	if (bool(params.flags & FLAG_ALPHA_TO_ZERO)) {
@@ -187,6 +203,9 @@ void main() {
 	}
 	if (bool(params.flags & FLAG_NORMAL)) {
 		color.rgb = normalize(color.rgb * 2.0 - 1.0) * 0.5 + 0.5;
+	}
+	if (flag_mode == FLAG_MODE_LOG_LUMINANCE) {
+		color.rgb = vec3(log2(1.0 + max(color.r, 0.0) * 1023.0) / 10.0);
 	}
 
 	frag_color = color / params.luminance_multiplier;

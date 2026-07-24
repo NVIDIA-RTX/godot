@@ -101,7 +101,7 @@ bool ShaderBakerExportPlugin::_begin_customize_resources(const Ref<EditorExportP
 	}
 
 	if (Engine::get_singleton()->is_generate_spirv_debug_info_enabled()) {
-		WARN_PRINT("Shader baker can't generate a compatible shader when run with --generate-spirv-debug-info. Restart the editor without this argument if you want to bake shaders.");
+		WARN_PRINT("Shader baker can't generate a compatible shader when run with --debug-shaders (or --generate-spirv-debug-info). Restart the editor without this argument if you want to bake shaders.");
 		return false;
 	}
 

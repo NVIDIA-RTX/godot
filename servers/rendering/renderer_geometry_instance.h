@@ -74,6 +74,9 @@ public:
 	virtual void pair_voxel_gi_instances(const RID *p_voxel_gi_instances, uint32_t p_voxel_gi_instance_count) = 0;
 
 	virtual void set_softshadow_projector_pairing(bool p_softshadow, bool p_projector) = 0;
+
+	virtual void set_rt_procedural(bool p_procedural, const AABB &p_aabb) {}
+	virtual void set_rt_procedural_bounds(const Vector<float> &p_aabb_data, bool p_expose_bounds) {}
 };
 
 // Base implementation of RenderGeometryInstance shared by internal renderers.

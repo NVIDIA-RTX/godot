@@ -532,6 +532,7 @@ public:
 		// Flag to indicate  that this is an immutable sampler so it is skipped when creating uniform
 		// sets, as it would be set previously when creating the pipeline layout.
 		bool immutable_sampler = false;
+		bool variable_count = false;
 
 		_FORCE_INLINE_ bool is_dynamic() const {
 			return type == UNIFORM_TYPE_STORAGE_BUFFER_DYNAMIC || type == UNIFORM_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -745,17 +746,48 @@ public:
 
 	// ----- ACCELERATION STRUCTURE -----
 
+	// BLAS geometry entry. Describes one triangle set or one AABB set that
+	// contributes to a BLAS. A single BLAS can combine multiple entries; each
+	// entry must pick exactly one variant via `type` and populate the matching
+	// fields of the `geometry` union. The variant members have no default
+	// initializers so the union stays trivially default-constructible; the
+	// active fields are always written explicitly by the caller.
 	struct AccelerationStructureGeometry {
+		enum Type {
+			TYPE_TRIANGLES,
+			TYPE_AABBS,
+		};
+
+		struct Triangles {
+			BufferID vertex_buffer;
+			uint32_t vertex_offset;
+			uint32_t vertex_stride;
+			uint32_t vertex_count;
+			DataFormat vertex_format;
+			BufferID index_buffer;
+			uint32_t index_offset;
+			uint32_t index_count;
+			IndexBufferFormat index_format;
+		};
+
+		// Procedural geometry: each AABB is two float3 (min, max), packed
+		// tightly by default (stride = sizeof(VkAabbPositionsKHR) = 24).
+		struct Aabbs {
+			BufferID buffer;
+			uint32_t offset;
+			uint32_t stride;
+			uint32_t count;
+		};
+
+		union Geometry {
+			Triangles triangles;
+			Aabbs aabbs;
+			Geometry() {}
+		};
+
+		Type type = TYPE_TRIANGLES;
 		BitField<AccelerationStructureGeometryFlagBits> flags = {};
-		BufferID vertex_buffer;
-		uint32_t vertex_offset = 0;
-		uint32_t vertex_stride = 0;
-		uint32_t vertex_count = 0;
-		DataFormat vertex_format = DATA_FORMAT_MAX;
-		BufferID index_buffer;
-		uint32_t index_offset = 0;
-		uint32_t index_count = 0;
-		IndexBufferFormat index_format = {};
+		Geometry geometry;
 	};
 
 	virtual AccelerationStructureID blas_create(VectorView<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) = 0;
@@ -771,7 +803,6 @@ public:
 
 	virtual AccelerationStructureID tlas_create(uint32_t p_max_instance_count, BitField<AccelerationStructureFlagBits> p_flags) = 0;
 	virtual void acceleration_structure_instance_write(uint8_t *r_driver_instance, const AccelerationStructureInstance &p_instance) = 0;
-
 	virtual void acceleration_structure_free(AccelerationStructureID p_acceleration_structure) = 0;
 	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) = 0;
 
@@ -797,6 +828,9 @@ public:
 	// ----- COMMANDS -----
 
 	virtual void command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
+	// In-place refit of a BLAS previously built with ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT.
+	// Geometry topology / counts must be unchanged; only vertex positions may differ.
+	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
 	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) = 0;
 	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) = 0;
 	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) = 0;
@@ -843,6 +877,9 @@ public:
 	/**** DEBUG *****/
 	/****************/
 	virtual void command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) = 0;
+
+	/// Returns the underlying native command buffer handle (e.g. ID3D12GraphicsCommandList* or VkCommandBuffer).
+	virtual void *command_buffer_get_native_handle(CommandBufferID p_cmd_buffer) { return nullptr; }
 
 	/********************/
 	/**** SUBMISSION ****/

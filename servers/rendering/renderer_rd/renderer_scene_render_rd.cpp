@@ -30,6 +30,10 @@
 
 #include "renderer_scene_render_rd.h"
 
+#ifdef WINDOWS_ENABLED
+#include <windows.h>
+#endif
+
 #include "core/config/project_settings.h"
 #include "core/io/image.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
@@ -470,7 +474,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	bool can_use_storage = _render_buffers_can_be_storage();
 
 	RSE::ViewportScaling3DMode scale_mode = rb->get_scaling_3d_mode();
-	bool use_upscaled_texture = rb->has_upscaled_texture() && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL);
+	bool use_upscaled_texture = rb->has_upscaled_texture() && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS);
 	SpatialUpscaler *spatial_upscaler = nullptr;
 	if (can_use_effects) {
 		if (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR) {
@@ -482,8 +486,10 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		}
 	}
 
+	// SMAA causes issues when enabled with temporal upscalers.
+	bool temporal_upscaler_active = scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL;
 	bool use_fxaa = rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_FXAA;
-	bool use_smaa = smaa && rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_SMAA;
+	bool use_smaa = smaa && rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_SMAA && !temporal_upscaler_active;
 	// If doing bilinear or nearest scaling + FXAA / SMAA, the framebuffer must be scaled in a framebuffer copy after AA is applied.
 	bool using_scaling_pass = spatial_upscaler || ((use_fxaa || use_smaa) && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_BILINEAR || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_NEAREST));
 
@@ -492,6 +498,36 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	Size2i color_size = use_upscaled_texture ? target_size : rb->get_internal_size();
 
 	bool dest_is_msaa_2d = rb->get_view_count() == 1 && texture_storage->render_target_get_msaa(render_target) != RSE::VIEWPORT_MSAA_DISABLED;
+
+	// Reconstruct full-resolution depth from low-res depth buffer using
+	// color-guided bilateral upsampling with motion-vector temporal accumulation.
+	bool has_reconstructed_depth = false;
+	if (can_use_effects && can_use_storage && use_upscaled_texture && depth_reconstruct && rb->get_depth_reconstruct_requested()) {
+		Size2i internal_size = rb->get_internal_size();
+		bool size_differs = (internal_size.x != target_size.x) || (internal_size.y != target_size.y);
+		if (size_differs) {
+			RENDER_TIMESTAMP("Depth Reconstruct");
+			RD::get_singleton()->draw_command_begin_label("Depth Reconstruct");
+
+			uint32_t depth_usage = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+			rb->create_texture(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, RD::DATA_FORMAT_R32_SFLOAT, depth_usage, RD::TEXTURE_SAMPLES_1, target_size, 0, 1, true, true);
+
+			for (uint32_t i = 0; i < rb->get_view_count(); i++) {
+				float z_near = p_render_data->scene_data->view_projection[i].get_z_near();
+				float z_far = p_render_data->scene_data->view_projection[i].get_z_far();
+
+				RID lowres_depth = rb->get_depth_texture(i);
+				RID upscaled_color = use_upscaled_texture ? rb->get_upscaled_texture(i) : rb->get_internal_texture(i);
+				RID velocity = rb->get_velocity_buffer(false, i);
+				RID dest_depth = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, i, 0);
+
+				depth_reconstruct->process(lowres_depth, upscaled_color, velocity, dest_depth, target_size, internal_size, z_near, z_far);
+			}
+			has_reconstructed_depth = true;
+
+			RD::get_singleton()->draw_command_end_label();
+		}
+	}
 
 	bool using_dof = RSG::camera_attributes->camera_attributes_uses_dof(p_render_data->camera_attributes);
 
@@ -517,7 +553,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		if (can_use_storage) {
 			for (uint32_t i = 0; i < rb->get_view_count(); i++) {
 				buffers.base_texture = use_upscaled_texture ? rb->get_upscaled_texture(i) : rb->get_internal_texture(i);
-				buffers.depth_texture = rb->get_depth_texture(i);
+#ifdef WINDOWS_ENABLED
+				bool force_lowres_depth = (GetAsyncKeyState(VK_BACK) & 0x8000) != 0;
+#else
+				bool force_lowres_depth = false;
+#endif
+				buffers.depth_texture = (has_reconstructed_depth && !force_lowres_depth) ? rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, i, 0) : rb->get_depth_texture(i);
 
 				// In stereo p_render_data->z_near and p_render_data->z_far can be offset for our combined frustum.
 				float z_near = p_render_data->scene_data->view_projection[i].get_z_near();
@@ -606,7 +647,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			}
 			for (uint32_t l = 0; l < rb->get_view_count(); l++) {
 				Size2i vp_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, 0);
-				RID source = rb->get_internal_texture(l);
+				RID source = use_upscaled_texture ? rb->get_upscaled_texture(l) : rb->get_internal_texture(l);
 				RID dest = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, l, 0);
 				copy_effects->gaussian_glow(source, dest, vp_size, environment_get_glow_strength(p_render_data->environment), true, environment_get_glow_hdr_luminance_cap(p_render_data->environment), environment_get_exposure(p_render_data->environment), environment_get_glow_bloom(p_render_data->environment), environment_get_glow_hdr_bleed_threshold(p_render_data->environment), environment_get_glow_hdr_bleed_scale(p_render_data->environment), luminance_texture, auto_exposure_scale);
 
@@ -1356,7 +1397,7 @@ void RendererSceneRenderRD::_post_prepass_render(RenderDataRD *p_render_data, bo
 	}
 }
 
-void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info) {
+void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info, const PagedArray<RenderGeometryInstance *> *p_rt_instances, const PagedArray<RID> *p_rt_lights) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -1470,6 +1511,8 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 		render_data.window_output_max_value = p_window_output_max_value;
 
 		render_data.render_info = r_render_info;
+		render_data.rt_instances = p_rt_instances;
+		render_data.rt_lights = p_rt_lights;
 
 		if (p_render_buffers.is_valid() && p_reflection_probe.is_null()) {
 			render_data.transparent_bg = texture_storage->render_target_get_transparent(rb->get_render_target());
@@ -1868,6 +1911,9 @@ void RendererSceneRenderRD::init() {
 
 	bokeh_dof = memnew(RendererRD::BokehDOF(!can_use_storage));
 	copy_effects = memnew(RendererRD::CopyEffects(raster_effects));
+	if (can_use_storage) {
+		depth_reconstruct = memnew(RendererRD::DepthReconstruct);
+	}
 	debug_effects = memnew(RendererRD::DebugEffects);
 	luminance = memnew(RendererRD::Luminance(!can_use_storage));
 	smaa = memnew(RendererRD::SMAA);
@@ -1894,6 +1940,9 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 	}
 	if (copy_effects) {
 		memdelete(copy_effects);
+	}
+	if (depth_reconstruct) {
+		memdelete(depth_reconstruct);
 	}
 	if (debug_effects) {
 		memdelete(debug_effects);

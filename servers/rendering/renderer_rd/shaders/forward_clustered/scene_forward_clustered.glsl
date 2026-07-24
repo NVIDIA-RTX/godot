@@ -126,6 +126,7 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 #endif
 
 float global_time;
+float global_prev_time;
 
 #ifdef MODE_DUAL_PARABOLOID
 
@@ -844,6 +845,7 @@ void main() {
 
 	// Current vertex.
 	global_time = scene_data_block.data.time;
+	global_prev_time = scene_data_block.prev_data.time;
 	vertex_shader(vertex,
 #ifdef NORMAL_USED
 			normal,
@@ -1018,6 +1020,7 @@ layout(location = 14) in vec2 point_coord_interp;
 #endif
 
 #define global_time scene_data_block.data.time
+#define global_prev_time scene_data_block.prev_data.time
 
 #if defined(ENABLE_SSS) && defined(ENABLE_TRANSMITTANCE)
 //both required for transmittance to be enabled
@@ -1099,69 +1102,35 @@ vec4 volumetric_fog_process(vec2 screen_uv, float z) {
 	return texture(sampler3D(volumetric_fog_texture, SAMPLER_LINEAR_CLAMP), fog_pos);
 }
 
-vec4 fog_process(vec3 vertex) {
-	vec3 fog_color = scene_data_block.data.fog_light_color;
-
-	if (scene_data_block.data.fog_aerial_perspective > 0.0) {
-		vec3 sky_fog_color = vec3(0.0);
-		vec3 cube_view = scene_data_block.data.radiance_inverse_xform * vertex;
-		// mip_level always reads from the second mipmap and higher so the fog is always slightly blurred
-		float mip_level = mix(1.0 / MAX_ROUGHNESS_LOD, 1.0, 1.0 - (abs(vertex.z) - scene_data_block.data.z_near) / (scene_data_block.data.z_far - scene_data_block.data.z_near));
-#ifdef USE_RADIANCE_OCTMAP_ARRAY
-		float roughness_lod, blend;
-		blend = modf(mip_level * MAX_ROUGHNESS_LOD, roughness_lod);
-		float cube_lod = vec3_to_oct_lod(dFdx(cube_view), dFdy(cube_view), scene_data_block.data.radiance_pixel_size);
-		vec2 cube_uv = vec3_to_oct_with_border(cube_view, vec2(scene_data_block.data.radiance_border_size, 1.0 - scene_data_block.data.radiance_border_size * 2.0));
-		vec3 sky_sample_a = textureLod(sampler2DArray(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(cube_uv, roughness_lod), cube_lod).rgb;
-		vec3 sky_sample_b = textureLod(sampler2DArray(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(cube_uv, roughness_lod + 1), cube_lod).rgb;
-		sky_fog_color = mix(sky_sample_a, sky_sample_b, blend);
-#else
-		float roughness_lod = mip_level * MAX_ROUGHNESS_LOD;
-		vec2 cube_uv = vec3_to_oct_with_border(cube_view, vec2(scene_data_block.data.radiance_border_size, 1.0 - scene_data_block.data.radiance_border_size * 2.0));
-		sky_fog_color = textureLod(sampler2D(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), cube_uv, roughness_lod).rgb;
-#endif //USE_RADIANCE_OCTMAP_ARRAY
-		fog_color = mix(fog_color, sky_fog_color, scene_data_block.data.fog_aerial_perspective);
-	}
-
-	if (scene_data_block.data.fog_sun_scatter > 0.001) {
-		vec4 sun_scatter = vec4(0.0);
-		float sun_total = 0.0;
-		vec3 view = normalize(vertex);
-
-		for (uint i = 0; i < scene_data_block.data.directional_light_count; i++) {
-			vec3 light_color = directional_lights.data[i].color * directional_lights.data[i].energy;
-			float light_amount = pow(max(dot(view, directional_lights.data[i].direction), 0.0), 8.0);
-			fog_color += light_color * light_amount * scene_data_block.data.fog_sun_scatter;
-		}
-	}
-
-	float fog_amount = 0.0;
-
-	if (sc_use_depth_fog()) {
-		float fog_z = smoothstep(scene_data_block.data.fog_depth_begin, scene_data_block.data.fog_depth_end, length(vertex));
-		float fog_quad_amount = pow(fog_z, scene_data_block.data.fog_depth_curve) * scene_data_block.data.fog_density;
-		fog_amount = fog_quad_amount;
-	} else {
-		fog_amount = 1 - exp(min(0.0, -length(vertex) * scene_data_block.data.fog_density));
-	}
-
-	if (abs(scene_data_block.data.fog_height_density) >= 0.0001) {
-		mat4 inv_view_matrix = transpose(mat4(scene_data_block.data.inv_view_matrix[0],
-				scene_data_block.data.inv_view_matrix[1],
-				scene_data_block.data.inv_view_matrix[2],
-				vec4(0.0, 0.0, 0.0, 1.0)));
-
-		float y = (inv_view_matrix * vec4(vertex, 1.0)).y;
-
-		float y_dist = y - scene_data_block.data.fog_height;
-
-		float vfog_amount = 1.0 - exp(min(0.0, y_dist * scene_data_block.data.fog_height_density));
-
-		fog_amount = max(vfog_amount, fog_amount);
-	}
-
-	return vec4(fog_color, fog_amount);
+vec3 fog_get_directional_color(uint index) {
+	return directional_lights.data[index].color * directional_lights.data[index].energy;
 }
+
+vec3 fog_get_directional_direction(uint index) {
+	return directional_lights.data[index].direction;
+}
+
+#define FOG_HAS_RADIANCE
+
+vec3 fog_sample_radiance(vec3 vertex, float mip_level) {
+	vec3 cube_view = scene_data_block.data.radiance_inverse_xform * vertex;
+	vec2 border = vec2(scene_data_block.data.radiance_border_size,
+			1.0 - scene_data_block.data.radiance_border_size * 2.0);
+	vec2 cube_uv = vec3_to_oct_with_border(cube_view, border);
+#ifdef USE_RADIANCE_OCTMAP_ARRAY
+	float roughness_lod, blend;
+	blend = modf(mip_level * MAX_ROUGHNESS_LOD, roughness_lod);
+	float cube_lod = vec3_to_oct_lod(dFdx(cube_view), dFdy(cube_view), scene_data_block.data.radiance_pixel_size);
+	vec3 sky_sample_a = textureLod(sampler2DArray(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(cube_uv, roughness_lod), cube_lod).rgb;
+	vec3 sky_sample_b = textureLod(sampler2DArray(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(cube_uv, roughness_lod + 1), cube_lod).rgb;
+	return mix(sky_sample_a, sky_sample_b, blend);
+#else
+	float roughness_lod = mip_level * MAX_ROUGHNESS_LOD;
+	return textureLod(sampler2D(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), cube_uv, roughness_lod).rgb;
+#endif
+}
+
+#include "../fog_inc.glsl"
 
 void cluster_get_item_range(uint p_offset, out uint item_min, out uint item_max, out uint item_from, out uint item_to) {
 	uint item_min_max = cluster_buffer.data[p_offset];
@@ -1490,7 +1459,7 @@ void fragment_shader(in SceneData scene_data) {
 	// Draw "fixed" fog before volumetric fog to ensure volumetric fog can appear in front of the sky.
 
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_USE_FOG)) {
-		fog = fog_process(vertex);
+		fog = fog_process(scene_data_block.data, vertex);
 		// Premultiply by opacity and convert opacity to transmittance to match volumetric fog.
 		fog.rgb *= fog.a;
 		fog.a = 1.0 - fog.a;

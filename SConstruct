@@ -199,6 +199,8 @@ opts.Add(BoolVariable("opengl3", "Enable the OpenGL/GLES3 rendering driver", Tru
 opts.Add(BoolVariable("d3d12", "Enable the Direct3D 12 rendering driver on supported platforms", False))
 opts.Add(BoolVariable("metal", "Enable the Metal rendering driver on supported platforms (Apple arm64 only)", False))
 opts.Add(BoolVariable("use_volk", "Use the volk library to load the Vulkan loader dynamically", True))
+opts.Add(BoolVariable("use_streamline", "Enable Streamline support", True))
+opts.Add(BoolVariable("use_aftermath", "Enable NVIDIA Nsight Aftermath GPU crash dump support", False))
 opts.Add(BoolVariable("accesskit", "Enable the AccessKit driver for screen reader support", True))
 opts.Add(BoolVariable("angle", "Enable the ANGLE rendering driver for OpenGL ES 3.0 on supported platforms", True))
 opts.Add(BoolVariable("sdl", "Enable the SDL3 input driver", True))
@@ -288,6 +290,13 @@ opts.Add(
 )
 opts.Add(BoolVariable("use_precise_math_checks", "Math checks use very precise epsilon (debug option)", False))
 opts.Add(BoolVariable("strict_checks", "Enforce stricter checks (debug option)", False))
+opts.Add(
+    BoolVariable(
+        "error_backtrace",
+        "Dump native C++ stack traces to stderr on each printed engine error (slow); use debug_symbols for file:line where supported",
+        False,
+    )
+)
 opts.Add(
     BoolVariable(
         "limit_transitive_includes", "Attempt to limit the amount of transitive includes in system headers", True
@@ -596,6 +605,34 @@ if not env["deprecated"]:
 if env["precision"] == "double":
     env.Append(CPPDEFINES=["REAL_T_IS_DOUBLE"])
 
+if env["use_streamline"]:
+    if env["platform"] == "windows":
+        env.AppendUnique(CPPDEFINES=["STREAMLINE_ENABLED"])
+    else:
+        env["use_streamline"] = False
+
+if env["use_aftermath"]:
+    if env["platform"] == "windows":
+        from misc.utility.thirdparty_fetch import fetch_zip
+
+        if not fetch_zip(
+            name="NVIDIA Nsight Aftermath SDK",
+            url=(
+                "https://developer.nvidia.com/downloads/assets/tools/secure/"
+                "nsight-aftermath-sdk/2025_5_0/windows_x64/"
+                "NVIDIA_Nsight_Aftermath_SDK_2025.5.0.25317-windows_x64.zip"
+            ),
+            dest_dir="thirdparty/aftermath/include",
+            zip_subdir="include",
+        ):
+            env["use_aftermath"] = False
+    else:
+        # Aftermath is Windows-only.
+        env["use_aftermath"] = False
+
+    if env["use_aftermath"]:
+        env.AppendUnique(CPPDEFINES=["AFTERMATH_ENABLED"])
+
 # Library Support
 if env["library_type"] != "executable":
     if "library" not in env.get("supported", []):
@@ -681,6 +718,9 @@ if env["production"]:
 
 if env["strict_checks"]:
     env.Append(CPPDEFINES=["STRICT_CHECKS"])
+
+if env["error_backtrace"]:
+    env.Append(CPPDEFINES=["ERROR_BACKTRACE_ENABLED"])
 
 # Run SCU file generation script if in a SCU build.
 if env["scu_build"]:

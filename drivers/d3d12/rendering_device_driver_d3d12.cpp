@@ -33,8 +33,11 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/os/os.h"
+#include "drivers/aftermath/aftermath.h"
+#include "drivers/aftermath/aftermath_context.h"
 #include "drivers/d3d12/d3d12_hooks.h"
 #include "drivers/d3d12/rendering_context_driver_d3d12.h"
+#include "drivers/streamline/streamline.h"
 
 #include <drivers/d3d12/godot_d3d12ma.h>
 #include <drivers/d3d12/godot_nir.h>
@@ -52,6 +55,8 @@ using Microsoft::WRL::ComPtr;
 #ifdef UNUSED
 #undef UNUSED
 #endif
+
+#include "drivers/d3d12/d3d12_pix_markers.h"
 
 #ifdef PIX_ENABLED
 #if defined(__GNUC__)
@@ -2499,6 +2504,8 @@ Error RenderingDeviceDriverD3D12::command_queue_execute_and_present(CommandQueue
 		}
 	}
 
+	Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEGIN_PRESENT);
+
 	HRESULT res;
 	bool any_present_failed = false;
 	for (uint32_t i = 0; i < p_swap_chains.size(); i++) {
@@ -2509,6 +2516,8 @@ Error RenderingDeviceDriverD3D12::command_queue_execute_and_present(CommandQueue
 			any_present_failed = true;
 		}
 	}
+
+	Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_END_PRESENT);
 
 	return any_present_failed ? FAILED : OK;
 }
@@ -2746,6 +2755,12 @@ Error RenderingDeviceDriverD3D12::swap_chain_resize(CommandQueueID p_cmd_queue, 
 		return ERR_SKIP;
 	}
 
+#ifdef STREAMLINE_ENABLED
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_MODIFY_SWAPCHAIN);
+	}
+#endif
+
 	HRESULT res;
 	const bool is_tearing_supported = context_driver->get_tearing_supported();
 	UINT sync_interval = 0;
@@ -2808,6 +2823,7 @@ Error RenderingDeviceDriverD3D12::swap_chain_resize(CommandQueueID p_cmd_queue, 
 		swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 		swap_chain_desc.SampleDesc.Count = 1;
 		swap_chain_desc.Flags = creation_flags;
+
 		swap_chain_desc.Scaling = DXGI_SCALING_STRETCH;
 		if (create_for_composition) {
 			swap_chain_desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
@@ -5344,6 +5360,13 @@ RDD::PipelineID RenderingDeviceDriverD3D12::render_pipeline_create(
 		(SIZE_T)final_stages_bytecode[SHADER_STAGE_FRAGMENT].size()
 	};
 
+	// Register each DXIL stage blob with Aftermath for crash-dump correlation.
+	for (const KeyValue<ShaderStage, Vector<uint8_t>> &E : final_stages_bytecode) {
+		if (E.value.size() > 0) {
+			Aftermath::get_singleton()->register_shader(AFTERMATH_SHADER_DXIL, E.value.ptr(), E.value.size());
+		}
+	}
+
 	ComPtr<ID3D12Device2> device_2;
 	device->QueryInterface(device_2.GetAddressOf());
 	ComPtr<ID3D12PipelineState> pso;
@@ -5485,6 +5508,14 @@ RDD::PipelineID RenderingDeviceDriverD3D12::compute_pipeline_create(ShaderID p_s
 		(SIZE_T)final_stages_bytecode[SHADER_STAGE_COMPUTE].size()
 	};
 
+	// Register the compute DXIL blob with Aftermath for crash-dump correlation.
+	{
+		const Vector<uint8_t> &cs_bytes = final_stages_bytecode[SHADER_STAGE_COMPUTE];
+		if (cs_bytes.size() > 0) {
+			Aftermath::get_singleton()->register_shader(AFTERMATH_SHADER_DXIL, cs_bytes.ptr(), cs_bytes.size());
+		}
+	}
+
 	ComPtr<ID3D12Device2> device_2;
 	device->QueryInterface(device_2.GetAddressOf());
 	ComPtr<ID3D12PipelineState> pso;
@@ -5550,6 +5581,10 @@ bool RenderingDeviceDriverD3D12::raytracing_pipeline_get_shader_group_handles(Ra
 // ----- COMMANDS -----
 
 void RenderingDeviceDriverD3D12::command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) {
+	ERR_FAIL_MSG("Ray tracing is not currently supported by the D3D12 driver.");
+}
+
+void RenderingDeviceDriverD3D12::command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) {
 	ERR_FAIL_MSG("Ray tracing is not currently supported by the D3D12 driver.");
 }
 
@@ -5646,21 +5681,22 @@ void RenderingDeviceDriverD3D12::command_timestamp_write(CommandBufferID p_cmd_b
 }
 
 void RenderingDeviceDriverD3D12::command_begin_label(CommandBufferID p_cmd_buffer, const char *p_label_name, const Color &p_color) {
-#ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
-	PIXBeginEvent(cmd_buf_info->cmd_list.Get(), p_color.to_argb32(), p_label_name);
-#endif
+	d3d12_pix_begin_event(cmd_buf_info->cmd_list.Get(), p_color.to_argb32(), p_label_name);
 }
 
 void RenderingDeviceDriverD3D12::command_end_label(CommandBufferID p_cmd_buffer) {
-#ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
-	PIXEndEvent(cmd_buf_info->cmd_list.Get());
-#endif
+	d3d12_pix_end_event(cmd_buf_info->cmd_list.Get());
 }
 
 void RenderingDeviceDriverD3D12::command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) {
 	// TODO: Implement via DRED.
+}
+
+void *RenderingDeviceDriverD3D12::command_buffer_get_native_handle(CommandBufferID p_cmd_buffer) {
+	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
+	return cmd_buf_info->cmd_list.Get();
 }
 
 /********************/
@@ -5953,6 +5989,11 @@ RenderingDeviceDriverD3D12::~RenderingDeviceDriverD3D12() {
 		}
 	}
 
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEFORE_DEVICE_DESTROY);
+	}
+	Aftermath::get_singleton()->emit_marker(AFTERMATH_MARKER_BEFORE_DEVICE_DESTROY);
+
 	if (D3D12Hooks::get_singleton() != nullptr) {
 		D3D12Hooks::get_singleton()->cleanup_device();
 	}
@@ -6019,6 +6060,10 @@ Error RenderingDeviceDriverD3D12::_initialize_device() {
 	} else {
 		PFN_D3D12_CREATE_DEVICE d3d_D3D12CreateDevice = (PFN_D3D12_CREATE_DEVICE)(void *)GetProcAddress(context_driver->lib_d3d12, "D3D12CreateDevice");
 		ERR_FAIL_NULL_V(d3d_D3D12CreateDevice, ERR_CANT_CREATE);
+
+		if (Streamline::get_singleton()->get_internal_parameter(STREAMLINE_INTERNAL_PARAMETER_FUNC_D3D12CreateDevice)) {
+			d3d_D3D12CreateDevice = (PFN_D3D12_CREATE_DEVICE)Streamline::get_singleton()->get_internal_parameter(STREAMLINE_INTERNAL_PARAMETER_FUNC_D3D12CreateDevice);
+		}
 
 		res = d3d_D3D12CreateDevice(adapter.Get(), requested_feature_level, IID_PPV_ARGS(device.GetAddressOf()));
 	}
@@ -6391,12 +6436,19 @@ Error RenderingDeviceDriverD3D12::initialize(uint32_t p_device_index, uint32_t p
 	HRESULT res = adapter->GetDesc(&adapter_desc);
 	ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
 
+	Streamline::get_singleton()->set_internal_parameter("d3d12_adapter_luid", (void *)&adapter_desc.AdapterLuid);
+
 	// Set the pipeline cache ID based on the adapter information.
 	pipeline_cache_id = String::hex_encode_buffer((uint8_t *)&adapter_desc.AdapterLuid, sizeof(LUID));
 	pipeline_cache_id += "-driver-" + itos(adapter_desc.Revision);
 
 	Error err = _initialize_device();
 	ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
+
+	Streamline::get_singleton()->set_internal_parameter("d3d12_device", (void *)device.Get());
+
+	Aftermath::get_singleton()->emit_marker(AFTERMATH_MARKER_INITIALIZE_D3D12);
+	AftermathContext::get().initialize_d3d12((void *)device.Get());
 
 	err = _check_capabilities();
 	ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
@@ -6412,6 +6464,8 @@ Error RenderingDeviceDriverD3D12::initialize(uint32_t p_device_index, uint32_t p
 
 	err = _initialize_command_signatures();
 	ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
+
+	Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_AFTER_DEVICE_CREATION);
 
 	return OK;
 }

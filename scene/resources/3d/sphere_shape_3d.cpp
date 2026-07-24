@@ -34,7 +34,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> SphereShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> SphereShape3D::_build_debug_mesh_lines() const {
 	float r = get_radius();
 
 	Vector<Vector3> points;
@@ -56,7 +56,7 @@ Vector<Vector3> SphereShape3D::get_debug_mesh_lines() const {
 	return points;
 }
 
-Ref<ArrayMesh> SphereShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> SphereShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	Array sphere_array;
 	sphere_array.resize(RSE::ARRAY_MAX);
 	SphereMesh::create_mesh_array(sphere_array, radius, radius * 2, 32);

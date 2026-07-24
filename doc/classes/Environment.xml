@@ -200,6 +200,26 @@
 			The strength that is used when blurring across the screen to generate the glow effect. This affects the distance and intensity of the blur. When using the Mobile rendering method, this should be increased to compensate for the lower dynamic range.
 			[b]Note:[/b] [member glow_strength] has no effect when using the Compatibility rendering method, due to this rendering method using a simpler glow implementation optimized for low-end devices.
 		</member>
+		<member name="pathtracing_debug_mode" type="int" setter="set_pathtracing_debug_mode" getter="get_pathtracing_debug_mode" enum="Environment.PathtracingDebugMode" default="0">
+			Selects a debug visualization channel to display instead of the final path-traced image. Useful for inspecting individual G-buffer inputs and intermediate shading data. Set to [constant RT_DEBUG_DISABLED] to show the normal rendered result.
+			[b]Note:[/b] Only has an effect when [member pathtracing_enabled] is [code]true[/code].
+		</member>
+		<member name="pathtracing_denoiser" type="int" setter="set_pathtracing_denoiser" getter="get_pathtracing_denoiser" enum="RenderingServer.PathtracingDenoiser" default="1">
+			The denoiser used to reduce noise in the path-traced image. [constant RenderingServer.PT_DENOISER_DLSS_RAY_RECONSTRUCTION] uses NVIDIA DLSS Ray Reconstruction for high-quality temporal denoising and requires an NVIDIA RTX GPU. Use [constant RenderingServer.PT_DENOISER_NONE] to disable denoising.
+			[b]Note:[/b] Only has an effect when [member pathtracing_enabled] is [code]true[/code].
+		</member>
+		<member name="pathtracing_enabled" type="bool" setter="set_pathtracing_enabled" getter="is_pathtracing_enabled" default="false">
+			If [code]true[/code], enables hardware-accelerated path tracing for this environment. Path tracing produces physically accurate global illumination, reflections, and shadows by simulating light rays bouncing through the scene. Requires a GPU with ray tracing support.
+			[b]Note:[/b] Path tracing is mutually exclusive with rasterization-based rendering. When enabled, features such as SDFGI, screen-space reflections, and shadow maps are bypassed.
+		</member>
+		<member name="pathtracing_max_bounces" type="int" setter="set_pathtracing_max_bounces" getter="get_pathtracing_max_bounces" default="3">
+			Maximum number of times a ray is allowed to bounce off surfaces before it is terminated. Higher values produce more accurate indirect lighting and inter-reflections at the cost of GPU performance. A value of [code]0[/code] produces direct illumination only.
+			[b]Note:[/b] Only has an effect when [member pathtracing_enabled] is [code]true[/code].
+		</member>
+		<member name="pathtracing_samples_per_pixel" type="int" setter="set_pathtracing_samples_per_pixel" getter="get_pathtracing_samples_per_pixel" default="1">
+			Number of ray samples cast per pixel per frame. Higher values reduce noise but increase GPU cost proportionally. When using a temporal denoiser such as DLSS Ray Reconstruction, a low sample count (1-2) is typically sufficient since the denoiser accumulates information across frames.
+			[b]Note:[/b] Only has an effect when [member pathtracing_enabled] is [code]true[/code].
+		</member>
 		<member name="reflected_light_source" type="int" setter="set_reflection_source" getter="get_reflection_source" enum="Environment.ReflectionSource" default="0">
 			The reflected (specular) light source.
 		</member>
@@ -459,6 +479,75 @@
 		</constant>
 		<constant name="GLOW_BLEND_MODE_MIX" value="4" enum="GlowBlendMode">
 			Mixes the glow image with the scene image. Best used with [member glow_bloom] to avoid darkening the scene.
+		</constant>
+		<constant name="RT_DEBUG_DISABLED" value="0" enum="PathtracingDebugMode">
+			No debug visualization. Displays the final path-traced and denoised image.
+		</constant>
+		<constant name="RT_DEBUG_MIRROR_REFLECTION" value="1" enum="PathtracingDebugMode">
+			Displays the mirror (specular) reflection contribution only.
+		</constant>
+		<constant name="RT_DEBUG_GEOMETRY_NORMALS" value="2" enum="PathtracingDebugMode">
+			Displays the raw per-triangle geometric normals, without any normal map applied.
+		</constant>
+		<constant name="RT_DEBUG_FINAL_NORMALS" value="3" enum="PathtracingDebugMode">
+			Displays the final shading normals after applying normal maps and tangent-space transforms.
+		</constant>
+		<constant name="RT_DEBUG_NORMAL_MAP" value="4" enum="PathtracingDebugMode">
+			Displays the normal map texture sample in tangent space.
+		</constant>
+		<constant name="RT_DEBUG_TANGENT" value="5" enum="PathtracingDebugMode">
+			Displays the surface tangent vector at each hit point.
+		</constant>
+		<constant name="RT_DEBUG_BITANGENT" value="6" enum="PathtracingDebugMode">
+			Displays the surface bitangent vector at each hit point.
+		</constant>
+		<constant name="RT_DEBUG_UV" value="7" enum="PathtracingDebugMode">
+			Displays the primary UV texture coordinates as a color (red = U, green = V).
+		</constant>
+		<constant name="RT_DEBUG_ALBEDO" value="8" enum="PathtracingDebugMode">
+			Displays the combined albedo (base color) of each surface.
+		</constant>
+		<constant name="RT_DEBUG_ORM" value="9" enum="PathtracingDebugMode">
+			Displays the packed ORM texture (Occlusion, Roughness, Metalness in RGB channels).
+		</constant>
+		<constant name="RT_DEBUG_DIFFUSE_ALBEDO" value="10" enum="PathtracingDebugMode">
+			Displays only the diffuse albedo contribution, excluding specular.
+		</constant>
+		<constant name="RT_DEBUG_SPECULAR_ALBEDO" value="11" enum="PathtracingDebugMode">
+			Displays only the specular albedo (F0) contribution.
+		</constant>
+		<constant name="RT_DEBUG_NORMAL_ROUGHNESS" value="12" enum="PathtracingDebugMode">
+			Displays the shading normal and roughness packed together (normal in RGB, roughness in alpha visualized as intensity).
+		</constant>
+		<constant name="RT_DEBUG_SPECULAR_HIT_DISTANCE" value="13" enum="PathtracingDebugMode">
+			Displays the distance to the first specular ray hit, encoded as a grayscale value.
+		</constant>
+		<constant name="RT_DEBUG_METALNESS" value="14" enum="PathtracingDebugMode">
+			Displays the metalness value of each surface as a grayscale image.
+		</constant>
+		<constant name="RT_DEBUG_ROUGHNESS" value="15" enum="PathtracingDebugMode">
+			Displays the roughness value of each surface as a grayscale image.
+		</constant>
+		<constant name="RT_DEBUG_VIEW_NORMALS" value="16" enum="PathtracingDebugMode">
+			Displays the shading normals transformed into view (camera) space.
+		</constant>
+		<constant name="RT_DEBUG_DIFFUSE_SPECULAR_SPLIT" value="17" enum="PathtracingDebugMode">
+			Displays diffuse lighting on the left half and specular lighting on the right half of the screen.
+		</constant>
+		<constant name="RT_DEBUG_FRESNEL_F0" value="18" enum="PathtracingDebugMode">
+			Displays the Fresnel F0 reflectance value for each surface.
+		</constant>
+		<constant name="RT_DEBUG_FRONT_BACK_FACE" value="19" enum="PathtracingDebugMode">
+			Displays front-facing geometry in green and back-facing geometry in red. Useful for identifying incorrect face winding or double-sided materials.
+		</constant>
+		<constant name="RT_DEBUG_DEPTH" value="20" enum="PathtracingDebugMode">
+			Displays the primary ray hit depth (distance from camera) as a grayscale image.
+		</constant>
+		<constant name="RT_DEBUG_EMISSIVE" value="21" enum="PathtracingDebugMode">
+			Displays the emissive light contribution of each surface.
+		</constant>
+		<constant name="RT_DEBUG_BRDF_REJECTION" value="22" enum="PathtracingDebugMode">
+			Displays rays that were rejected by the BRDF sampling process, useful for debugging importance sampling issues.
 		</constant>
 		<constant name="FOG_MODE_EXPONENTIAL" value="0" enum="FogMode">
 			Use a physically-based fog model defined primarily by fog density.
