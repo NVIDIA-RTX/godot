@@ -3,6 +3,7 @@ default_language_version:
 
 exclude: |
   (?x)^(
+    \.github/actions/.*|
     .*thirdparty/.*|
     .*-(dll|dylib|so)_wrap\.[ch]|
     platform/android/java/editor/src/main/java/com/android/.*|

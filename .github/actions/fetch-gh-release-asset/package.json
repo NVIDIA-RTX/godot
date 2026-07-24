@@ -1,0 +1,42 @@
+{
+  "name": "fetch-gh-release-asset",
+  "version": "0.0.8",
+  "description": "Github Action to download an asset from a Github release",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && esbuild index.ts --bundle --platform=node --outdir=dist",
+    "lint": "eslint index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsaltares/fetch-gh-release-asset.git"
+  },
+  "author": "David Saltares <david.saltares@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dsaltares/fetch-gh-release-asset/issues"
+  },
+  "homepage": "https://github.com/dsaltares/fetch-gh-release-asset#readme",
+  "devDependencies": {
+    "@types/async-retry": "^1.4.4",
+    "@types/node": "^17.0.22",
+    "@typescript-eslint/eslint-plugin": "^5.16.0",
+    "@typescript-eslint/parser": "^5.16.0",
+    "esbuild": "^0.14.27",
+    "eslint": "^7.32.0",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-config-standard": "^16.0.3",
+    "eslint-plugin-import": "^2.25.4",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^5.2.0",
+    "prettier": "^2.6.2",
+    "typescript": "^4.6.2"
+  },
+  "dependencies": {
+    "@actions/core": "^1.10.0",
+    "@actions/github": "^5.0.1",
+    "async-retry": "^1.3.3",
+    "node-fetch": "^3.2.3"
+  }
+}

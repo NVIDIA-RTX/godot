@@ -31,12 +31,14 @@
 /drivers/sdl/                                 @godotengine/input
 
 ## Rendering
+/drivers/aftermath/                           @godotengine/rendering
 /drivers/d3d12/                               @godotengine/rendering
 /drivers/dummy/                               @godotengine/rendering
 /drivers/egl/                                 @godotengine/rendering
 /drivers/gles3/                               @godotengine/rendering
 /drivers/metal/                               @godotengine/rendering
 /drivers/spirv-reflect/                       @godotengine/rendering
+/drivers/streamline/                          @godotengine/rendering
 /drivers/vulkan/                              @godotengine/rendering
 
 ## OS

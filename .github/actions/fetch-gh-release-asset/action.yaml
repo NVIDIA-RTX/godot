@@ -1,0 +1,45 @@
+name: 'Fetch Github Release Asset'
+description: 'Downloads an asset from a Github release'
+
+inputs:
+  repo:
+    description: 'The `org/repo` containing the release.'
+    required: false
+    default: ''
+  version:
+    description: 'The release version to fetch from in the form `tags/<tag_name>` or `<release_id>`.'
+    required: false
+    default: 'latest'
+  file:
+    description: 'The name of the file to be downloaded.'
+    required: true
+  target:
+    description: 'Target file path.'
+    required: false
+  token:
+    description: 'The GitHub token. Typically this will be secrets.GITHUB_TOKEN'
+    required: false
+    default: ${{ github.token }}
+  regex:
+    description: 'Use regex for file input'
+    type: boolean
+    required: false
+    default: false
+  octokitBaseUrl:
+    description: 'The Github API base URL. Useful if you are using Github Enterprise.'
+    required: false
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+outputs:
+  version:
+    description: 'The version of the release or tag'
+  name:
+    description: 'The name of the release'
+  body:
+    description: 'The body of the release'
+
+branding:
+  icon: 'download-cloud'
+  color: 'orange'

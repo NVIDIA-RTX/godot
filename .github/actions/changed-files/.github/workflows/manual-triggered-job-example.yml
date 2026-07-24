@@ -1,0 +1,61 @@
+name: Manual Triggered Job Example
+
+permissions:
+   contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        required: false
+        type: string
+        default: |
+          **.md **/**.md test/*.txt
+
+jobs:
+  test:
+    name: Test changed-files
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Run changed-files with defaults
+        id: changed-files
+        uses: ./
+
+      - name: Show output
+        run: |
+          echo '${{ toJSON(steps.changed-files.outputs) }}'
+
+      - name: Run changed-files with glob filtering
+        id: changed-files-glob
+        uses: ./
+        with:
+          files: ${{ inputs.files }}
+          files_separator: " "  # Space delimited files (default is "\n")
+
+      - name: Show output
+        run: |
+          echo '${{ toJSON(steps.changed-files-glob.outputs) }}'
+
+      - name: Run changed-files with glob filtering and all_old_new_renamed_files
+        id: changed-files-glob-all-old-new-renamed-files
+        uses: ./
+        with:
+          include_all_old_new_renamed_files: true
+          files: |
+            test/*.txt
+
+      - name: Show output
+        run: |
+          echo '${{ toJSON(steps.changed-files-glob-all-old-new-renamed-files.outputs) }}'

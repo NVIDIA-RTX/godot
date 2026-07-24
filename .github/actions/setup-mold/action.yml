@@ -1,0 +1,20 @@
+name: 'Setup mold'
+description: 'Install mold as the default linker'
+inputs:
+  mold-version:
+    description: 'The mold version to download'
+    default: '2.40.4'
+  make-default:
+    description: 'Make mold the default linker'
+    default: true
+runs:
+  using: composite
+  steps:
+    - run: |
+        set -x
+        echo "mold ${{ inputs.mold-version }}"
+        if [ "$(whoami)" = root ]; then SUDO=; else SUDO=sudo; fi
+        wget -O- --timeout=10 --waitretry=3 --retry-connrefused --progress=dot:mega https://github.com/rui314/mold/releases/download/v${{ inputs.mold-version }}/mold-${{ inputs.mold-version }}-$(uname -m)-linux.tar.gz | $SUDO tar -C /usr/local --strip-components=1 --no-overwrite-dir -xzf -
+        test ${{ inputs.make-default }} = true -a "$(realpath /usr/bin/ld)" != /usr/local/bin/mold && $SUDO ln -sf /usr/local/bin/mold "$(realpath /usr/bin/ld)"; true
+      shell: bash
+      if: runner.os == 'linux'
