@@ -102,8 +102,8 @@ void RenderSceneBuffersRD::free_named_texture(NamedTexture &p_named_texture) {
 void RenderSceneBuffersRD::update_samplers() {
 	float computed_mipmap_bias = texture_mipmap_bias;
 
-	if (use_taa || (RS::scaling_3d_mode_type(scaling_3d_mode) == RS::VIEWPORT_SCALING_3D_TYPE_TEMPORAL)) {
-		// Use negative mipmap LOD bias when TAA or FSR2 is enabled to compensate for loss of sharpness.
+	if (use_taa || (RSE::scaling_3d_mode_type(scaling_3d_mode) == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL)) {
+		// Use negative mipmap LOD bias when TAA, FSR2 or DLSS is enabled to compensate for loss of sharpness.
 		// This restores sharpness in still images to be roughly at the same level as without TAA,
 		// but moving scenes will still be blurrier.
 		computed_mipmap_bias -= 0.5;
@@ -162,6 +162,7 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 	msaa_3d = p_config->get_msaa_3d();
 	screen_space_aa = p_config->get_screen_space_aa();
 
+	frame_generation = p_config->get_use_frame_generation();
 	fsr_sharpness = p_config->get_fsr_sharpness();
 	texture_mipmap_bias = p_config->get_texture_mipmap_bias();
 	anisotropic_filtering_level = p_config->get_anisotropic_filtering_level();
@@ -221,6 +222,7 @@ void RenderSceneBuffersRD::configure_for_reflections(const Size2i p_reflection_s
 	screen_space_aa = RS::VIEWPORT_SCREEN_SPACE_AA_DISABLED;
 	use_taa = false;
 	use_debanding = false;
+	frame_generation = false;
 	view_count = 1;
 
 	// cleanout any old buffers we had.

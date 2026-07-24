@@ -508,6 +508,7 @@ public:
 		// Flag to indicate  that this is an immutable sampler so it is skipped when creating uniform
 		// sets, as it would be set previously when creating the pipeline layout.
 		bool immutable_sampler = false;
+		bool variable_count = false;
 
 		_FORCE_INLINE_ bool is_dynamic() const {
 			return type == UNIFORM_TYPE_STORAGE_BUFFER_DYNAMIC || type == UNIFORM_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -715,6 +716,110 @@ public:
 
 	virtual PipelineID compute_pipeline_create(ShaderID p_shader, VectorView<PipelineSpecializationConstant> p_specialization_constants) = 0;
 
+	/********************/
+	/**** RAYTRACING ****/
+	/********************/
+
+	// ----- ACCELERATION STRUCTURE -----
+
+	// BLAS geometry entry. Describes one triangle set or one AABB set that
+	// contributes to a BLAS. A single BLAS can combine multiple entries; each
+	// entry must pick exactly one variant via `type` and populate the matching
+	// fields of the `geometry` union. The variant members have no default
+	// initializers so the union stays trivially default-constructible; the
+	// active fields are always written explicitly by the caller.
+	struct AccelerationStructureGeometry {
+		enum Type {
+			TYPE_TRIANGLES,
+			TYPE_AABBS,
+		};
+
+		struct Triangles {
+			BufferID vertex_buffer;
+			uint32_t vertex_offset;
+			uint32_t vertex_stride;
+			uint32_t vertex_count;
+			DataFormat vertex_format;
+			BufferID index_buffer;
+			uint32_t index_offset;
+			uint32_t index_count;
+			IndexBufferFormat index_format;
+		};
+
+		// Procedural geometry: each AABB is two float3 (min, max), packed
+		// tightly by default (stride = sizeof(VkAabbPositionsKHR) = 24).
+		struct Aabbs {
+			BufferID buffer;
+			uint32_t offset;
+			uint32_t stride;
+			uint32_t count;
+		};
+
+		union Geometry {
+			Triangles triangles;
+			Aabbs aabbs;
+			Geometry() {}
+		};
+
+		Type type = TYPE_TRIANGLES;
+		BitField<AccelerationStructureGeometryFlagBits> flags = {};
+		Geometry geometry;
+	};
+
+	virtual AccelerationStructureID blas_create(VectorView<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) = 0;
+
+	struct AccelerationStructureInstance {
+		Transform3D transform;
+		uint32_t id = 0;
+		uint8_t mask = 0;
+		uint32_t hit_sbt_offset = 0;
+		BitField<AccelerationStructureInstanceFlagBits> flags = {};
+		AccelerationStructureID blas;
+	};
+
+	virtual AccelerationStructureID tlas_create(uint32_t p_max_instance_count, BitField<AccelerationStructureFlagBits> p_flags) = 0;
+	virtual void acceleration_structure_instance_write(uint8_t *r_driver_instance, const AccelerationStructureInstance &p_instance) = 0;
+	virtual void acceleration_structure_free(AccelerationStructureID p_acceleration_structure) = 0;
+	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) = 0;
+
+	// ----- PIPELINE -----
+
+	struct PipelineShader {
+		ShaderID shader;
+		VectorView<PipelineSpecializationConstant> specialization_constants;
+		ShaderStage shader_stage = {};
+	};
+
+	struct HitGroup {
+		uint32_t closest_hit_shader_index = UINT32_MAX;
+		uint32_t any_hit_shader_index = UINT32_MAX;
+		uint32_t intersection_shader_index = UINT32_MAX;
+	};
+
+	virtual RaytracingPipelineID raytracing_pipeline_create(VectorView<PipelineShader> p_shaders, VectorView<uint32_t> p_raygen_shader_indices, VectorView<uint32_t> p_miss_shader_indices, VectorView<HitGroup> p_hit_groups, uint32_t p_max_trace_recursion_depth, ShaderID p_layout_defining_shader) = 0;
+	virtual void raytracing_pipeline_free(RaytracingPipelineID p_pipeline) = 0;
+
+	virtual bool raytracing_pipeline_get_shader_group_handles(RaytracingPipelineID p_pipeline, uint32_t p_group_index_offset, VectorView<uint32_t> p_group_indices, uint8_t *r_data, uint32_t p_data_stride_bytes) = 0;
+
+	// ----- COMMANDS -----
+
+	virtual void command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
+	// In-place refit of a BLAS previously built with ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT.
+	// Geometry topology / counts must be unchanged; only vertex positions may differ.
+	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
+	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) = 0;
+	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) = 0;
+	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) = 0;
+
+	struct ShaderBindingTable {
+		BufferID buffer;
+		uint32_t offset = 0;
+		uint32_t stride = 0;
+		uint32_t size = 0;
+	};
+
+	virtual void command_trace_rays(CommandBufferID p_cmd_buffer, const ShaderBindingTable &p_raygen_sbt, const ShaderBindingTable &p_miss_sbt, const ShaderBindingTable &p_hit_sbt, uint32_t p_width, uint32_t p_height, uint32_t p_depth) = 0;
+
 	/******************/
 	/**** CALLBACK ****/
 	/******************/
@@ -748,6 +853,9 @@ public:
 	/**** DEBUG *****/
 	/****************/
 	virtual void command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) = 0;
+
+	/// Returns the underlying native command buffer handle (e.g. ID3D12GraphicsCommandList* or VkCommandBuffer).
+	virtual void *command_buffer_get_native_handle(CommandBufferID p_cmd_buffer) { return nullptr; }
 
 	/********************/
 	/**** SUBMISSION ****/

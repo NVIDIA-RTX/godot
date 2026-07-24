@@ -707,6 +707,32 @@ RS::EnvironmentSDFGIYScale RendererSceneRender::environment_get_sdfgi_y_scale(RI
 
 // Adjustments
 
+// Raytracing
+
+void RendererSceneRender::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) {
+	environment_storage.environment_set_pathtracing(p_env, p_enable, p_debug_mode, p_samples_per_pixel, p_max_bounces, p_denoiser);
+}
+
+bool RendererSceneRender::environment_get_pathtracing_enabled(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_enabled(p_env);
+}
+
+int RendererSceneRender::environment_get_pathtracing_debug_mode(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_debug_mode(p_env);
+}
+
+int RendererSceneRender::environment_get_pathtracing_samples_per_pixel(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_samples_per_pixel(p_env);
+}
+
+int RendererSceneRender::environment_get_pathtracing_max_bounces(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_max_bounces(p_env);
+}
+
+RSE::PathtracingDenoiser RendererSceneRender::environment_get_pathtracing_denoiser(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_denoiser(p_env);
+}
+
 void RendererSceneRender::environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) {
 	environment_storage.environment_set_adjustment(p_env, p_enable, p_brightness, p_contrast, p_saturation, p_use_1d_color_correction, p_color_correction);
 }

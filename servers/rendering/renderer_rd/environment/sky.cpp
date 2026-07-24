@@ -1694,6 +1694,16 @@ RID SkyRD::sky_get_radiance_texture_rd(RID p_sky) const {
 	return sky->radiance;
 }
 
+RID SkyRD::sky_get_radiance_2d_texture_rd(RID p_sky) const {
+	Sky *sky = get_sky(p_sky);
+	ERR_FAIL_NULL_V(sky, RID());
+
+	// High-quality skies store radiance as a 2D array; expose the layer-0 slice
+	// so consumers binding a texture2D get a matching texture type. Low-quality
+	// skies already use a plain 2D texture.
+	return sky->radiance_first_layer_slice.is_valid() ? sky->radiance_first_layer_slice : sky->radiance;
+}
+
 float SkyRD::sky_get_uv_border_size(RID p_sky) {
 	Sky *sky = get_sky(p_sky);
 	ERR_FAIL_NULL_V(sky, 1.0);

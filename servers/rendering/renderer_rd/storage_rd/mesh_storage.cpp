@@ -30,6 +30,11 @@
 
 #include "mesh_storage.h"
 
+#include "core/config/project_settings.h"
+#include "servers/rendering/renderer_viewport.h"
+#include "servers/rendering/rendering_server.h"
+
+
 using namespace RendererRD;
 
 MeshStorage *MeshStorage::singleton = nullptr;
@@ -365,13 +370,27 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RS::SurfaceData &p_surface)
 	}
 #endif
 
+	static uint32_t s_next_rt_invalidation_counter = 1; // Monotonic counter is required so that new surfaces are also invalidated.
 	Mesh::Surface *s = memnew(Mesh::Surface);
+	s->rt_invalidation_counter = s_next_rt_invalidation_counter++;
 
 	s->format = new_surface.format;
 	s->primitive = new_surface.primitive;
 
 	const bool use_as_storage = (new_surface.skin_data.size() || mesh->blend_shape_count > 0);
-	const BitField<RD::BufferCreationBits> as_storage_flag = use_as_storage ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
+	const bool requested_storage_buffer = (new_surface.format & RSE::ARRAY_FLAG_USE_STORAGE_BUFFER);
+	BitField<RD::BufferCreationBits> as_storage_flag = (use_as_storage || requested_storage_buffer) ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
+	BitField<RD::BufferCreationBits> requested_storage_flag = requested_storage_buffer ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
+	// Raytracing needs all geometry buffers usable as acceleration-structure build
+	// inputs and addressable via buffer device address for bindless closest-hit access.
+	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+		as_storage_flag.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		as_storage_flag.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
+		as_storage_flag.set_flag(RD::BUFFER_CREATION_AS_STORAGE_BIT);
+		requested_storage_flag.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		requested_storage_flag.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
+		requested_storage_flag.set_flag(RD::BUFFER_CREATION_AS_STORAGE_BIT);
+	}
 
 	if (new_surface.vertex_data.size()) {
 		// If we have an uncompressed surface that contains normals, but not tangents, we need to differentiate the array
@@ -421,7 +440,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RS::SurfaceData &p_surface)
 
 			for (int i = 0; i < new_surface.lods.size(); i++) {
 				uint32_t indices = new_surface.lods[i].index_data.size() / (is_index_16 ? 2 : 4);
-				s->lods[i].index_buffer = RD::get_singleton()->index_buffer_create(indices, is_index_16 ? RD::INDEX_BUFFER_FORMAT_UINT16 : RD::INDEX_BUFFER_FORMAT_UINT32, new_surface.lods[i].index_data);
+				s->lods[i].index_buffer = RD::get_singleton()->index_buffer_create(indices, is_index_16 ? RD::INDEX_BUFFER_FORMAT_UINT16 : RD::INDEX_BUFFER_FORMAT_UINT32, new_surface.lods[i].index_data, false, requested_storage_flag);
 				s->lods[i].index_buffer_size = new_surface.lods[i].index_data.size();
 				s->lods[i].index_array = RD::get_singleton()->index_array_create(s->lods[i].index_buffer, 0, indices);
 				s->lods[i].edge_length = new_surface.lods[i].edge_length;
@@ -575,6 +594,9 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->vertex_buffer, p_offset, data_size, r);
+
+	// Invalidate RT cache for this surface.
+	mesh->surfaces[p_surface]->rt_invalidation_counter++;
 }
 
 void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -588,6 +610,9 @@ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->attribute_buffer, p_offset, data_size, r);
+
+	// Invalidate RT cache for this surface (attributes include UVs).
+	mesh->surfaces[p_surface]->rt_invalidation_counter++;
 }
 
 void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -601,6 +626,9 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->skin_buffer, p_offset, data_size, r);
+
+	// Invalidate RT cache for this surface (skinned meshes need BLAS rebuild).
+	mesh->surfaces[p_surface]->rt_invalidation_counter++;
 }
 
 void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -614,6 +642,9 @@ void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->index_buffer, p_offset, data_size, r);
+
+	// Invalidate RT cache for this surface.
+	mesh->surfaces[p_surface]->rt_invalidation_counter++;
 }
 
 void MeshStorage::mesh_surface_set_material(RID p_mesh, int p_surface, RID p_material) {
@@ -1057,7 +1088,13 @@ void MeshStorage::_mesh_instance_add_surface(MeshInstance *mi, Mesh *mesh, uint3
 }
 
 void MeshStorage::_mesh_instance_add_surface_buffer(MeshInstance *mi, Mesh *mesh, MeshInstance::Surface *s, uint32_t p_surface, uint32_t p_buffer_index) {
-	s->vertex_buffer[p_buffer_index] = RD::get_singleton()->vertex_buffer_create(mesh->surfaces[p_surface]->vertex_buffer_size, Vector<uint8_t>(), RD::BUFFER_CREATION_AS_STORAGE_BIT);
+	BitField<RD::BufferCreationBits> buffer_flags = RD::BUFFER_CREATION_AS_STORAGE_BIT;
+	// Allow this skinned/blend-shape output buffer to be consumed by the raytracing path as a BLAS triangle source.
+	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+		buffer_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		buffer_flags.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
+	}
+	s->vertex_buffer[p_buffer_index] = RD::get_singleton()->vertex_buffer_create(mesh->surfaces[p_surface]->vertex_buffer_size, Vector<uint8_t>(), buffer_flags);
 
 	Vector<RD::Uniform> uniforms;
 	{
@@ -1591,7 +1628,13 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RS:
 
 	if (multimesh->instances) {
 		uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
-		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size);
+		BitField<RD::BufferCreationBits> mm_flags = 0;
+		if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+			mm_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		}
+		LocalVector<uint8_t> zeros;
+		zeros.resize_initialized(buffer_size);
+		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size, zeros.span(), 0, mm_flags);
 	}
 
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
@@ -1614,7 +1657,11 @@ void MeshStorage::_multimesh_enable_motion_vectors(MultiMesh *multimesh) {
 
 	uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	uint32_t new_buffer_size = buffer_size * 2;
-	RID new_buffer = RD::get_singleton()->storage_buffer_create(new_buffer_size);
+	BitField<RD::BufferCreationBits> mm_mv_flags = 0;
+	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+		mm_mv_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+	}
+	RID new_buffer = RD::get_singleton()->storage_buffer_create(new_buffer_size, {}, 0, mm_mv_flags);
 
 	if (multimesh->buffer_set && multimesh->data_cache.is_empty()) {
 		// If the buffer was set but there's no data cached in the CPU, we copy the buffer directly on the GPU.
@@ -2129,6 +2176,27 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			RD::get_singleton()->buffer_update(multimesh->buffer, multimesh->motion_vectors_previous_offset * multimesh->stride_cache * sizeof(float), p_buffer.size() * sizeof(float), r);
 		}
 		multimesh->buffer_set = true;
+	}
+
+	// rendering/pathtracing/multimesh_cache_cpu_transforms: keep a CPU mirror of the
+	// transform buffer so the path tracer never needs a GPU->CPU readback.
+	// Trade-off: CPU memory usage doubles for every MultiMesh that calls set_buffer().
+	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracing/multimesh_cache_cpu_transforms");
+	if (keep_cpu_cache && multimesh->data_cache.size() == 0) {
+		// Initialize the data cache from the data we already have on CPU.
+		uint32_t cache_size = multimesh->instances * multimesh->stride_cache;
+		if (multimesh->motion_vectors_enabled) {
+			cache_size *= 2;
+		}
+		multimesh->data_cache.resize(cache_size);
+		memset(multimesh->data_cache.ptrw(), 0, cache_size * sizeof(float));
+		uint32_t region_count = Math::division_round_up((uint32_t)multimesh->instances, (uint32_t)MULTIMESH_DIRTY_REGION_SIZE);
+		multimesh->data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->data_cache_dirty_region_count = 0;
+		multimesh->previous_data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->previous_data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->previous_data_cache_dirty_region_count = 0;
 	}
 
 	if (multimesh->data_cache.size()) {

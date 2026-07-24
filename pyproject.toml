@@ -33,6 +33,7 @@ extend-safe-fixes = ["UP006", "UP007", "FA"]
 	"E402", # Module level import not at top of file
 	"F403", # Undefined local with import star
 	"F405", # Undefined local with import star usage
+	"F821", # Undefined name (SCons injects globals via Import)
 ]
 
 [tool.ruff.lint.isort]

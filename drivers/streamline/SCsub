@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+Import("env")
+
+thirdparty_vulkan_dir = "#thirdparty/vulkan"
+thirdparty_streamline_dir = "#thirdparty/streamline"
+
+env_streamline = env.Clone()
+
+# Godot source files
+driver_obj = []
+
+if env["use_streamline"]:
+    env_streamline.Prepend(CPPPATH=[thirdparty_streamline_dir + "/include"])
+
+if env["vulkan"]:
+    env_streamline.Prepend(CPPPATH=[thirdparty_vulkan_dir, thirdparty_vulkan_dir + "/include"])
+    env_streamline.Prepend(CPPDEFINES=["STREAMLINE_ENABLED_VULKAN=1"])
+
+if env["d3d12"]:
+    env_streamline.Prepend(CPPPATH=["#thirdparty/directx_headers/include/directx"])
+    env_streamline.Prepend(CPPDEFINES=["STREAMLINE_ENABLED_D3D12=1"])
+
+env_streamline.add_source_files(driver_obj, "*.cpp")
+env.drivers_sources += driver_obj

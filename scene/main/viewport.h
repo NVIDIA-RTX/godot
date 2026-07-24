@@ -102,6 +102,8 @@ public:
 		SCALING_3D_MODE_FSR2,
 		SCALING_3D_MODE_METALFX_SPATIAL,
 		SCALING_3D_MODE_METALFX_TEMPORAL,
+		SCALING_3D_MODE_NEAREST,
+		SCALING_3D_MODE_DLSS,
 		SCALING_3D_MODE_MAX
 	};
 
@@ -145,6 +147,11 @@ public:
 		RENDER_INFO_OBJECTS_IN_FRAME,
 		RENDER_INFO_PRIMITIVES_IN_FRAME,
 		RENDER_INFO_DRAW_CALLS_IN_FRAME,
+		RENDER_INFO_RT_TLAS_INSTANCES,
+		RENDER_INFO_RT_BLAS_BUILDS,
+		RENDER_INFO_RT_BLAS_REFITS,
+		RENDER_INFO_RT_TRIANGLES_BUILT,
+		RENDER_INFO_RT_TRIANGLES_REFIT,
 		RENDER_INFO_MAX
 	};
 
@@ -183,6 +190,14 @@ public:
 		DEBUG_DRAW_OCCLUDERS,
 		DEBUG_DRAW_MOTION_VECTORS,
 		DEBUG_DRAW_INTERNAL_BUFFER,
+		DEBUG_DRAW_CLUSTER_AREA_LIGHTS,
+		DEBUG_DRAW_AREA_LIGHT_ATLAS,
+		// DLSS Ray Reconstruction debug views
+		DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO,
+		DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO,
+		DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS,
+		DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST,
+		DEBUG_DRAW_RECONSTRUCTED_DEPTH,
 	};
 
 	enum DefaultCanvasItemTextureFilter {
@@ -313,6 +328,7 @@ private:
 
 	Scaling3DMode scaling_3d_mode = SCALING_3D_MODE_BILINEAR;
 	float scaling_3d_scale = 1.0;
+	bool frame_generation = false;
 	float fsr_sharpness = 0.2f;
 	float texture_mipmap_bias = 0.0f;
 	AnisotropicFiltering anisotropic_filtering_level = ANISOTROPY_4X;
@@ -586,6 +602,9 @@ public:
 
 	void set_scaling_3d_scale(float p_scaling_3d_scale);
 	float get_scaling_3d_scale() const;
+
+	void set_frame_generation(bool p_frame_generation);
+	bool get_frame_generation() const;
 
 	void set_fsr_sharpness(float p_fsr_sharpness);
 	float get_fsr_sharpness() const;

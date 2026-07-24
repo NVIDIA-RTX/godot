@@ -1047,6 +1047,8 @@ public:
 		uint32_t binding = 0; // Binding index as specified in shader.
 		// This flag specifies that this is an immutable sampler to be set when creating pipeline layout.
 		bool immutable_sampler = false;
+		// This flag specifies that this uniform uses descriptor indexing. Note that his can only be used by the last uniform in the set.
+		bool variable_count = false;
 
 	private:
 		// In most cases only one ID is provided per binding, so avoid allocating memory unnecessarily for performance.
@@ -1256,6 +1258,147 @@ public:
 	FramebufferFormatID screen_get_framebuffer_format(DisplayServer::WindowID p_screen = DisplayServer::MAIN_WINDOW_ID) const;
 	Error screen_free(DisplayServer::WindowID p_screen = DisplayServer::MAIN_WINDOW_ID);
 
+private:
+	/********************************/
+	/**** ACCELERATION STRUCTURE ****/
+	/********************************/
+
+	struct AccelerationStructure {
+		// --- Shared ---
+		RDD::AccelerationStructureID driver_id;
+		RDD::AccelerationStructureType type = {};
+		RDG::ResourceTracker *draw_tracker = nullptr;
+
+		// BLAS/TLAS are weakly linked, as opposed to RD dependencies.
+		HashSet<RID> acceleration_structure_dependencies;
+		bool invalidated = true;
+
+		// Scratch buffer used during build, owned by the AS.
+		RDD::BufferID scratch_buffer;
+
+		// --- Bottom Level ---
+		Vector<RDG::ResourceTracker *> draw_trackers;
+		HashSet<RID> untracked_buffers;
+
+		// --- Top Level ---
+		uint32_t max_instance_count = 0;
+
+		struct InstanceBuffer {
+			RDD::BufferID driver_id;
+			uint64_t frame_used = 0;
+			uint32_t used_size = 0;
+			uint8_t *data_ptr = nullptr;
+		};
+
+		LocalVector<InstanceBuffer> instance_buffers;
+	};
+
+	Error _acceleration_structure_scratch_buffer_create(AccelerationStructure *p_acceleration_structure);
+	void _blas_remove_tlas_dependencies(AccelerationStructure *p_blas, RID p_blas_id);
+	void _tlas_remove_blas_dependencies(AccelerationStructure *p_tlas, RID p_tlas_id);
+
+	RID_Owner<AccelerationStructure, true> acceleration_structure_owner;
+
+public:
+	// RD-layer BLAS geometry entry. Mirrors RDD::AccelerationStructureGeometry
+	// but uses RIDs instead of BufferIDs, and tracks dependencies on those
+	// resources so the BLAS is invalidated / recreated appropriately.
+	struct AccelerationStructureGeometry {
+		enum Type {
+			TYPE_TRIANGLES,
+			TYPE_AABBS,
+		};
+
+		struct Triangles {
+			RID vertex_buffer;
+			uint32_t vertex_offset = 0;
+			uint32_t vertex_stride = 0;
+			uint32_t vertex_count = 0;
+			DataFormat vertex_format = DATA_FORMAT_MAX;
+			RID index_buffer;
+			uint32_t index_offset = 0;
+			uint32_t index_count = 0;
+		};
+
+		// Procedural geometry: buffer of float3 (min, max) AABB pairs.
+		struct Aabbs {
+			RID buffer;
+			uint32_t offset = 0;
+			uint32_t stride = 24;
+			uint32_t count = 0;
+		};
+
+		// RIDs have a non-trivial destructor, so the variants live in parallel
+		// fields (not a C-style union). Only the fields matching `type` are
+		// read by `blas_create()`. Kept inside a `Geometry` sub-struct so the
+		// access syntax (`g.geometry.triangles.*`) matches the driver-layer
+		// AccelerationStructureGeometry::geometry union.
+		struct Geometry {
+			Triangles triangles;
+			Aabbs aabbs;
+		};
+
+		Type type = TYPE_TRIANGLES;
+		BitField<AccelerationStructureGeometryFlagBits> flags = {};
+		Geometry geometry;
+	};
+
+	RID blas_create(Span<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags);
+	RID tlas_create(uint32_t p_max_instance_count, BitField<AccelerationStructureFlagBits> p_flags);
+
+	typedef int64_t HitShaderBindingTableRange;
+
+	struct AccelerationStructureInstance {
+		Transform3D transform;
+		uint32_t id = 0;
+		uint8_t mask = 0xFF;
+		HitShaderBindingTableRange hit_sbt_range = 0;
+		BitField<AccelerationStructureInstanceFlagBits> flags = {};
+		RID blas;
+	};
+
+	Error blas_build(RID p_blas);
+	Error blas_update(RID p_blas);
+	Error tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
+
+private:
+	/**********************************/
+	/**** HIT SHADER BINDING TABLE ****/
+	/**********************************/
+
+	struct HitShaderBindingTable : Buffer {
+		RID raytracing_pipeline_id;
+		RDD::RaytracingPipelineID raytracing_pipeline;
+		uint32_t index_offset = 0;
+		uint32_t raytracing_pipeline_hit_group_count = 0;
+
+		Vector<uint32_t> hit_group_indices;
+		uint32_t used_hit_group_count = 0;
+
+		uint32_t first_dirty_index = UINT32_MAX;
+		uint32_t last_dirty_index = 0;
+
+		typedef RBMap<uint32_t, RBSet<uint32_t>> FreeList;
+		typedef RBMap<uint32_t, uint32_t> ReverseFreeList;
+
+		FreeList free_list;
+		ReverseFreeList reverse_free_list;
+	};
+
+	RID_Owner<HitShaderBindingTable, true> hit_sbt_owner;
+
+	RDD::BufferID _hit_sbt_buffer_create(uint32_t p_buffer_size);
+	Error _hit_sbt_buffer_update(HitShaderBindingTable *p_hit_sbt, RID p_hit_sbt_id, RDD::ShaderBindingTable &r_sbt);
+	void _hit_sbt_add_dirty_range(HitShaderBindingTable *p_hit_sbt, uint32_t p_offset, uint32_t p_count);
+
+public:
+	RID hit_sbt_create(RID p_raytracing_pipeline, uint32_t p_initial_hit_group_capacity);
+	Error hit_sbt_set_pipeline(RID p_hit_sbt, RID p_raytracing_pipeline);
+
+	HitShaderBindingTableRange hit_sbt_range_alloc(RID p_hit_sbt, uint32_t p_hit_group_count);
+	Error hit_sbt_range_free(RID p_hit_sbt, HitShaderBindingTableRange p_range);
+	Error hit_sbt_range_update(RID p_hit_sbt, HitShaderBindingTableRange p_range, uint32_t p_hit_group_offset, Span<uint32_t> p_hit_group_indices);
+
 	/*************************/
 	/**** DRAW LISTS (II) ****/
 	/*************************/
@@ -1397,6 +1540,65 @@ public:
 	DrawListID draw_list_switch_to_next_pass();
 
 	void draw_list_end();
+
+private:
+	/**************************/
+	/**** RAYTRACING LISTS ****/
+	/**************************/
+
+	struct RaytracingList {
+		bool active = false;
+		struct SetState {
+			uint32_t pipeline_expected_format = 0;
+			uint32_t uniform_set_format = 0;
+			RDD::UniformSetID uniform_set_driver_id;
+			RID uniform_set;
+			bool bound = false;
+		};
+
+		struct State {
+			SetState sets[MAX_UNIFORM_SETS];
+			uint32_t set_count = 0;
+			RID pipeline;
+			RDD::RaytracingPipelineID pipeline_driver_id;
+			RID layout_defining_shader;
+			RDD::ShaderID layout_defining_shader_driver_id;
+			uint32_t layout_defining_shader_layout_hash = 0;
+			uint8_t push_constant_data[MAX_PUSH_CONSTANT_SIZE] = {};
+			uint32_t push_constant_size = 0;
+			RDD::BufferID sbt_buffer;
+			uint32_t raygen_shader_count = 0;
+			uint32_t miss_shader_count = 0;
+			uint32_t trace_count = 0;
+		} state;
+
+#ifdef DEBUG_ENABLED
+		struct Validation {
+			bool active = true; // Means command buffer was not closed, so you can keep adding things.
+			Vector<uint32_t> set_formats;
+			Vector<bool> set_bound;
+			Vector<RID> set_rids;
+			// Last pipeline set values.
+			bool pipeline_active = false;
+			RID pipeline_shader;
+			uint32_t invalid_set_from = 0;
+			uint32_t pipeline_push_constant_size = 0;
+			bool pipeline_push_constant_supplied = false;
+		} validation;
+#endif
+	};
+
+	RaytracingList raytracing_list;
+	RaytracingList::State raytracing_list_barrier_state;
+
+public:
+	RaytracingListID raytracing_list_begin();
+	void raytracing_list_bind_raytracing_pipeline(RaytracingListID p_list, RID p_raytracing_pipeline);
+	void raytracing_list_bind_uniform_set(RaytracingListID p_list, RID p_uniform_set, uint32_t p_index);
+	void raytracing_list_set_push_constant(RaytracingListID p_list, const void *p_data, uint32_t p_data_size);
+	void raytracing_list_add_buffer_dependency(RaytracingListID p_list, RID p_buffer, bool p_writable = false);
+	void raytracing_list_trace_rays(RaytracingListID p_list, uint32_t p_raygen_shader_index, RID p_hit_sbt, uint32_t p_width, uint32_t p_height, uint32_t p_depth);
+	void raytracing_list_end();
 
 private:
 	/***********************/

@@ -866,6 +866,8 @@ void Window::_event_callback(DisplayServer::WindowEvent p_event) {
 		case DisplayServer::WINDOW_EVENT_FORCE_CLOSE: {
 			hide();
 		} break;
+		case DisplayServer::WINDOW_EVENT_PCL_PING: {
+		} break;
 	}
 }
 

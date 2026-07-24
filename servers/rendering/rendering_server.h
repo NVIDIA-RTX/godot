@@ -231,6 +231,7 @@ public:
 	virtual RID shader_create_from_code(const String &p_code, const String &p_path_hint = String()) = 0;
 
 	virtual void shader_set_code(RID p_shader, const String &p_code) = 0;
+	virtual void shader_set_code_rt(RID p_shader, const String &p_code_rt) = 0;
 	virtual void shader_set_path_hint(RID p_shader, const String &p_path) = 0;
 	virtual String shader_get_code(RID p_shader) const = 0;
 	virtual void get_shader_parameter_list(RID p_shader, List<PropertyInfo> *p_param_list) const = 0;
@@ -952,6 +953,8 @@ public:
 		VIEWPORT_SCALING_3D_MODE_FSR2,
 		VIEWPORT_SCALING_3D_MODE_METALFX_SPATIAL,
 		VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL,
+		VIEWPORT_SCALING_3D_MODE_NEAREST,
+		VIEWPORT_SCALING_3D_MODE_DLSS,
 		VIEWPORT_SCALING_3D_MODE_MAX,
 		VIEWPORT_SCALING_3D_MODE_OFF = 255, // for internal use only
 	};
@@ -975,7 +978,7 @@ public:
 	_ALWAYS_INLINE_ static ViewportScaling3DType scaling_3d_mode_type(ViewportScaling3DMode p_mode) {
 		if (p_mode == VIEWPORT_SCALING_3D_MODE_BILINEAR || p_mode == VIEWPORT_SCALING_3D_MODE_FSR || p_mode == VIEWPORT_SCALING_3D_MODE_METALFX_SPATIAL) {
 			return VIEWPORT_SCALING_3D_TYPE_SPATIAL;
-		} else if (p_mode == VIEWPORT_SCALING_3D_MODE_FSR2 || p_mode == VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL) {
+		} else if (p_mode == VIEWPORT_SCALING_3D_MODE_FSR2 || p_mode == VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL || p_mode == VIEWPORT_SCALING_3D_MODE_DLSS) {
 			return VIEWPORT_SCALING_3D_TYPE_TEMPORAL;
 		}
 		return VIEWPORT_SCALING_3D_TYPE_NONE;
@@ -995,6 +998,7 @@ public:
 
 	virtual void viewport_set_scaling_3d_mode(RID p_viewport, ViewportScaling3DMode p_scaling_3d_mode) = 0;
 	virtual void viewport_set_scaling_3d_scale(RID p_viewport, float p_scaling_3d_scale) = 0;
+	virtual void viewport_set_frame_generation(RID p_viewport, bool p_frame_generation) = 0;
 	virtual void viewport_set_fsr_sharpness(RID p_viewport, float p_fsr_sharpness) = 0;
 	virtual void viewport_set_texture_mipmap_bias(RID p_viewport, float p_texture_mipmap_bias) = 0;
 	virtual void viewport_set_anisotropic_filtering_level(RID p_viewport, ViewportAnisotropicFiltering p_anisotropic_filtering_level) = 0;
@@ -1112,6 +1116,11 @@ public:
 		VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME,
 		VIEWPORT_RENDER_INFO_PRIMITIVES_IN_FRAME,
 		VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME,
+		VIEWPORT_RENDER_INFO_RT_TLAS_INSTANCES,
+		VIEWPORT_RENDER_INFO_RT_BLAS_BUILDS,
+		VIEWPORT_RENDER_INFO_RT_BLAS_REFITS,
+		VIEWPORT_RENDER_INFO_RT_TRIANGLES_BUILT,
+		VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT,
 		VIEWPORT_RENDER_INFO_MAX,
 	};
 
@@ -1152,6 +1161,11 @@ public:
 		VIEWPORT_DEBUG_DRAW_OCCLUDERS,
 		VIEWPORT_DEBUG_DRAW_MOTION_VECTORS,
 		VIEWPORT_DEBUG_DRAW_INTERNAL_BUFFER,
+		VIEWPORT_DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO,
+		VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO,
+		VIEWPORT_DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS,
+		VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST,
+		VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH,
 	};
 
 	virtual void viewport_set_debug_draw(RID p_viewport, ViewportDebugDraw p_draw) = 0;
@@ -1374,6 +1388,14 @@ public:
 	};
 
 	virtual void environment_set_fog(RID p_env, bool p_enable, const Color &p_light_color, float p_light_energy, float p_sun_scatter, float p_density, float p_height, float p_height_density, float p_aerial_perspective, float p_sky_affect, EnvironmentFogMode p_mode = EnvironmentFogMode::ENV_FOG_MODE_EXPONENTIAL) = 0;
+
+	// Pathtracing
+	enum PathtracingDenoiser {
+		PT_DENOISER_NONE,
+		PT_DENOISER_DLSS_RAY_RECONSTRUCTION,
+	};
+
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, PathtracingDenoiser p_denoiser) = 0;
 	virtual void environment_set_fog_depth(RID p_env, float p_curve, float p_begin, float p_end) = 0;
 
 	virtual void environment_set_volumetric_fog(RID p_env, bool p_enable, float p_density, const Color &p_albedo, const Color &p_emission, float p_emission_energy, float p_anisotropy, float p_length, float p_detail_spread, float p_gi_inject, bool p_temporal_reprojection, float p_temporal_reprojection_amount, float p_ambient_inject, float p_sky_affect) = 0;
@@ -1466,6 +1488,9 @@ public:
 	virtual void instance_teleport(RID p_instance) = 0;
 
 	virtual void instance_set_custom_aabb(RID p_instance, AABB aabb) = 0;
+
+	virtual void instance_set_rt_procedural(RID p_instance, bool p_procedural, AABB p_aabb) = 0;
+	virtual void instance_set_rt_procedural_bounds(RID p_instance, const PackedFloat32Array &p_aabb_data, bool p_expose_bounds) = 0;
 
 	virtual void instance_attach_skeleton(RID p_instance, RID p_skeleton) = 0;
 
@@ -2024,6 +2049,7 @@ VARIANT_ENUM_CAST(RenderingServer::RenderingInfo);
 VARIANT_ENUM_CAST(RenderingServer::SplashStretchMode);
 VARIANT_ENUM_CAST(RenderingServer::CanvasTextureChannel);
 VARIANT_ENUM_CAST(RenderingServer::BakeChannels);
+VARIANT_ENUM_CAST(RenderingServer::PathtracingDenoiser);
 
 #ifndef DISABLE_DEPRECATED
 VARIANT_ENUM_CAST(RenderingServer::Features);
@@ -2031,3 +2057,5 @@ VARIANT_ENUM_CAST(RenderingServer::Features);
 
 // Alias to make it easier to use.
 #define RS RenderingServer
+// Backport shim: NVIDIA PT code uses RSE:: to reference enums that in 4.6.3 are nested in RenderingServer.
+#define RSE RenderingServer

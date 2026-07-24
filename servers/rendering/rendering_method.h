@@ -92,6 +92,9 @@ public:
 
 	virtual void instance_set_custom_aabb(RID p_instance, AABB p_aabb) = 0;
 
+	virtual void instance_set_rt_procedural(RID p_instance, bool p_procedural, AABB p_aabb) = 0;
+	virtual void instance_set_rt_procedural_bounds(RID p_instance, const PackedFloat32Array &p_aabb_data, bool p_expose_bounds) = 0;
+
 	virtual void instance_attach_skeleton(RID p_instance, RID p_skeleton) = 0;
 
 	virtual void instance_set_extra_visibility_margin(RID p_instance, real_t p_margin) = 0;
@@ -308,6 +311,15 @@ public:
 	virtual void environment_set_sdfgi_ray_count(RS::EnvironmentSDFGIRayCount p_ray_count) = 0;
 	virtual void environment_set_sdfgi_frames_to_converge(RS::EnvironmentSDFGIFramesToConverge p_frames) = 0;
 	virtual void environment_set_sdfgi_frames_to_update_light(RS::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
+
+	// Pathtracing
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) = 0;
+
+	virtual bool environment_get_pathtracing_enabled(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_debug_mode(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_samples_per_pixel(RID p_env) const = 0;
+	virtual int environment_get_pathtracing_max_bounces(RID p_env) const = 0;
+	virtual RSE::PathtracingDenoiser environment_get_pathtracing_denoiser(RID p_env) const = 0;
 
 	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) = 0;
 

@@ -34,7 +34,9 @@
 #include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> HeightMapShape3D::get_debug_mesh_lines() const {
+#include <cfloat> // FLT_MAX
+
+Vector<Vector3> HeightMapShape3D::_build_debug_mesh_lines() const {
 	Vector<Vector3> points;
 
 	if ((map_width != 0) && (map_depth != 0)) {
@@ -83,7 +85,7 @@ Vector<Vector3> HeightMapShape3D::get_debug_mesh_lines() const {
 	return points;
 }
 
-Ref<ArrayMesh> HeightMapShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> HeightMapShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	Vector<Vector3> verts;
 	Vector<Color> colors;
 	Vector<int> indices;

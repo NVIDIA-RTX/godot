@@ -33,6 +33,8 @@
 #include "core/io/image.h"
 #include "core/math/convex_hull.h"
 #include "core/math/geometry_3d.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/templates/local_vector.h"
 #include "core/templates/sort_array.h"
 
 // GodotHeightMapShape3D is based on Bullet btHeightfieldTerrainShape.
@@ -1373,6 +1375,8 @@ bool GodotConcavePolygonShape3D::intersect_segment(const Vector3 &p_begin, const
 		return false;
 	}
 
+	_ensure_bvh_built();
+
 	// unlock data
 	const Face *fr = faces.ptr();
 	const Vector3 *vr = vertices.ptr();
@@ -1453,6 +1457,8 @@ void GodotConcavePolygonShape3D::cull(const AABB &p_local_aabb, QueryCallback p_
 		return;
 	}
 
+	_ensure_bvh_built();
+
 	AABB local_aabb = p_local_aabb;
 
 	// unlock data
@@ -1511,92 +1517,117 @@ struct _Volume_BVH_CompareZ {
 	}
 };
 
-struct _Volume_BVH {
-	AABB aabb;
-	_Volume_BVH *left = nullptr;
-	_Volume_BVH *right = nullptr;
-
-	int face_index = 0;
-};
-
-_Volume_BVH *_volume_build_bvh(_Volume_BVH_Element *p_elements, int p_size, int &count) {
-	_Volume_BVH *bvh = memnew(_Volume_BVH);
+int GodotConcavePolygonShape3D::_build_bvh_recursive(_Volume_BVH_Element *p_elements, int p_size, BVH *p_bvh_array, int &p_next_idx) {
+	const int my_idx = p_next_idx++;
+	BVH &node = p_bvh_array[my_idx];
 
 	if (p_size == 1) {
-		//leaf
-		bvh->aabb = p_elements[0].aabb;
-		bvh->left = nullptr;
-		bvh->right = nullptr;
-		bvh->face_index = p_elements->face_index;
-		count++;
-		return bvh;
-	} else {
-		bvh->face_index = -1;
+		node.aabb = p_elements[0].aabb;
+		node.left = -1;
+		node.right = -1;
+		node.face_index = p_elements[0].face_index;
+		return my_idx;
 	}
 
-	AABB aabb;
-	for (int i = 0; i < p_size; i++) {
-		if (i == 0) {
-			aabb = p_elements[i].aabb;
-		} else {
-			aabb.merge_with(p_elements[i].aabb);
-		}
+	AABB node_aabb = p_elements[0].aabb;
+	for (int i = 1; i < p_size; i++) {
+		node_aabb.merge_with(p_elements[i].aabb);
 	}
-	bvh->aabb = aabb;
-	switch (aabb.get_longest_axis_index()) {
+	node.aabb = node_aabb;
+	node.face_index = -1;
+
+	const int split = p_size / 2;
+
+	// We only need the median element at `split` (with everything <= median to
+	// the left and > median to the right) to partition the BVH; we don't need
+	// the halves themselves to be sorted. `nth_element` does exactly that in
+	// O(N) per level vs. a full sort's O(N log N), turning the overall build
+	// from O(N log^2 N) into O(N log N). `triangle_mesh.cpp` does the same.
+	switch (node_aabb.get_longest_axis_index()) {
 		case 0: {
 			SortArray<_Volume_BVH_Element, _Volume_BVH_CompareX> sort_x;
-			sort_x.sort(p_elements, p_size);
-
+			sort_x.nth_element(0, p_size, split, p_elements);
 		} break;
 		case 1: {
 			SortArray<_Volume_BVH_Element, _Volume_BVH_CompareY> sort_y;
-			sort_y.sort(p_elements, p_size);
+			sort_y.nth_element(0, p_size, split, p_elements);
 		} break;
 		case 2: {
 			SortArray<_Volume_BVH_Element, _Volume_BVH_CompareZ> sort_z;
-			sort_z.sort(p_elements, p_size);
+			sort_z.nth_element(0, p_size, split, p_elements);
 		} break;
 	}
+	const int left_idx = _build_bvh_recursive(p_elements, split, p_bvh_array, p_next_idx);
+	const int right_idx = _build_bvh_recursive(p_elements + split, p_size - split, p_bvh_array, p_next_idx);
 
-	int split = p_size / 2;
-	bvh->left = _volume_build_bvh(p_elements, split, count);
-	bvh->right = _volume_build_bvh(&p_elements[split], p_size - split, count);
+	p_bvh_array[my_idx].left = left_idx;
+	p_bvh_array[my_idx].right = right_idx;
 
-	//printf("branch at %p - %i: %i\n",bvh,count,bvh->face_index);
-	count++;
-	return bvh;
+	return my_idx;
 }
 
-void GodotConcavePolygonShape3D::_fill_bvh(_Volume_BVH *p_bvh_tree, BVH *p_bvh_array, int &p_idx) {
-	int idx = p_idx;
-
-	p_bvh_array[idx].aabb = p_bvh_tree->aabb;
-	p_bvh_array[idx].face_index = p_bvh_tree->face_index;
-	//printf("%p - %i: %i(%p)  -- %p:%p\n",%p_bvh_array[idx],p_idx,p_bvh_array[i]->face_index,&p_bvh_tree->face_index,p_bvh_tree->left,p_bvh_tree->right);
-
-	if (p_bvh_tree->left) {
-		p_bvh_array[idx].left = ++p_idx;
-		_fill_bvh(p_bvh_tree->left, p_bvh_array, p_idx);
-
-	} else {
-		p_bvh_array[p_idx].left = -1;
+void GodotConcavePolygonShape3D::_build_bvh() {
+	const int face_count = faces.size();
+	if (face_count == 0) {
+		bvh.clear();
+		return;
 	}
 
-	if (p_bvh_tree->right) {
-		p_bvh_array[idx].right = ++p_idx;
-		_fill_bvh(p_bvh_tree->right, p_bvh_array, p_idx);
+	LocalVector<_Volume_BVH_Element> elements;
+	elements.resize(face_count);
 
-	} else {
-		p_bvh_array[p_idx].right = -1;
+	const Face *facesr = faces.ptr();
+	const Vector3 *verticesr = vertices.ptr();
+
+	for (int i = 0; i < face_count; i++) {
+		const Face &f = facesr[i];
+		const Vector3 &v0 = verticesr[f.indices[0]];
+		const Vector3 &v1 = verticesr[f.indices[1]];
+		const Vector3 &v2 = verticesr[f.indices[2]];
+
+		AABB face_aabb(v0, Vector3());
+		face_aabb.expand_to(v1);
+		face_aabb.expand_to(v2);
+
+		elements[i].aabb = face_aabb;
+		elements[i].center = face_aabb.get_center();
+		elements[i].face_index = i;
 	}
 
-	memdelete(p_bvh_tree);
+	// A binary tree over N leaves has exactly 2N - 1 nodes.
+	bvh.resize(2 * face_count - 1);
+	BVH *bvh_w = bvh.ptrw();
+
+	int next_idx = 0;
+	_build_bvh_recursive(elements.ptr(), face_count, bvh_w, next_idx);
+}
+
+void GodotConcavePolygonShape3D::_bvh_build_thread_func(void *p_self) {
+	static_cast<GodotConcavePolygonShape3D *>(p_self)->_build_bvh();
+}
+
+// Keep the sentinel in the header in sync with WorkerThreadPool's.
+static_assert(GodotConcavePolygonShape3D::BVH_BUILD_TASK_NONE == WorkerThreadPool::INVALID_TASK_ID,
+		"BVH_BUILD_TASK_NONE must match WorkerThreadPool::INVALID_TASK_ID");
+
+void GodotConcavePolygonShape3D::_wait_for_bvh_build() const {
+	MutexLock lock(bvh_build_mutex);
+	const int64_t tid = bvh_build_task.get();
+	if (tid != BVH_BUILD_TASK_NONE) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(tid);
+		bvh_build_task.set(BVH_BUILD_TASK_NONE);
+	}
 }
 
 void GodotConcavePolygonShape3D::_setup(const Vector<Vector3> &p_faces, bool p_backface_collision) {
+	_wait_for_bvh_build();
+
 	int src_face_count = p_faces.size();
 	if (src_face_count == 0) {
+		faces.clear();
+		vertices.clear();
+		bvh.clear();
+		backface_collision = p_backface_collision;
 		configure(AABB());
 		return;
 	}
@@ -1605,16 +1636,10 @@ void GodotConcavePolygonShape3D::_setup(const Vector<Vector3> &p_faces, bool p_b
 
 	const Vector3 *facesr = p_faces.ptr();
 
-	Vector<_Volume_BVH_Element> bvh_array;
-	bvh_array.resize(src_face_count);
-
-	_Volume_BVH_Element *bvh_arrayw = bvh_array.ptrw();
-
 	faces.resize(src_face_count);
 	Face *facesw = faces.ptrw();
 
 	vertices.resize(src_face_count * 3);
-
 	Vector3 *verticesw = vertices.ptrw();
 
 	AABB _aabb;
@@ -1622,9 +1647,6 @@ void GodotConcavePolygonShape3D::_setup(const Vector<Vector3> &p_faces, bool p_b
 	for (int i = 0; i < src_face_count; i++) {
 		Face3 face(facesr[i * 3 + 0], facesr[i * 3 + 1], facesr[i * 3 + 2]);
 
-		bvh_arrayw[i].aabb = face.get_aabb();
-		bvh_arrayw[i].center = bvh_arrayw[i].aabb.get_center();
-		bvh_arrayw[i].face_index = i;
 		facesw[i].indices[0] = i * 3 + 0;
 		facesw[i].indices[1] = i * 3 + 1;
 		facesw[i].indices[2] = i * 3 + 2;
@@ -1632,26 +1654,23 @@ void GodotConcavePolygonShape3D::_setup(const Vector<Vector3> &p_faces, bool p_b
 		verticesw[i * 3 + 0] = face.vertex[0];
 		verticesw[i * 3 + 1] = face.vertex[1];
 		verticesw[i * 3 + 2] = face.vertex[2];
+
+		const AABB face_aabb = face.get_aabb();
 		if (i == 0) {
-			_aabb = bvh_arrayw[i].aabb;
+			_aabb = face_aabb;
 		} else {
-			_aabb.merge_with(bvh_arrayw[i].aabb);
+			_aabb.merge_with(face_aabb);
 		}
 	}
-
-	int count = 0;
-	_Volume_BVH *bvh_tree = _volume_build_bvh(bvh_arrayw, src_face_count, count);
-
-	bvh.resize(count + 1);
-
-	BVH *bvh_arrayw2 = bvh.ptrw();
-
-	int idx = 0;
-	_fill_bvh(bvh_tree, bvh_arrayw2, idx);
 
 	backface_collision = p_backface_collision;
 
 	configure(_aabb); // this type of shape has no margin
+
+	const WorkerThreadPool::TaskID tid = WorkerThreadPool::get_singleton()->add_native_task(
+			&GodotConcavePolygonShape3D::_bvh_build_thread_func, this, false,
+			SNAME("GodotConcavePolygonShape3D BVH build"));
+	bvh_build_task.set(tid);
 }
 
 void GodotConcavePolygonShape3D::set_data(const Variant &p_data) {
@@ -1670,6 +1689,10 @@ Variant GodotConcavePolygonShape3D::get_data() const {
 }
 
 GodotConcavePolygonShape3D::GodotConcavePolygonShape3D() {
+}
+
+GodotConcavePolygonShape3D::~GodotConcavePolygonShape3D() {
+	_wait_for_bvh_build();
 }
 
 /* HEIGHT MAP SHAPE */

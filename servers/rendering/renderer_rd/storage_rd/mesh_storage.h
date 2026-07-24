@@ -140,6 +140,8 @@ private:
 
 			RID material;
 
+			uint32_t rt_invalidation_counter = 0; // Bump on geometry changes for RT cache invalidation.
+
 			uint32_t render_index = 0;
 			uint64_t render_pass = 0;
 
@@ -268,13 +270,13 @@ private:
 
 	MultiMesh *multimesh_dirty_list = nullptr;
 
-	_FORCE_INLINE_ void _multimesh_make_local(MultiMesh *multimesh) const;
-	_FORCE_INLINE_ void _multimesh_enable_motion_vectors(MultiMesh *multimesh);
-	_FORCE_INLINE_ void _multimesh_update_motion_vectors_data_cache(MultiMesh *multimesh);
-	_FORCE_INLINE_ bool _multimesh_uses_motion_vectors(MultiMesh *multimesh);
-	_FORCE_INLINE_ void _multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool p_aabb);
-	_FORCE_INLINE_ void _multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, bool p_aabb);
-	_FORCE_INLINE_ void _multimesh_re_create_aabb(MultiMesh *multimesh, const float *p_data, int p_instances);
+	void _multimesh_make_local(MultiMesh *multimesh) const;
+	void _multimesh_enable_motion_vectors(MultiMesh *multimesh);
+	void _multimesh_update_motion_vectors_data_cache(MultiMesh *multimesh);
+	bool _multimesh_uses_motion_vectors(MultiMesh *multimesh);
+	void _multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool p_aabb);
+	void _multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, bool p_aabb);
+	void _multimesh_re_create_aabb(MultiMesh *multimesh, const float *p_data, int p_instances);
 
 	/* Skeleton */
 
@@ -476,6 +478,86 @@ public:
 		return s->uv_scale;
 	}
 
+	/// Get the vertex buffer RID for raytracing device address access.
+	_FORCE_INLINE_ RID mesh_surface_get_vertex_buffer(void *p_surface) {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		return s->vertex_buffer;
+	}
+
+	_FORCE_INLINE_ uint32_t mesh_surface_get_position_stride(void *p_surface) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		if (s->format & RSE::ARRAY_FLAG_USE_2D_VERTICES) {
+			return sizeof(float) * 2;
+		} else if (s->format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
+			return sizeof(uint16_t) * 4;
+		} else {
+			return sizeof(float) * 3;
+		}
+	}
+
+	/// Get the per-mesh-instance skinned/blend-shape vertex buffer for the current frame.
+	/// Returns RID() when this surface is not deformed (caller should fall back to mesh_surface_get_vertex_buffer).
+	_FORCE_INLINE_ RID mesh_instance_get_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return RID();
+		}
+		const MeshInstance::Surface &mis = mi->surfaces[p_surface_index];
+		return mis.vertex_buffer[mis.current_buffer];
+	}
+
+	/// Get the previous-frame skinned vertex buffer (for motion vector reconstruction).
+	/// Returns the current buffer when the surface was not updated this frame, or when
+	/// update_mesh_instances() did not double-buffer this surface.
+	_FORCE_INLINE_ RID mesh_instance_get_prev_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return RID();
+		}
+		const MeshInstance::Surface &mis = mi->surfaces[p_surface_index];
+		uint32_t previous_buffer = RSG::rasterizer->get_frame_number() == mis.last_change ? mis.previous_buffer : mis.current_buffer;
+		return mis.vertex_buffer[previous_buffer];
+	}
+
+	/// Frame number on which this mesh-instance surface was last skinned (0 if never deformed).
+	_FORCE_INLINE_ uint64_t mesh_instance_get_last_change(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return 0;
+		}
+		return mi->surfaces[p_surface_index].last_change;
+	}
+
+	/// Get the attribute buffer RID for raytracing device address access.
+	_FORCE_INLINE_ RID mesh_surface_get_attribute_buffer(void *p_surface) {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		return s->attribute_buffer;
+	}
+
+	/// Get the index buffer RID for raytracing device address access.
+	/// @param p_lod LOD level (0 = base, 1+ = LOD index + 1)
+	_FORCE_INLINE_ RID mesh_surface_get_index_buffer(void *p_surface, uint32_t p_lod = 0) {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		if (p_lod == 0) {
+			return s->index_buffer;
+		} else {
+			ERR_FAIL_UNSIGNED_INDEX_V(p_lod - 1, s->lod_count, RID());
+			return s->lods[p_lod - 1].index_buffer;
+		}
+	}
+
+	/// Get the index count for raytracing.
+	/// @param p_lod LOD level (0 = base, 1+ = LOD index + 1)
+	_FORCE_INLINE_ uint32_t mesh_surface_get_index_count(void *p_surface, uint32_t p_lod = 0) {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		if (p_lod == 0) {
+			return s->index_count;
+		} else {
+			ERR_FAIL_UNSIGNED_INDEX_V(p_lod - 1, s->lod_count, 0);
+			return s->lods[p_lod - 1].index_count;
+		}
+	}
+
 	_FORCE_INLINE_ uint32_t mesh_surface_get_lod(void *p_surface, float p_model_scale, float p_distance_threshold, float p_mesh_lod_threshold, uint32_t &r_index_count) const {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 
@@ -504,6 +586,11 @@ public:
 		} else {
 			return s->lods[p_lod - 1].index_array;
 		}
+	}
+
+	_FORCE_INLINE_ uint32_t mesh_surface_get_rt_invalidation_counter(void *p_surface) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		return s->rt_invalidation_counter;
 	}
 
 	_FORCE_INLINE_ void mesh_surface_get_vertex_arrays_and_format(void *p_surface, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
@@ -724,6 +811,38 @@ public:
 			return multimesh->visible_instances;
 		}
 		return multimesh->instances;
+	}
+
+	// Returns a pointer to the CPU-side transform buffer, syncing from GPU once if needed.
+	// Safe to call every frame; the readback only happens on the first call when data_cache is empty.
+	// Note: for MultiMeshes updated every frame via set_buffer(), data_cache may be stale after init.
+	_FORCE_INLINE_ const float *multimesh_get_local_data_ptr(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		if (!mm) {
+			return nullptr;
+		}
+		_multimesh_make_local(mm);
+		return mm->data_cache.is_empty() ? nullptr : mm->data_cache.ptr();
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_stride(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->stride_cache : 0;
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_current_instance_offset(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->motion_vectors_current_offset : 0;
+	}
+
+	_FORCE_INLINE_ uint64_t multimesh_get_last_change(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->motion_vectors_last_change : (uint64_t)-1;
+	}
+
+	_FORCE_INLINE_ RID multimesh_get_gpu_buffer(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->buffer : RID();
 	}
 
 	_FORCE_INLINE_ RID multimesh_get_3d_uniform_set(RID p_multimesh, RID p_shader, uint32_t p_set) const {
