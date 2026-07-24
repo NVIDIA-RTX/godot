@@ -156,13 +156,13 @@ bool SceneShaderRaytracing::ShaderData::casts_shadows() const {
 	return !has_alpha || (uses_depth_prepass_alpha && !(depth_draw == DEPTH_DRAW_DISABLED || depth_test == DEPTH_TEST_DISABLED));
 }
 
-RenderingServerTypes::ShaderNativeSourceCode SceneShaderRaytracing::ShaderData::get_native_source_code() const {
+RenderingServer::ShaderNativeSourceCode SceneShaderRaytracing::ShaderData::get_native_source_code() const {
 	// For raytracing: return source code from raygen shader, not rasterization shader
 	if (raygen_version.is_valid()) {
 		MutexLock lock(SceneShaderRaytracing::singleton_mutex);
 		return SceneShaderRaytracing::singleton->raygen_shader.version_get_native_source_code(raygen_version);
 	} else {
-		return RenderingServerTypes::ShaderNativeSourceCode();
+		return RenderingServer::ShaderNativeSourceCode();
 	}
 }
 
