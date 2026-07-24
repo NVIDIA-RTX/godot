@@ -2407,10 +2407,13 @@ Id Builder::createVariable(Decoration precision, StorageClass storageClass, Id t
 
         if (emitNonSemanticShaderDebugInfo && !compilerGenerated)
         {
-            auto const debugLocalVariableId = createDebugLocalVariable(debugId[type], name);
-            debugId[inst->getResultId()] = debugLocalVariableId;
+            // Skip debug info for opaque types
+            if (debugId[type]) {
+                auto const debugLocalVariableId = createDebugLocalVariable(debugId[type], name);
+                debugId[inst->getResultId()] = debugLocalVariableId;
 
-            makeDebugDeclare(debugLocalVariableId, inst->getResultId());
+                makeDebugDeclare(debugLocalVariableId, inst->getResultId());
+            }
         }
 
         break;
@@ -2421,8 +2424,11 @@ Id Builder::createVariable(Decoration precision, StorageClass storageClass, Id t
 
         if (emitNonSemanticShaderDebugInfo)
         {
-            auto const debugResultId = createDebugGlobalVariable(debugId[type], name, inst->getResultId());
-            debugId[inst->getResultId()] = debugResultId;
+            // Skip debug info for opaque types
+            if (debugId[type]) {
+                auto const debugResultId = createDebugGlobalVariable(debugId[type], name, inst->getResultId());
+                debugId[inst->getResultId()] = debugResultId;
+            }
         }
         break;
     }

@@ -3239,6 +3239,9 @@ namespace respv {
             }
 
             uint32_t resultInstructionIndex = rContext.shader.results[resultId].instructionIndex;
+			if (resultInstructionIndex == UINT32_MAX) {
+				continue;
+			}
             uint32_t resultWordIndex = rContext.shader.instructions[resultInstructionIndex].wordIndex;
 
             // The result has been deleted, so we delete the decoration as well.
