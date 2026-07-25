@@ -30,10 +30,11 @@
 
 #include "compressed_texture.h"
 
+#include "core/config/project_settings.h"
 #include "core/io/file_access.h"
 #include "scene/resources/bit_map.h"
 
-Error CompressedTexture2D::_load_data(const String &p_path, int &r_width, int &r_height, Ref<Image> &image, bool &r_request_3d, bool &r_request_normal, bool &r_request_roughness, int &mipmap_limit, int p_size_limit) {
+Error CompressedTexture2D::_load_data(const String &p_path, int &r_width, int &r_height, Ref<Image> &image, bool &r_request_3d, bool &r_request_normal, bool &r_request_roughness, int &mipmap_limit, int p_size_limit, int p_mip_skip) {
 	alpha_cache.unref();
 
 	ERR_FAIL_COND_V(image.is_null(), ERR_INVALID_PARAMETER);
@@ -76,8 +77,12 @@ Error CompressedTexture2D::_load_data(const String &p_path, int &r_width, int &r
 	r_request_normal = false;
 
 #endif
-	if (!(df & FORMAT_BIT_STREAM)) {
-		p_size_limit = 0;
+	if (p_mip_skip > 0) {
+		int max_dim = MAX((int)r_width, (int)r_height);
+		int mip_skip_limit = MAX(max_dim >> p_mip_skip, 1);
+		if (p_size_limit == 0 || mip_skip_limit < p_size_limit) {
+			p_size_limit = mip_skip_limit;
+		}
 	}
 
 	image = load_image_from_file(f, p_size_limit);
@@ -136,7 +141,9 @@ Error CompressedTexture2D::load(const String &p_path) {
 	bool request_roughness;
 	int mipmap_limit;
 
-	Error err = _load_data(p_path, lw, lh, image, request_3d, request_normal, request_roughness, mipmap_limit);
+	const int mip_skip = GLOBAL_GET_CACHED(int, "rendering/textures/vram_compression/runtime_mipmap_skip");
+
+	Error err = _load_data(p_path, lw, lh, image, request_3d, request_normal, request_roughness, mipmap_limit, 0, mip_skip);
 	if (err) {
 		return err;
 	}
@@ -294,6 +301,16 @@ void CompressedTexture2D::reload_from_file() {
 	load(path);
 }
 
+void CompressedTexture2D::update_all_mipmap_skip() {
+	List<Ref<Resource>> cached;
+	ResourceCache::get_cached_resources(&cached);
+	for (const Ref<Resource> &res : cached) {
+		if (Object::cast_to<CompressedTexture2D>(res.ptr())) {
+			res->reload_from_file();
+		}
+	}
+}
+
 Ref<Image> CompressedTexture2D::load_image_from_file(Ref<FileAccess> f, int p_size_limit) {
 	uint32_t data_format = f->get_32();
 	uint32_t w = f->get_16();
@@ -314,7 +331,7 @@ Ref<Image> CompressedTexture2D::load_image_from_file(Ref<FileAccess> f, int p_si
 		for (uint32_t i = 0; i < mipmaps + 1; i++) {
 			uint32_t size = f->get_32();
 
-			if (p_size_limit > 0 && i < (mipmaps - 1) && (sw > p_size_limit || sh > p_size_limit)) {
+			if (p_size_limit > 0 && i + 1 < mipmaps && (sw > p_size_limit || sh > p_size_limit)) {
 				//can't load this due to size limit
 				sw = MAX(sw >> 1, 1);
 				sh = MAX(sh >> 1, 1);
@@ -388,7 +405,7 @@ Ref<Image> CompressedTexture2D::load_image_from_file(Ref<FileAccess> f, int p_si
 				}
 			}
 
-			image->set_data(w, h, true, mipmap_images[0]->get_format(), img_data);
+			image->set_data(mipmap_images[0]->get_width(), mipmap_images[0]->get_height(), true, mipmap_images[0]->get_format(), img_data);
 			return image;
 		}
 
@@ -420,17 +437,17 @@ Ref<Image> CompressedTexture2D::load_image_from_file(Ref<FileAccess> f, int p_si
 		return img;
 	} else if (data_format == DATA_FORMAT_IMAGE) {
 		int size = Image::get_image_data_size(w, h, format, mipmaps ? true : false);
+		uint64_t data_start = f->get_position();
 
 		for (uint32_t i = 0; i < mipmaps + 1; i++) {
 			int tw, th;
 			int ofs = Image::get_image_mipmap_offset_and_dimensions(w, h, format, i, tw, th);
 
-			if (p_size_limit > 0 && i < mipmaps && (p_size_limit > tw || p_size_limit > th)) {
-				if (ofs) {
-					f->seek(f->get_position() + ofs);
-				}
+			if (p_size_limit > 0 && i < mipmaps && (tw > p_size_limit || th > p_size_limit)) {
 				continue; //oops, size limit enforced, go to next
 			}
+
+			f->seek(data_start + ofs);
 
 			Vector<uint8_t> data;
 			data.resize(size - ofs);
@@ -452,6 +469,7 @@ Ref<Image> CompressedTexture2D::load_image_from_file(Ref<FileAccess> f, int p_si
 void CompressedTexture2D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load", "path"), &CompressedTexture2D::load);
 	ClassDB::bind_method(D_METHOD("get_load_path"), &CompressedTexture2D::get_load_path);
+	ClassDB::bind_static_method("CompressedTexture2D", D_METHOD("update_all_mipmap_skip"), &CompressedTexture2D::update_all_mipmap_skip);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "load_path", PROPERTY_HINT_FILE, "*.ctex"), "load", "get_load_path");
 }

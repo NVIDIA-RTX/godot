@@ -3676,6 +3676,8 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF("rendering/textures/lossless_compression/force_png", false);
 
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/textures/vram_compression/runtime_mipmap_skip", PROPERTY_HINT_RANGE, "0,4,1"), 0);
+
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/webp_compression/compression_method", PROPERTY_HINT_RANGE, "0,6,1"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/textures/webp_compression/lossless_compression_factor", PROPERTY_HINT_RANGE, "0,100,1"), 25);
 
