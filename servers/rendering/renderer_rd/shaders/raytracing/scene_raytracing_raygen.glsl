@@ -14,7 +14,9 @@
 #pragma shader_stage(raygen)
 #extension GL_EXT_ray_tracing : enable
 #ifdef USE_SER
-#extension GL_EXT_shader_invocation_reorder : enable
+// 4.6.3 backport: glslang 14.2 has no GL_EXT_shader_invocation_reorder support; use the
+// equivalent NV variant (emits SPV_NV_shader_invocation_reorder / VK_NV_ray_tracing_invocation_reorder).
+#extension GL_NV_shader_invocation_reorder : enable
 #endif
 
 #define GLSL 1
@@ -67,18 +69,18 @@ void main() {
 			path_pack(payload, ps);
 
 #ifdef USE_SER
-			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+			hitObjectNV hitObject;
+			hitObjectTraceRayNV(hitObject, tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
 
 			// Reorder with a coherence hint that has 8 bits
 			uint hint = 0;
-			if (hitObjectIsHitEXT(hitObject)) {
+			if (hitObjectIsHitNV(hitObject)) {
 				// TODO: This hint barely does anything. There is a lot of untapped potential here.
-				hint = hitObjectGetInstanceIdEXT(hitObject);
+				hint = hitObjectGetInstanceIdNV(hitObject);
 			}
-			reorderThreadEXT(hitObject, hint, 8);
+			reorderThreadNV(hitObject, hint, 8);
 
-			hitObjectExecuteShaderEXT(hitObject, 0);
+			hitObjectExecuteShaderNV(hitObject, 0);
 #else
 			traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
 #endif
@@ -264,7 +266,9 @@ void main() {
 #extension GL_ARB_gpu_shader_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
 #ifdef USE_SER
-#extension GL_EXT_shader_invocation_reorder : enable
+// 4.6.3 backport: glslang 14.2 has no GL_EXT_shader_invocation_reorder support; use the
+// equivalent NV variant (emits SPV_NV_shader_invocation_reorder / VK_NV_ray_tracing_invocation_reorder).
+#extension GL_NV_shader_invocation_reorder : enable
 #endif
 
 #define GLSL 1

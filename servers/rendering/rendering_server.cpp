@@ -2497,6 +2497,8 @@ void RenderingServer::_bind_methods() {
 
 	BIND_BITFIELD_FLAG(ARRAY_FLAG_COMPRESS_ATTRIBUTES);
 
+	BIND_BITFIELD_FLAG(ARRAY_FLAG_USE_STORAGE_BUFFER);
+
 	BIND_BITFIELD_FLAG(ARRAY_FLAG_FORMAT_VERSION_BASE);
 	BIND_BITFIELD_FLAG(ARRAY_FLAG_FORMAT_VERSION_SHIFT);
 	BIND_BITFIELD_FLAG(ARRAY_FLAG_FORMAT_VERSION_1);
@@ -3805,8 +3807,8 @@ void RenderingServer::init() {
 		String mode_hints;
 		String mode_hints_metal;
 		{
-		Vector<String> mode_hints_arr = { "Bilinear (Fastest):0", "FSR 1.0 (Fast):1", "FSR 2.2 (Slow):2", "MetalFX (Spatial):3", "MetalFX (Temporal):4", "Nearest:5", "NVIDIA DLSS:6" };
-		mode_hints = String(",").join(mode_hints_arr);
+			Vector<String> mode_hints_arr = { "Bilinear (Fastest):0", "FSR 1.0 (Fast):1", "FSR 2.2 (Slow):2", "MetalFX (Spatial):3", "MetalFX (Temporal):4", "Nearest:5", "NVIDIA DLSS:6" };
+			mode_hints = String(",").join(mode_hints_arr);
 			mode_hints_metal = String(",").join(mode_hints_arr);
 		}
 

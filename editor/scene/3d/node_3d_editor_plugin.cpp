@@ -37,6 +37,7 @@
 #include "core/math/projection.h"
 #include "core/os/keyboard.h"
 #include "core/string/translation_server.h"
+#include "drivers/streamline/streamline.h"
 #include "editor/animation/animation_player_editor_plugin.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/docks/scene_tree_dock.h"
@@ -773,6 +774,18 @@ Vector3 Node3DEditorViewport::_get_camera_normal() const {
 
 Vector3 Node3DEditorViewport::get_ray(const Vector2 &p_pos) const {
 	return camera->project_ray_normal(p_pos);
+}
+
+bool Node3DEditorViewport::is_view_gizmos_enabled() const {
+	if (!view_display_menu) {
+		return true;
+	}
+	PopupMenu *popup = view_display_menu->get_popup();
+	const int idx = popup->get_item_index(VIEW_GIZMOS);
+	if (idx < 0) {
+		return true;
+	}
+	return popup->is_item_checked(idx);
 }
 
 void Node3DEditorViewport::_clear_selected() {
@@ -3199,6 +3212,10 @@ void Node3DEditorViewport::_project_settings_changed() {
 
 	const Viewport::AnisotropicFiltering anisotropic_filtering_level = Viewport::AnisotropicFiltering(int(GLOBAL_GET("rendering/textures/default_filters/anisotropic_filtering_level")));
 	viewport->set_anisotropic_filtering_level(anisotropic_filtering_level);
+
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->update_project_settings();
+	}
 }
 
 static void override_label_colors(Control *p_control) {
@@ -3458,6 +3475,18 @@ void Node3DEditorViewport::_notification(int p_what) {
 				text += vformat(TTR("Objects: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_OBJECTS_IN_FRAME)) + "\n";
 				text += vformat(TTR("Primitives: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_PRIMITIVES_IN_FRAME)) + "\n";
 				text += vformat(TTR("Draw Calls: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_DRAW_CALLS_IN_FRAME));
+
+				int rt_tlas = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TLAS_INSTANCES);
+				if (rt_tlas > 0) {
+					int rt_blas_builds = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_BUILDS);
+					int rt_blas_refits = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_REFITS);
+					int rt_tris_built = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_BUILT);
+					int rt_tris_refit = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_REFIT);
+					text += "\n";
+					text += "\n" + vformat(TTR("RT TLAS Instances: %d"), rt_tlas) + "\n";
+					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_blas_builds, rt_tris_built) + "\n";
+					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_blas_refits, rt_tris_refit);
+				}
 
 				info_label->set_text(text);
 			}
@@ -4210,6 +4239,8 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_GIZMOS: {
 			int idx = view_display_menu->get_popup()->get_item_index(VIEW_GIZMOS);
 			bool current = view_display_menu->get_popup()->is_item_checked(idx);
+			Node3DEditor *editor = Node3DEditor::get_singleton();
+			const bool was_globally_off = editor && !editor->is_any_view_gizmos_enabled();
 			current = !current;
 			uint32_t layers = camera->get_cull_mask();
 			layers &= ~(1 << GIZMO_EDIT_LAYER);
@@ -4218,6 +4249,13 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 			}
 			camera->set_cull_mask(layers);
 			view_display_menu->get_popup()->set_item_checked(idx, current);
+
+			// If we are the first viewport bringing gizmos back, every
+			// gizmo in the edited scene was visually suppressed during its
+			// last redraw and now needs to actually populate its meshes.
+			if (was_globally_off && current && editor) {
+				editor->update_all_gizmos();
+			}
 
 		} break;
 		case VIEW_TRANSFORM_GIZMO: {
@@ -4284,7 +4322,12 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES:
 		case VIEW_DISPLAY_DEBUG_OCCLUDERS:
 		case VIEW_DISPLAY_MOTION_VECTORS:
-		case VIEW_DISPLAY_INTERNAL_BUFFER: {
+		case VIEW_DISPLAY_INTERNAL_BUFFER:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST:
+		case VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH: {
 			static const int display_options[] = {
 				VIEW_DISPLAY_NORMAL,
 				VIEW_DISPLAY_WIREFRAME,
@@ -4313,6 +4356,11 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_OCCLUDERS,
 				VIEW_DISPLAY_MOTION_VECTORS,
 				VIEW_DISPLAY_INTERNAL_BUFFER,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST,
+				VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH,
 				VIEW_MAX
 			};
 			static const Viewport::DebugDraw debug_draw_modes[] = {
@@ -4343,6 +4391,11 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_OCCLUDERS,
 				Viewport::DEBUG_DRAW_MOTION_VECTORS,
 				Viewport::DEBUG_DRAW_INTERNAL_BUFFER,
+				Viewport::DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO,
+				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO,
+				Viewport::DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS,
+				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST,
+				Viewport::DEBUG_DRAW_RECONSTRUCTED_DEPTH,
 			};
 
 			for (int idx = 0; display_options[idx] != VIEW_MAX; idx++) {
@@ -6249,6 +6302,17 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Represents motion vectors with colored lines in the direction of motion. Gray dots represent areas with no per-pixel motion."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Internal Buffer"), VIEW_DISPLAY_INTERNAL_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
 			TTRC("Shows the scene rendered in linear colorspace before any tonemapping or post-processing."));
+	display_submenu->add_separator();
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Diffuse Albedo"), VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction diffuse albedo output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Albedo"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction specular albedo output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Normal/Roughness"), VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction normal and roughness output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Hit Dist"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction specular hit distance output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Reconstructed Depth"), VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the reconstructed full-resolution depth buffer. Requires DLSS RR path tracing with upscaling."));
 	view_display_menu->get_popup()->add_submenu_node_item(TTRC("Display Advanced..."), display_submenu, VIEW_DISPLAY_ADVANCED);
 
 	view_display_menu->get_popup()->add_separator();
@@ -6701,6 +6765,9 @@ void Node3DEditorViewportContainer::_notification(int p_what) {
 
 			ERR_FAIL_COND(vc != 4);
 
+			Node3DEditor *editor = Node3DEditor::get_singleton();
+			const bool was_globally_off = editor && !editor->is_any_view_gizmos_enabled();
+
 			Size2 size = get_size();
 
 			if (size.x < 10 || size.y < 10) {
@@ -6796,6 +6863,14 @@ void Node3DEditorViewportContainer::_notification(int p_what) {
 					fit_child_in_rect(viewports[3], Rect2(Vector2(mid_w + h_sep / 2, mid_h + v_sep / 2), Vector2(size_right, size_bottom)));
 
 				} break;
+			}
+
+			// If a viewport with gizmos enabled just became visible while
+			// gizmos were globally off, every gizmo in the edited scene was
+			// visually suppressed during its last redraw and now needs to
+			// actually populate its meshes.
+			if (was_globally_off && editor && editor->is_any_view_gizmos_enabled()) {
+				editor->update_all_gizmos();
 			}
 		} break;
 	}

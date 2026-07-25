@@ -113,7 +113,6 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 		bool runtime_descriptor_array = false;
 	};
 
-
 	struct DeviceFunctions {
 		PFN_vkCreateSwapchainKHR CreateSwapchainKHR = nullptr;
 		PFN_vkDestroySwapchainKHR DestroySwapchainKHR = nullptr;
@@ -131,6 +130,15 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 
 		// Debug device fault.
 		PFN_vkGetDeviceFaultInfoEXT GetDeviceFaultInfoEXT = nullptr;
+
+		// Raytracing extensions.
+		PFN_vkCreateAccelerationStructureKHR CreateAccelerationStructureKHR = nullptr;
+		PFN_vkDestroyAccelerationStructureKHR DestroyAccelerationStructureKHR = nullptr;
+		PFN_vkGetAccelerationStructureBuildSizesKHR GetAccelerationStructureBuildSizesKHR = nullptr;
+		PFN_vkCmdBuildAccelerationStructuresKHR CmdBuildAccelerationStructuresKHR = nullptr;
+		PFN_vkCreateRayTracingPipelinesKHR CreateRaytracingPipelinesKHR = nullptr;
+		PFN_vkGetRayTracingShaderGroupHandlesKHR GetRayTracingShaderGroupHandlesKHR = nullptr;
+		PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR = nullptr;
 	};
 	// Debug marker extensions.
 	VkDebugReportObjectTypeEXT _convert_to_debug_report_objectType(VkObjectType p_object_type);
@@ -329,7 +337,8 @@ public:
 			BitField<PipelineStageBits> p_dst_stages,
 			VectorView<MemoryAccessBarrier> p_memory_barriers,
 			VectorView<BufferBarrier> p_buffer_barriers,
-			VectorView<TextureBarrier> p_texture_barriers) override final;
+			VectorView<TextureBarrier> p_texture_barriers,
+			VectorView<AccelerationStructureBarrier> p_acceleration_structure_barriers) override final;
 
 	/****************/
 	/**** FENCES ****/
@@ -734,7 +743,6 @@ public:
 	virtual void raytracing_pipeline_free(RaytracingPipelineID p_pipeline) override final;
 
 	virtual bool raytracing_pipeline_get_shader_group_handles(RaytracingPipelineID p_pipeline, uint32_t p_group_index_offset, VectorView<uint32_t> p_group_indices, uint8_t *r_data, uint32_t p_data_stride_bytes) override final;
-
 
 	/*****************/
 	/**** QUERIES ****/

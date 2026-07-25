@@ -394,7 +394,8 @@ public:
 			BitField<PipelineStageBits> p_dst_stages,
 			VectorView<RDD::MemoryAccessBarrier> p_memory_barriers,
 			VectorView<RDD::BufferBarrier> p_buffer_barriers,
-			VectorView<RDD::TextureBarrier> p_texture_barriers) override final;
+			VectorView<RDD::TextureBarrier> p_texture_barriers,
+			VectorView<AccelerationStructureBarrier> p_acceleration_structure_barriers) override final;
 
 private:
 	/****************/

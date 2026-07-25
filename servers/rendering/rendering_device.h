@@ -34,6 +34,7 @@
 #include "core/os/condition_variable.h"
 #include "core/os/thread_safe.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/rb_set.h"
 #include "core/templates/rid_owner.h"
 #include "core/variant/typed_array.h"
 #include "servers/display/display_server.h"
@@ -55,6 +56,10 @@ class RDPipelineDepthStencilState;
 class RDPipelineColorBlendState;
 class RDFramebufferPass;
 class RDPipelineSpecializationConstant;
+class RDAccelerationStructureGeometry;
+class RDAccelerationStructureInstance;
+class RDPipelineShader;
+class RDHitGroup;
 
 class RenderingDevice : public RenderingDeviceCommons {
 	GDCLASS(RenderingDevice, Object)
@@ -67,6 +72,7 @@ private:
 public:
 	typedef int64_t DrawListID;
 	typedef int64_t ComputeListID;
+	typedef int64_t RaytracingListID;
 
 	typedef void (*InvalidationCallback)(void *);
 
@@ -103,6 +109,7 @@ public:
 		ID_TYPE_VERTEX_FORMAT,
 		ID_TYPE_DRAW_LIST,
 		ID_TYPE_COMPUTE_LIST = 4,
+		ID_TYPE_RAYTRACING_LIST = 5,
 		ID_TYPE_MAX,
 		ID_BASE_SHIFT = 58, // 5 bits for ID types.
 		ID_MASK = (ID_BASE_SHIFT - 1),
@@ -113,6 +120,7 @@ private:
 	HashMap<RID, HashSet<RID>> reverse_dependency_map; // Same as above, but in reverse.
 
 	void _add_dependency(RID p_id, RID p_depends_on);
+	void _remove_dependency(RID p_id, RID p_depends_on);
 	void _free_dependencies(RID p_id);
 
 private:
@@ -206,6 +214,8 @@ private:
 		uint32_t size = 0;
 	};
 
+	Error _buffer_update(Buffer *p_buffer, RID p_buffer_id, uint32_t p_offset, uint32_t p_size, const void *p_data);
+
 public:
 	Error buffer_copy(RID p_src_buffer, RID p_dst_buffer, uint32_t p_src_offset, uint32_t p_dst_offset, uint32_t p_size);
 	/**
@@ -291,6 +301,8 @@ public:
 		CALLBACK_RESOURCE_USAGE_ATTACHMENT_FRAGMENT_SHADING_RATE_READ,
 		CALLBACK_RESOURCE_USAGE_ATTACHMENT_FRAGMENT_DENSITY_MAP_READ,
 		CALLBACK_RESOURCE_USAGE_GENERAL,
+		CALLBACK_RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ,
+		CALLBACK_RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE,
 		CALLBACK_RESOURCE_USAGE_MAX
 	};
 
@@ -840,6 +852,7 @@ public:
 		BUFFER_CREATION_DEVICE_ADDRESS_BIT = (1 << 0),
 		BUFFER_CREATION_AS_STORAGE_BIT = (1 << 1),
 		BUFFER_CREATION_DYNAMIC_PERSISTENT_BIT = (1 << 2),
+		BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT = (1 << 3),
 	};
 
 	enum StorageBufferUsage {
@@ -861,6 +874,9 @@ public:
 	}
 
 	RID index_array_create(RID p_index_buffer, uint32_t p_index_offset, uint32_t p_index_count);
+
+private:
+	BitField<RDD::BufferUsageBits> _creation_to_usage_bits(BitField<BufferCreationBits> p_creation_bits);
 
 	/****************/
 	/**** SHADER ****/
@@ -1145,6 +1161,7 @@ private:
 		HashMap<RID, RDG::ResourceUsage> untracked_usage;
 		LocalVector<SharedTexture> shared_textures_to_update;
 		LocalVector<RID> pending_clear_textures;
+		Vector<RID> acceleration_structures; // Used for validation.
 		InvalidationCallback invalidated_callback = nullptr;
 		void *invalidated_callback_userdata = nullptr;
 	};
@@ -1231,12 +1248,47 @@ private:
 
 	RID_Owner<ComputePipeline, true> compute_pipeline_owner;
 
+	struct RaytracingPipeline {
+		RID layout_defining_shader;
+		RDD::ShaderID layout_defining_shader_driver_id;
+		uint32_t layout_defining_shader_layout_hash = 0;
+		Vector<uint32_t> set_formats;
+		RDD::RaytracingPipelineID driver_id;
+		uint32_t push_constant_size = 0;
+		Buffer sbt_buffer;
+		uint32_t raygen_shader_count = 0;
+		uint32_t miss_shader_count = 0;
+		uint32_t hit_group_count = 0;
+	};
+
+	Error _raytracing_pipeline_create_sbt_buffer(RDD::RaytracingPipelineID p_raytracing_pipeline, uint32_t p_raygen_shader_count, uint32_t p_miss_shader_count, Buffer &r_sbt_buffer);
+
+	RID_Owner<RaytracingPipeline, true> raytracing_pipeline_owner;
+
 public:
 	RID render_pipeline_create(RID p_shader, FramebufferFormatID p_framebuffer_format, VertexFormatID p_vertex_format, RenderPrimitive p_render_primitive, const PipelineRasterizationState &p_rasterization_state, const PipelineMultisampleState &p_multisample_state, const PipelineDepthStencilState &p_depth_stencil_state, const PipelineColorBlendState &p_blend_state, BitField<PipelineDynamicStateFlags> p_dynamic_state_flags = 0, uint32_t p_for_render_pass = 0, const Vector<PipelineSpecializationConstant> &p_specialization_constants = Vector<PipelineSpecializationConstant>());
 	bool render_pipeline_is_valid(RID p_pipeline);
 
 	RID compute_pipeline_create(RID p_shader, const Vector<PipelineSpecializationConstant> &p_specialization_constants = Vector<PipelineSpecializationConstant>());
 	bool compute_pipeline_is_valid(RID p_pipeline);
+
+	struct PipelineShader {
+		RID shader;
+		Vector<PipelineSpecializationConstant> specialization_constants;
+
+		bool is_valid() const {
+			return shader.is_valid();
+		}
+	};
+
+	struct HitGroup {
+		PipelineShader closest_hit_shader;
+		PipelineShader any_hit_shader;
+		PipelineShader intersection_shader;
+	};
+
+	RID raytracing_pipeline_create(Span<PipelineShader> p_raygen_shaders, Span<PipelineShader> p_miss_shaders, Span<HitGroup> p_hit_groups, uint32_t p_max_trace_recursion_depth);
+	bool raytracing_pipeline_is_valid(RID p_pipeline);
 
 	void update_pipeline_cache(bool p_closing = false);
 
@@ -1716,6 +1768,7 @@ private:
 	bool _vertex_array_make_mutable(VertexArray *p_vertex_array, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _index_array_make_mutable(IndexArray *p_index_array, RDG::ResourceTracker *p_resource_tracker);
 	bool _uniform_set_make_mutable(UniformSet *p_uniform_set, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
+	bool _acceleration_structure_make_mutable(AccelerationStructure *p_acceleration_structure, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _dependency_make_mutable(RID p_id, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _dependencies_make_mutable_recursive(RID p_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _dependencies_make_mutable(RID p_id, RDG::ResourceTracker *p_resource_tracker);
@@ -1761,6 +1814,8 @@ private:
 		List<UniformSet> uniform_sets_to_dispose_of;
 		List<RenderPipeline> render_pipelines_to_dispose_of;
 		List<ComputePipeline> compute_pipelines_to_dispose_of;
+		List<AccelerationStructure> acceleration_structures_to_dispose_of;
+		List<RaytracingPipeline> raytracing_pipelines_to_dispose_of;
 
 		// Pending asynchronous data transfer for buffers.
 		LocalVector<RDD::BufferID> download_buffer_staging_buffers;
@@ -1977,11 +2032,18 @@ private:
 
 	Error _buffer_update_bind(RID p_buffer, uint32_t p_offset, uint32_t p_size, const Vector<uint8_t> &p_data);
 
+	RID _blas_create(const TypedArray<RDAccelerationStructureGeometry> &p_geometries, BitField<AccelerationStructureFlagBits> p_flags);
+	Error _tlas_build(RID p_tlas, const TypedArray<RDAccelerationStructureInstance> &p_instances);
+
+	Error _hit_sbt_range_update(RID p_hit_sbt, HitShaderBindingTableRange p_range, uint32_t p_offset, const Vector<int32_t> &p_hit_group_indices);
+
 	RID _render_pipeline_create(RID p_shader, FramebufferFormatID p_framebuffer_format, VertexFormatID p_vertex_format, RenderPrimitive p_render_primitive, const Ref<RDPipelineRasterizationState> &p_rasterization_state, const Ref<RDPipelineMultisampleState> &p_multisample_state, const Ref<RDPipelineDepthStencilState> &p_depth_stencil_state, const Ref<RDPipelineColorBlendState> &p_blend_state, BitField<PipelineDynamicStateFlags> p_dynamic_state_flags, uint32_t p_for_render_pass, const TypedArray<RDPipelineSpecializationConstant> &p_specialization_constants);
 	RID _compute_pipeline_create(RID p_shader, const TypedArray<RDPipelineSpecializationConstant> &p_specialization_constants);
+	RID _raytracing_pipeline_create(const TypedArray<RDPipelineShader> &p_raygen_shaders, const TypedArray<RDPipelineShader> &p_miss_shaders, const TypedArray<RDHitGroup> &p_hit_groups, uint32_t p_max_trace_recursion_depth);
 
 	void _draw_list_set_push_constant(DrawListID p_list, const Vector<uint8_t> &p_data, uint32_t p_data_size);
 	void _compute_list_set_push_constant(ComputeListID p_list, const Vector<uint8_t> &p_data, uint32_t p_data_size);
+	void _raytracing_list_set_push_constant(RaytracingListID p_list, const Vector<uint8_t> &p_data, uint32_t p_data_size);
 };
 
 VARIANT_ENUM_CAST(RenderingDevice::DeviceType)
@@ -2002,6 +2064,9 @@ VARIANT_ENUM_CAST(RenderingDevice::VertexFrequency)
 VARIANT_ENUM_CAST(RenderingDevice::IndexBufferFormat)
 VARIANT_BITFIELD_CAST(RenderingDevice::StorageBufferUsage)
 VARIANT_BITFIELD_CAST(RenderingDevice::BufferCreationBits)
+VARIANT_BITFIELD_CAST(RenderingDevice::AccelerationStructureFlagBits)
+VARIANT_BITFIELD_CAST(RenderingDevice::AccelerationStructureGeometryFlagBits)
+VARIANT_BITFIELD_CAST(RenderingDevice::AccelerationStructureInstanceFlagBits)
 VARIANT_ENUM_CAST(RenderingDevice::UniformType)
 VARIANT_ENUM_CAST(RenderingDevice::RenderPrimitive)
 VARIANT_ENUM_CAST(RenderingDevice::PolygonCullMode)

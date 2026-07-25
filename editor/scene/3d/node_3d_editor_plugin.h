@@ -164,6 +164,12 @@ class Node3DEditorViewport : public Control {
 		VIEW_DISPLAY_DEBUG_OCCLUDERS,
 		VIEW_DISPLAY_MOTION_VECTORS,
 		VIEW_DISPLAY_INTERNAL_BUFFER,
+		// DLSS Ray Reconstruction debug views
+		VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO,
+		VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO,
+		VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS,
+		VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST,
+		VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH,
 		VIEW_DISPLAY_MAX,
 		// > Keep in sync with menu.
 
@@ -586,6 +592,8 @@ public:
 	SubViewport *get_viewport_node() { return viewport; }
 	Camera3D *get_camera_3d() { return camera; } // return the default camera object.
 	Control *get_surface() { return surface; }
+
+	bool is_view_gizmos_enabled() const;
 
 	Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p_index);
 	~Node3DEditorViewport();

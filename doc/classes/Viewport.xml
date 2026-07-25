@@ -777,27 +777,19 @@
 			Draws the internal resolution buffer of the scene in linear colorspace before tonemapping or post-processing is applied.
 			[b]Note:[/b] Only supported when using the Forward+ or Mobile rendering methods.
 		</constant>
-		<constant name="DEBUG_DRAW_CLUSTER_AREA_LIGHTS" value="27" enum="DebugDraw">
-			Draws the cluster used by [AreaLight3D] nodes to optimize light rendering.
-			[b]Note:[/b] Only supported when using the Forward+ rendering method.
-		</constant>
-		<constant name="DEBUG_DRAW_AREA_LIGHT_ATLAS" value="28" enum="DebugDraw">
-			Draws the atlas used by [AreaLight3D] nodes in the upper left quadrant of the [Viewport].
-			[b]Note:[/b] Only supported when using the Forward+ or Mobile rendering method.
-		</constant>
-		<constant name="DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="29" enum="DebugDraw">
+		<constant name="DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="27" enum="DebugDraw">
 			Displays the diffuse albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="30" enum="DebugDraw">
+		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="28" enum="DebugDraw">
 			Displays the specular albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="31" enum="DebugDraw">
+		<constant name="DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="29" enum="DebugDraw">
 			Displays the packed normal and roughness input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="32" enum="DebugDraw">
+		<constant name="DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="30" enum="DebugDraw">
 			Displays the specular ray hit distance input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="33" enum="DebugDraw">
+		<constant name="DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="31" enum="DebugDraw">
 			Displays the depth buffer reconstructed by NVIDIA DLSS Ray Reconstruction after denoising. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
 		<constant name="DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST" value="0" enum="DefaultCanvasItemTextureFilter">

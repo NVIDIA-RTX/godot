@@ -4806,6 +4806,9 @@
 		<constant name="ARRAY_FLAG_COMPRESS_ATTRIBUTES" value="536870912" enum="ArrayFormat" is_bitfield="true">
 			Flag used to mark that a mesh is using compressed attributes (vertices, normals, tangents, UVs). When this form of compression is enabled, vertex positions will be packed into an RGBA16UNORM attribute and scaled in the vertex shader. The normal and tangent will be packed into an RG16UNORM representing an axis, and a 16-bit float stored in the A-channel of the vertex. UVs will use 16-bit normalized floats instead of full 32-bit signed floats. When using this compression mode you must use either vertices, normals, and tangents or only vertices. You cannot use normals without tangents. Importers will automatically enable this compression if they can.
 		</constant>
+		<constant name="ARRAY_FLAG_USE_STORAGE_BUFFER" value="1073741824" enum="ArrayFormat" is_bitfield="true">
+			Flag used to mark that the surface's vertex, attribute, skin, and index buffers must be created with the storage-buffer usage bit so they can be bound as storage buffers in compute shaders. This is required to write into them from a compute pipeline. Has no effect on the OpenGL backend, which does not expose [RenderingDevice] [RID]s.
+		</constant>
 		<constant name="ARRAY_FLAG_FORMAT_VERSION_BASE" value="35" enum="ArrayFormat" is_bitfield="true">
 			Flag used to mark the start of the bits used to store the mesh version.
 		</constant>
@@ -5159,7 +5162,7 @@
 		</constant>
 		<constant name="VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL" value="4" enum="ViewportScaling3DMode">
 			Use MetalFX temporal upscaling for the viewport's 3D buffer. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values less than [code]1.0[/code] will result in the viewport being upscaled using MetalFX. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] will use MetalFX at native resolution as a TAA solution.
-				[b]Note:[/b] Only supported when the Metal rendering driver is in use, which limits this scaling mode to macOS and iOS.
+			[b]Note:[/b] Only supported when the Metal rendering driver is in use, which limits this scaling mode to macOS and iOS.
 		</constant>
 		<constant name="VIEWPORT_SCALING_3D_MODE_NEAREST" value="5" enum="ViewportScaling3DMode">
 			Use nearest-neighbor filtering for the viewport's 3D buffer. This looks crisper than [constant VIEWPORT_SCALING_3D_MODE_BILINEAR] and has no additional rendering cost. The amount of scaling can be set using [member Viewport.scaling_3d_scale]. Values greater than [code]1.0[/code] are not supported and bilinear downsampling will be used instead. A value of [code]1.0[/code] disables scaling.
@@ -5433,19 +5436,19 @@
 			Internal buffer is drawn instead of regular scene so you can see the per-pixel output that will be used by post-processing effects.
 			[b]Note:[/b] Only supported when using the Forward+ or Mobile rendering methods.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="29" enum="ViewportDebugDraw">
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO" value="27" enum="ViewportDebugDraw">
 			Displays the diffuse albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="30" enum="ViewportDebugDraw">
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO" value="28" enum="ViewportDebugDraw">
 			Displays the specular albedo input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="31" enum="ViewportDebugDraw">
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="29" enum="ViewportDebugDraw">
 			Displays the packed normal and roughness input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="32" enum="ViewportDebugDraw">
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="30" enum="ViewportDebugDraw">
 			Displays the specular ray hit distance input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="33" enum="ViewportDebugDraw">
+		<constant name="VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="31" enum="ViewportDebugDraw">
 			Displays the depth buffer reconstructed by NVIDIA DLSS Ray Reconstruction after denoising. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
 		<constant name="VIEWPORT_VRS_DISABLED" value="0" enum="ViewportVRSMode">

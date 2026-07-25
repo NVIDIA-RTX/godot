@@ -211,13 +211,13 @@ bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout 
 
 	return rayQueryGetIntersectionTypeEXT(shadow_rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
 #elif defined(USE_SER)
-	hitObjectEXT hitObject;
-	hitObjectTraceRayEXT(hitObject, tlas,
+	hitObjectNV hitObject;
+	hitObjectTraceRayNV(hitObject, tlas,
 			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
 			0xFF, 0, 0, 0,
 			origin, 0.001, direction, max_dist - 0.001, 0);
 
-	return !(hitObjectIsHitEXT(hitObject));
+	return !(hitObjectIsHitNV(hitObject));
 #else
 	/// The miss shader writes radiance = vec3(1.0) for shadow rays (visible).
 	/// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).

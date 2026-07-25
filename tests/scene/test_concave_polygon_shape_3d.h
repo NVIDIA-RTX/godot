@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  test_concave_polygon_shape_3d.cpp                                     */
+/*  test_concave_polygon_shape_3d.h                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,14 +28,13 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "tests/test_macros.h"
+#pragma once
 
-TEST_FORCE_LINK(test_concave_polygon_shape_3d)
+#include "tests/test_macros.h"
 
 #ifndef PHYSICS_3D_DISABLED
 
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
-#include "tests/signal_watcher.h"
 
 #include "modules/godot_physics_3d/godot_shape_3d.h"
 

@@ -276,6 +276,9 @@ thirdparty/swappy-frame-pacing/armeabi-v7a/abi.json
 thirdparty/swappy-frame-pacing/x86/abi.json
 thirdparty/swappy-frame-pacing/x86_64/abi.json
 
+# NVIDIA Nsight Aftermath SDK (fetched at build time)
+thirdparty/aftermath/
+
 # Visual Studio 2015/2017 cache/options directory
 .vs/
 
