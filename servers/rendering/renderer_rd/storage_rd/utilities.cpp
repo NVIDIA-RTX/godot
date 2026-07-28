@@ -341,3 +341,18 @@ uint32_t Utilities::get_maximum_shader_varyings() const {
 uint64_t Utilities::get_maximum_uniform_buffer_size() const {
 	return RenderingDevice::get_singleton()->limit_get(RenderingDevice::LIMIT_MAX_UNIFORM_BUFFER_SIZE);
 }
+
+void Utilities::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
+	TextureStorage::get_singleton()->resource_debug_usage(r_info);
+	MeshStorage::get_singleton()->resource_debug_usage(r_info);
+
+	Vector<RD::MemoryUsage> usage_details = RD::get_singleton()->get_memory_usage_details(RD::MEMORY_TOTAL, true);
+	for (const RD::MemoryUsage &usage : usage_details) {
+		RS::ResourceInfo info;
+		info.path = usage.name;
+		info.type = usage.type;
+		info.format = usage.format;
+		info.vram = usage.vram;
+		r_info->push_back(info);
+	}
+}

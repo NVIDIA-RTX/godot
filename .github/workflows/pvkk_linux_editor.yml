@@ -1,0 +1,53 @@
+name: 🐧 PVKK Linux Editor Build
+
+on:
+  workflow_dispatch:
+
+env:
+  SCONS_FLAGS: >-
+    arch=x86_64
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            scons \
+            pkg-config \
+            libx11-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libgl1-mesa-dev \
+            libglu-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libudev-dev \
+            libxi-dev \
+            libxrandr-dev \
+            yasm
+
+      - name: Build Godot (Linux Editor)
+        run: |
+          scons platform=linuxbsd target=editor $SCONS_FLAGS -j$(nproc)
+
+      - name: Prepare artifact
+        run: |
+          strip bin/godot.linuxbsd.editor.x86_64
+          chmod +x bin/godot.linuxbsd.editor.x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-linux-editor
+          path: bin/godot.linuxbsd.editor.x86_64

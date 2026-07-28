@@ -48,7 +48,6 @@ public:
 		// use xr interface to override camera positioning and projection matrices and control output
 		bool use_xr = false;
 
-		Size2i internal_size;
 		Size2i size;
 		uint32_t view_count;
 		RID camera;
@@ -65,7 +64,6 @@ public:
 		uint32_t jitter_phase_count = 0;
 		RS::ViewportUpdateMode update_mode = RenderingServer::VIEWPORT_UPDATE_WHEN_VISIBLE;
 		RID render_target;
-		RID render_target_texture;
 		Ref<RenderSceneBuffers> render_buffers;
 
 		RS::ViewportMSAA msaa_2d = RenderingServer::VIEWPORT_MSAA_DISABLED;
@@ -74,6 +72,9 @@ public:
 		bool use_taa = false;
 		bool use_debanding = false;
 		bool force_motion_vectors = false;
+
+		RID shared_viewport;
+		uint32_t sharing_to_viewport_count = 0;
 
 		RendererSceneRender::CameraData prev_camera_data;
 		uint64_t prev_camera_data_frame = 0;
@@ -305,6 +306,10 @@ public:
 	void viewport_set_vrs_mode(RID p_viewport, RS::ViewportVRSMode p_mode);
 	void viewport_set_vrs_update_mode(RID p_viewport, RS::ViewportVRSUpdateMode p_mode);
 	void viewport_set_vrs_texture(RID p_viewport, RID p_texture);
+
+	void viewport_set_shared_viewport(RID p_viewport, RID p_shared_viewport);
+	RID viewport_get_shared_viewport(RID p_viewport);
+	uint32_t viewport_get_sharing_to_viewport_count(RID p_viewport) const;
 
 	void handle_timestamp(String p_timestamp, uint64_t p_cpu_time, uint64_t p_gpu_time);
 

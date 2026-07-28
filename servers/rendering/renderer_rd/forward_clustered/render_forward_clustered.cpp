@@ -744,7 +744,7 @@ uint32_t RenderForwardClustered::_setup_environment(const RenderDataRD *p_render
 			scene_state.ubo.gi_upscale_for_msaa = true;
 		}
 
-		if (rd->has_custom_data(RB_SCOPE_FOG)) {
+		if (rd->has_custom_data(RB_SCOPE_FOG) && env.is_valid() && environment_get_volumetric_fog_enabled(env)) {
 			Ref<RendererRD::Fog::VolumetricFog> fog = rd->get_custom_data(RB_SCOPE_FOG);
 
 			scene_state.ubo.volumetric_fog_enabled = true;
@@ -1366,7 +1366,7 @@ void RenderForwardClustered::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_
 	if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
 		Ref<RendererRD::Fog::VolumetricFog> fog = p_render_buffers->get_custom_data(RB_SCOPE_FOG);
 		//validate
-		if (p_environment.is_null() || !environment_get_volumetric_fog_enabled(p_environment) || fog->width != target_width || fog->height != target_height || fog->depth != get_volumetric_fog_depth()) {
+		if (fog->width != target_width || fog->height != target_height || fog->depth != get_volumetric_fog_depth()) {
 			p_render_buffers->set_custom_data(RB_SCOPE_FOG, Ref<RenderBufferCustomDataRD>());
 		}
 	}
@@ -2201,7 +2201,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	float sky_brightness_multiplier = 1.0;
 
 	Color clear_color;
-	bool load_color = false;
+	bool load_color = p_render_data->load_color_and_depth;
+	bool load_depth = p_render_data->load_color_and_depth;
 
 	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_OVERDRAW) {
 		clear_color = Color(0, 0, 0, 1); //in overdraw mode, BG should always be black
@@ -2221,7 +2222,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 				clear_color.r *= bg_energy_multiplier;
 				clear_color.g *= bg_energy_multiplier;
 				clear_color.b *= bg_energy_multiplier;
-				if (!p_render_data->transparent_bg && (rb->has_custom_data(RB_SCOPE_FOG) || environment_get_fog_enabled(p_render_data->environment))) {
+				if (!p_render_data->transparent_bg && (environment_get_volumetric_fog_enabled(p_render_data->environment) || environment_get_fog_enabled(p_render_data->environment))) {
 					draw_sky_fog_only = true;
 					RendererRD::MaterialStorage::get_singleton()->material_set_param(sky.sky_scene_state.fog_material, "clear_color", Variant(clear_color.srgb_to_linear()));
 				}
@@ -2231,7 +2232,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 				clear_color.r *= bg_energy_multiplier;
 				clear_color.g *= bg_energy_multiplier;
 				clear_color.b *= bg_energy_multiplier;
-				if (!p_render_data->transparent_bg && (rb->has_custom_data(RB_SCOPE_FOG) || environment_get_fog_enabled(p_render_data->environment))) {
+				if (!p_render_data->transparent_bg && (environment_get_volumetric_fog_enabled(p_render_data->environment) || environment_get_fog_enabled(p_render_data->environment))) {
 					draw_sky_fog_only = true;
 					RendererRD::MaterialStorage::get_singleton()->material_set_param(sky.sky_scene_state.fog_material, "clear_color", Variant(clear_color.srgb_to_linear()));
 				}
@@ -2315,9 +2316,12 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RENDER_TIMESTAMP("Render Depth Pre-Pass");
 		}
 		if (needs_pre_resolve) {
-			//pre clear the depth framebuffer, as AMD (and maybe others?) use compute for it, and barrier other compute shaders.
-			RD::get_singleton()->draw_list_begin(depth_framebuffer, RD::DRAW_CLEAR_ALL, depth_pass_clear, 0.0f);
-			RD::get_singleton()->draw_list_end();
+			if (!load_depth) {
+				//pre clear the depth framebuffer, as AMD (and maybe others?) use compute for it, and barrier other compute shaders.
+				RD::get_singleton()->draw_list_begin(depth_framebuffer, RD::DRAW_CLEAR_ALL, depth_pass_clear, 0.0f);
+				RD::get_singleton()->draw_list_end();
+			}
+
 			//start compute processes here, so they run at the same time as depth pre-pass
 			_post_prepass_render(p_render_data, using_sdfgi || using_voxelgi);
 		}
@@ -2328,7 +2332,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		bool finish_depth = using_ssao || using_ssil || using_sdfgi || using_voxelgi || ce_pre_opaque_resolved_depth || ce_post_opaque_resolved_depth;
 		RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, depth_pass_mode, 0, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-		_render_list_with_draw_list(&render_list_params, depth_framebuffer, RD::DrawFlags(needs_pre_resolve ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_ALL), depth_pass_clear, 0.0f, 0u, p_render_data->render_region);
+		_render_list_with_draw_list(&render_list_params, depth_framebuffer, RD::DrawFlags(needs_pre_resolve || load_depth ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_ALL), depth_pass_clear, 0.0f, 0u, p_render_data->render_region);
 
 		RD::get_singleton()->draw_command_end_label();
 
@@ -2412,7 +2416,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RD::get_singleton()->draw_command_end_label();
 
-		if (using_motion_pass) {
+		if (using_motion_pass && !load_depth) {
 			if (scale_type == SCALE_3D_MFX) {
 				motion_vectors_store->process(rb,
 						p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform,
@@ -2613,6 +2617,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	}
 
 	RD::get_singleton()->draw_command_end_label();
+
+	if (p_render_data->skip_post_and_tonemap) {
+		return;
+	}
 
 	RENDER_TIMESTAMP("Resolve");
 
@@ -3739,7 +3747,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.binding = 33;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		RID vfog;
-		if (rb_data.is_valid() && rb->has_custom_data(RB_SCOPE_FOG)) {
+		if (rb_data.is_valid() && rb->has_custom_data(RB_SCOPE_FOG) && environment_get_volumetric_fog_enabled(p_render_data->environment)) {
 			Ref<RendererRD::Fog::VolumetricFog> fog = rb->get_custom_data(RB_SCOPE_FOG);
 			vfog = fog->fog_map;
 			if (vfog.is_null()) {

@@ -68,7 +68,7 @@ private:
 	int h = 0;
 	mutable Ref<BitMap> alpha_cache;
 
-	Error _load_data(const String &p_path, int &r_width, int &r_height, Ref<Image> &image, bool &r_request_3d, bool &r_request_normal, bool &r_request_roughness, int &mipmap_limit, int p_size_limit = 0);
+	Error _load_data(const String &p_path, int &r_width, int &r_height, Ref<Image> &image, bool &r_request_3d, bool &r_request_normal, bool &r_request_roughness, int &mipmap_limit, int p_size_limit = 0, int p_mip_skip = 0);
 	virtual void reload_from_file() override;
 
 	static void _requested_3d(void *p_ud);
@@ -80,6 +80,8 @@ protected:
 
 public:
 	static Ref<Image> load_image_from_file(Ref<FileAccess> p_file, int p_size_limit);
+
+	static void update_all_mipmap_skip();
 
 	typedef void (*TextureFormatRequestCallback)(const Ref<CompressedTexture2D> &);
 	typedef void (*TextureFormatRoughnessRequestCallback)(const Ref<CompressedTexture2D> &, const String &p_normal_path, RS::TextureDetectRoughnessChannel p_roughness_channel);

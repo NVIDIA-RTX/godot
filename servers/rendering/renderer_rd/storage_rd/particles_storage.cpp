@@ -549,6 +549,7 @@ void ParticlesStorage::_particles_allocate_emission_buffer(Particles *particles)
 	particles->emission_buffer->particle_max = particles->amount;
 
 	particles->emission_storage_buffer = RD::get_singleton()->storage_buffer_create(particles->emission_buffer_data.size(), particles->emission_buffer_data);
+	RD::get_singleton()->set_resource_name(particles->emission_storage_buffer, "Particles Emission");
 
 	if (RD::get_singleton()->uniform_set_is_valid(particles->particles_material_uniform_set)) {
 		//will need to be re-created
@@ -1238,6 +1239,7 @@ void ParticlesStorage::particles_set_view_axis(RID p_particles, const Vector3 &p
 		}
 		size *= sizeof(float) * 2;
 		particles->particles_sort_buffer = RD::get_singleton()->storage_buffer_create(size);
+		RD::get_singleton()->set_resource_name(particles->particles_sort_buffer, "Particles Sort");
 
 		{
 			Vector<RD::Uniform> uniforms;
@@ -1374,6 +1376,7 @@ void ParticlesStorage::_particles_update_buffers(Particles *particles) {
 		if (particles->particle_buffer.is_null()) {
 			particles->particle_buffer = RD::get_singleton()->storage_buffer_create((sizeof(ParticleData) + userdata_count * sizeof(float) * 4) * total_amount);
 			particles->userdata_count = userdata_count;
+			RD::get_singleton()->set_resource_name(particles->particle_buffer, "Particles Data");
 		}
 
 		PackedByteArray data;
@@ -1386,6 +1389,7 @@ void ParticlesStorage::_particles_update_buffers(Particles *particles) {
 		data.resize_initialized(particle_instance_buffer_size);
 
 		particles->particle_instance_buffer = RD::get_singleton()->storage_buffer_create(particle_instance_buffer_size, data);
+		RD::get_singleton()->set_resource_name(particles->particle_instance_buffer, "Particles Instance");
 
 		{
 			Vector<RD::Uniform> uniforms;
@@ -1501,11 +1505,13 @@ void ParticlesStorage::update_particles() {
 					RD::get_singleton()->free_rid(particles->frame_params_buffer);
 				}
 				particles->frame_params_buffer = RD::get_singleton()->storage_buffer_create(sizeof(ParticlesFrameParams) * trail_steps);
+				RD::get_singleton()->set_resource_name(particles->frame_params_buffer, "Particles Frame Parameters");
 			}
 
 			if (particles->trail_bind_poses.size() > 1 && particles->trail_bind_pose_buffer.is_null()) {
 				particles->trail_bind_pose_buffer = RD::get_singleton()->storage_buffer_create(sizeof(float) * 16 * particles->trail_bind_poses.size());
 				particles->trail_bind_poses_dirty = true;
+				RD::get_singleton()->set_resource_name(particles->trail_bind_pose_buffer, "Particles Trail Bind Poses");
 			}
 
 			if (particles->trail_bind_pose_uniform_set.is_null()) {

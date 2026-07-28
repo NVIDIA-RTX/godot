@@ -185,6 +185,7 @@ private:
 		RDG::ResourceTracker *draw_tracker = nullptr;
 		int32_t transfer_worker_index = -1;
 		uint64_t transfer_worker_operation = 0;
+		bool has_initial_data = false;
 	};
 
 	Buffer *_get_buffer_from_owner(RID p_buffer);
@@ -358,14 +359,8 @@ public:
 
 		Vector<DataFormat> allowed_shared_formats;
 
-		bool is_resolve_buffer = false;
-		bool is_discardable = false;
-		bool has_initial_data = false;
-		bool pending_clear = false;
-
 		BitField<RDD::TextureAspectBits> read_aspect_flags = {};
 		BitField<RDD::TextureAspectBits> barrier_aspect_flags = {};
-		bool bound = false; // Bound to framebuffer.
 		RID owner;
 
 		RDG::ResourceTracker *draw_tracker = nullptr;
@@ -373,6 +368,13 @@ public:
 		SharedFallback *shared_fallback = nullptr;
 		int32_t transfer_worker_index = -1;
 		uint64_t transfer_worker_operation = 0;
+
+		bool is_resolve_buffer = false;
+		bool is_discardable = false;
+		bool has_initial_data = false;
+		bool pending_clear = false;
+		bool from_extension = false;
+		bool bound = false; // Bound to framebuffer.
 
 		RDD::TextureSubresourceRange barrier_range() const {
 			RDD::TextureSubresourceRange r;
@@ -468,6 +470,8 @@ public:
 	bool texture_is_valid(RID p_texture);
 	TextureFormat texture_get_format(RID p_texture);
 	Size2i texture_size(RID p_texture);
+	uint64_t texture_get_memory_usage(RID p_texture);
+
 #ifndef DISABLE_DEPRECATED
 	uint64_t texture_get_native_handle(RID p_texture);
 #endif
@@ -1911,9 +1915,7 @@ public:
 	template <typename T>
 	void _free_rids(T &p_owner, const char *p_type);
 
-#ifdef DEV_ENABLED
 	HashMap<RID, String> resource_names;
-#endif
 
 public:
 	Error initialize(RenderingContextDriver *p_context, DisplayServer::WindowID p_main_window = DisplayServer::INVALID_WINDOW_ID);
@@ -1959,6 +1961,16 @@ public:
 	};
 
 	uint64_t get_memory_usage(MemoryType p_type) const;
+
+	struct MemoryUsage {
+		String name;
+		String type;
+		String format;
+		uint64_t vram;
+	};
+
+	// When dynamic resources only is specified, resources that were initialized with data are excluded from the report.
+	Vector<MemoryUsage> get_memory_usage_details(MemoryType p_type, bool p_dynamic_resources_only);
 
 	RenderingDevice *create_local_device();
 

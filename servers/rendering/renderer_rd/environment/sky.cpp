@@ -1147,7 +1147,7 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 
 	// Setup fog variables.
 	sky_scene_state.ubo.volumetric_fog_enabled = false;
-	if (p_render_data->render_buffers->has_custom_data(RB_SCOPE_FOG)) {
+	if (p_render_data->render_buffers->has_custom_data(RB_SCOPE_FOG) && RendererSceneRenderRD::get_singleton()->environment_get_volumetric_fog_enabled(p_render_data->environment)) {
 		Ref<RendererRD::Fog::VolumetricFog> fog = p_render_data->render_buffers->get_custom_data(RB_SCOPE_FOG);
 		sky_scene_state.ubo.volumetric_fog_enabled = true;
 
@@ -1173,7 +1173,7 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 
 	Projection correction;
 	correction.set_depth_correction(p_render_data->scene_data->flip_y, true);
-	correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+	correction.add_jitter_offset(p_render_data->scene_data->taa_jitter * Vector2(1, -1));
 
 	Projection projection = p_render_data->scene_data->cam_projection;
 	if (p_render_data->scene_data->cam_frustum) {
@@ -1602,6 +1602,8 @@ void SkyRD::update_dirty_skys() {
 
 				sky->reflection.update_reflection_data(w, MIN(mipmaps, layers), false, sky->radiance, 0, use_realtime, roughness_layers, texture_format, sky->uv_border_size);
 			}
+
+			RD::get_singleton()->set_resource_name(sky->radiance, "Sky Radiance");
 		}
 
 		sky->reflection.dirty = true;

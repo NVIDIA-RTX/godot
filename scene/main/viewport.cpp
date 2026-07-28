@@ -1379,7 +1379,7 @@ void Viewport::_update_canvas_items(Node *p_node) {
 
 Ref<ViewportTexture> Viewport::get_texture() const {
 	ERR_READ_THREAD_GUARD_V(Ref<ViewportTexture>());
-	return default_texture;
+	return shared_viewport != nullptr ? shared_viewport->get_texture() : default_texture;
 }
 
 void Viewport::set_positional_shadow_atlas_size(int p_size) {
@@ -4915,6 +4915,18 @@ float Viewport::get_fsr_sharpness() const {
 	return fsr_sharpness;
 }
 
+void Viewport::set_shared_viewport(Viewport *p_shared_viewport) {
+	ERR_MAIN_THREAD_GUARD;
+
+	shared_viewport = p_shared_viewport;
+	RS::get_singleton()->viewport_set_shared_viewport(viewport, p_shared_viewport != nullptr ? p_shared_viewport->get_viewport_rid() : RID());
+}
+
+Viewport *Viewport::get_shared_viewport() const {
+	ERR_READ_THREAD_GUARD_V(nullptr);
+	return shared_viewport;
+}
+
 void Viewport::set_texture_mipmap_bias(float p_texture_mipmap_bias) {
 	ERR_MAIN_THREAD_GUARD;
 	if (texture_mipmap_bias == p_texture_mipmap_bias) {
@@ -5151,6 +5163,9 @@ void Viewport::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fsr_sharpness", "fsr_sharpness"), &Viewport::set_fsr_sharpness);
 	ClassDB::bind_method(D_METHOD("get_fsr_sharpness"), &Viewport::get_fsr_sharpness);
 
+	ClassDB::bind_method(D_METHOD("set_shared_viewport", "shared_viewport"), &Viewport::set_shared_viewport);
+	ClassDB::bind_method(D_METHOD("get_shared_viewport"), &Viewport::get_shared_viewport);
+
 	ClassDB::bind_method(D_METHOD("set_texture_mipmap_bias", "texture_mipmap_bias"), &Viewport::set_texture_mipmap_bias);
 	ClassDB::bind_method(D_METHOD("get_texture_mipmap_bias"), &Viewport::get_texture_mipmap_bias);
 
@@ -5204,6 +5219,7 @@ void Viewport::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "texture_mipmap_bias", PROPERTY_HINT_RANGE, "-2,2,0.001"), "set_texture_mipmap_bias", "get_texture_mipmap_bias");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "anisotropic_filtering_level", PROPERTY_HINT_ENUM, String::utf8("Disabled (Fastest),2× (Faster),4× (Fast),8× (Average),16x (Slow)")), "set_anisotropic_filtering_level", "get_anisotropic_filtering_level");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fsr_sharpness", PROPERTY_HINT_RANGE, "0,2,0.1"), "set_fsr_sharpness", "get_fsr_sharpness");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "shared_viewport", PROPERTY_HINT_RESOURCE_TYPE, "Viewport"), "set_shared_viewport", "get_shared_viewport");
 	ADD_GROUP("Variable Rate Shading", "vrs_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "vrs_mode", PROPERTY_HINT_ENUM, "Disabled,Texture,XR"), "set_vrs_mode", "get_vrs_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "vrs_update_mode", PROPERTY_HINT_ENUM, "Disabled,Once,Always"), "set_vrs_update_mode", "get_vrs_update_mode");

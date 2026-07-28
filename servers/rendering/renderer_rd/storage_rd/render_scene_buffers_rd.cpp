@@ -166,6 +166,7 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 	fsr_sharpness = p_config->get_fsr_sharpness();
 	texture_mipmap_bias = p_config->get_texture_mipmap_bias();
 	anisotropic_filtering_level = p_config->get_anisotropic_filtering_level();
+	jitter_phase_count = p_config->get_jitter_phase_count();
 	use_taa = p_config->get_use_taa();
 	use_debanding = p_config->get_use_debanding();
 
@@ -557,6 +558,7 @@ void RenderSceneBuffersRD::allocate_blur_textures() {
 
 			// create weight texture
 			weight_buffers[i].weight = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(weight_buffers[i].weight, "RenderBuffers Weight");
 
 			// create frame buffer
 			Vector<RID> fb;

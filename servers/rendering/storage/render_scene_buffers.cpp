@@ -88,6 +88,14 @@ void RenderSceneBuffersExtension::configure(const RenderSceneBuffersConfiguratio
 	GDVIRTUAL_CALL(_configure, p_config);
 }
 
+Size2i RenderSceneBuffersExtension::get_internal_size() const {
+	return Size2i();
+}
+
+uint32_t RenderSceneBuffersExtension::get_jitter_phase_count() const {
+	return 0;
+}
+
 void RenderSceneBuffersExtension::set_fsr_sharpness(float p_fsr_sharpness) {
 	GDVIRTUAL_CALL(_set_fsr_sharpness, p_fsr_sharpness);
 }

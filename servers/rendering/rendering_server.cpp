@@ -53,24 +53,6 @@ RenderingServer *RenderingServer::create() {
 	return nullptr;
 }
 
-Array RenderingServer::_texture_debug_usage_bind() {
-	List<TextureInfo> list;
-	texture_debug_usage(&list);
-	Array arr;
-	for (const TextureInfo &E : list) {
-		Dictionary dict;
-		dict["texture"] = E.texture;
-		dict["width"] = E.width;
-		dict["height"] = E.height;
-		dict["depth"] = E.depth;
-		dict["format"] = E.format;
-		dict["bytes"] = E.bytes;
-		dict["path"] = E.path;
-		arr.push_back(dict);
-	}
-	return arr;
-}
-
 static PackedInt64Array to_int_array(const Vector<ObjectID> &ids) {
 	PackedInt64Array a;
 	a.resize(ids.size());
@@ -3715,6 +3697,8 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/textures/vram_compression/cache_gpu_compressor", true);
 
 	GLOBAL_DEF("rendering/textures/lossless_compression/force_png", false);
+
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/textures/vram_compression/runtime_mipmap_skip", PROPERTY_HINT_RANGE, "0,4,1"), 0);
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/webp_compression/compression_method", PROPERTY_HINT_RANGE, "0,6,1"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/textures/webp_compression/lossless_compression_factor", PROPERTY_HINT_RANGE, "0,100,1"), 25);

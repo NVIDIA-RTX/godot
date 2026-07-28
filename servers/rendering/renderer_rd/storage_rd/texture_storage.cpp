@@ -1698,40 +1698,6 @@ void TextureStorage::texture_set_detect_roughness_callback(RID p_texture, RS::Te
 	tex->detect_roughness_callback = p_callback;
 }
 
-void TextureStorage::texture_debug_usage(List<RS::TextureInfo> *r_info) {
-	for (const RID &rid : texture_owner.get_owned_list()) {
-		Texture *t = texture_owner.get_or_null(rid);
-		if (!t) {
-			continue;
-		}
-		RS::TextureInfo tinfo;
-		tinfo.path = t->path;
-		tinfo.format = t->format;
-		tinfo.width = t->width;
-		tinfo.height = t->height;
-		tinfo.bytes = Image::get_image_data_size(t->width, t->height, t->format, t->mipmaps > 1);
-		tinfo.type = static_cast<RenderingServer::TextureType>(t->type);
-
-		switch (t->type) {
-			case TextureType::TYPE_3D:
-				tinfo.depth = t->depth;
-				tinfo.bytes *= t->depth;
-				break;
-
-			case TextureType::TYPE_LAYERED:
-				tinfo.depth = t->layers;
-				tinfo.bytes *= t->layers;
-				break;
-
-			default:
-				tinfo.depth = 0;
-				break;
-		}
-
-		r_info->push_back(tinfo);
-	}
-}
-
 void TextureStorage::texture_set_force_redraw_if_visible(RID p_texture, bool p_enable) {
 }
 
@@ -3171,6 +3137,7 @@ void TextureStorage::update_decal_atlas() {
 	tformat.shareable_formats.push_back(RD::DATA_FORMAT_R8G8B8A8_SRGB);
 
 	decal_atlas.texture = RD::get_singleton()->texture_create(tformat, RD::TextureView());
+	RD::get_singleton()->set_resource_name(decal_atlas.texture, "Decal Atlas");
 	RD::get_singleton()->texture_clear(decal_atlas.texture, Color(0, 0, 0, 0), 0, decal_atlas.mipmaps, 0, 1);
 
 	{
@@ -3311,6 +3278,7 @@ void TextureStorage::set_max_decals(const uint32_t p_max_decals) {
 	decals = memnew_arr(DecalData, max_decals);
 	decal_sort = memnew_arr(DecalInstanceSort, max_decals);
 	decal_buffer = RD::get_singleton()->storage_buffer_create(decal_buffer_size);
+	RD::get_singleton()->set_resource_name(decal_buffer, "Decal Data");
 }
 
 void TextureStorage::update_decal_buffer(const PagedArray<RID> &p_decals, const Transform3D &p_camera_xform) {
@@ -4552,5 +4520,37 @@ uint32_t TextureStorage::render_target_get_color_usage_bits(bool p_msaa) {
 	} else {
 		// FIXME: Storage bit should only be requested when FSR is required.
 		return RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+	}
+}
+
+void TextureStorage::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
+	for (const RID &rid : texture_owner.get_owned_list()) {
+		Texture *texture = texture_owner.get_or_null(rid);
+		if (texture == nullptr || texture->rd_texture.is_null() || texture->is_render_target || texture->is_proxy || RD::get_singleton()->texture_is_shared(texture->rd_texture)) {
+			continue;
+		}
+
+		RS::ResourceInfo info;
+		info.path = texture->path;
+		info.vram = RD::get_singleton()->texture_get_memory_usage(texture->rd_texture);
+
+		switch (texture->type) {
+			case TYPE_2D:
+				info.type = "Texture2D";
+				info.format = itos(texture->width) + "x" + itos(texture->height) + " " + Image::get_format_name(texture->format);
+				break;
+			case TYPE_LAYERED:
+				info.type = "TextureLayered";
+				info.format = itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->layers) + " " + Image::get_format_name(texture->format);
+				break;
+			case TYPE_3D:
+				info.type = "Texture3D";
+				info.format = itos(texture->width) + "x" + itos(texture->height) + "x" + itos(texture->depth) + " " + Image::get_format_name(texture->format);
+				break;
+			default:
+				break;
+		}
+
+		r_info->push_back(info);
 	}
 }

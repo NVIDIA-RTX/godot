@@ -94,6 +94,7 @@ private:
 	// Aliasing settings
 	RS::ViewportMSAA msaa_3d = RS::VIEWPORT_MSAA_DISABLED;
 	RS::ViewportScreenSpaceAA screen_space_aa = RS::VIEWPORT_SCREEN_SPACE_AA_DISABLED;
+	uint32_t jitter_phase_count = 0;
 	bool use_taa = false;
 	bool use_debanding = false;
 	RD::TextureSamples texture_samples = RD::TEXTURE_SAMPLES_1;
@@ -236,7 +237,6 @@ public:
 
 	_FORCE_INLINE_ RID get_render_target() const { return render_target; }
 	_FORCE_INLINE_ uint32_t get_view_count() const { return view_count; }
-	_FORCE_INLINE_ Size2i get_internal_size() const { return internal_size; }
 	_FORCE_INLINE_ Size2i get_target_size() const { return target_size; }
 	_FORCE_INLINE_ RS::ViewportScaling3DMode get_scaling_3d_mode() const { return scaling_3d_mode; }
 	_FORCE_INLINE_ float get_fsr_sharpness() const { return fsr_sharpness; }
@@ -246,6 +246,9 @@ public:
 	_FORCE_INLINE_ RS::ViewportScreenSpaceAA get_screen_space_aa() const { return screen_space_aa; }
 	_FORCE_INLINE_ bool get_use_taa() const { return use_taa; }
 	_FORCE_INLINE_ bool get_use_debanding() const { return use_debanding; }
+
+	virtual Size2i get_internal_size() const override { return internal_size; }
+	virtual uint32_t get_jitter_phase_count() const override { return jitter_phase_count; }
 
 	uint64_t get_auto_exposure_version() const { return auto_exposure_version; }
 	void set_auto_exposure_version(const uint64_t p_auto_exposure_version) { auto_exposure_version = p_auto_exposure_version; }

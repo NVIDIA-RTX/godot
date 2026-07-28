@@ -1261,6 +1261,19 @@ void fragment_shader(in SceneData scene_data) {
 	float normal_map_depth = 1.0;
 
 	vec2 screen_uv = gl_FragCoord.xy * scene_data.screen_pixel_size;
+	vec4 volumetric_fog = vec4(0.0);
+
+#ifndef MODE_RENDER_DEPTH
+#ifndef FOG_DISABLED
+	if (implementation_data.volumetric_fog_enabled) {
+#ifdef USE_MULTIVIEW
+		volumetric_fog = volumetric_fog_process(combined_uv, -vertex.z);
+#else
+		volumetric_fog = volumetric_fog_process(screen_uv, -vertex.z);
+#endif
+	}
+#endif
+#endif
 
 	float sss_strength = 0.0;
 
@@ -1466,11 +1479,6 @@ void fragment_shader(in SceneData scene_data) {
 	}
 
 	if (implementation_data.volumetric_fog_enabled) {
-#ifdef USE_MULTIVIEW
-		vec4 volumetric_fog = volumetric_fog_process(combined_uv, -vertex.z);
-#else
-		vec4 volumetric_fog = volumetric_fog_process(screen_uv, -vertex.z);
-#endif
 		vec4 res = vec4(0.0);
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_USE_FOG)) {
 			//must use the full blending equation here to blend fogs

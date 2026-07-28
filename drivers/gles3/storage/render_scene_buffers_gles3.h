@@ -108,6 +108,9 @@ public:
 	virtual void set_use_debanding(bool p_use_debanding) override {}
 	void set_apply_color_adjustments_in_post(bool p_apply_in_post);
 
+	virtual Size2i get_internal_size() const override { return internal_size; }
+	virtual uint32_t get_jitter_phase_count() const override { return 0; }
+
 	void free_render_buffer_data();
 
 	void check_backbuffer(bool p_need_color, bool p_need_depth); // Check if we need to initialize our backbuffer.
@@ -152,7 +155,6 @@ public:
 
 	_FORCE_INLINE_ RID get_render_target() const { return render_target; }
 	_FORCE_INLINE_ uint32_t get_view_count() const { return view_count; }
-	_FORCE_INLINE_ Size2i get_internal_size() const { return internal_size; }
 	_FORCE_INLINE_ Size2i get_target_size() const { return target_size; }
 	_FORCE_INLINE_ RS::ViewportScaling3DMode get_scaling_3d_mode() const { return scaling_3d_mode; }
 	//_FORCE_INLINE_ float get_fsr_sharpness() const { return fsr_sharpness; }

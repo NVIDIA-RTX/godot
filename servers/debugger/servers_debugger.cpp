@@ -44,7 +44,7 @@ Array ServersDebugger::ResourceUsage::serialize() {
 	infos.sort();
 
 	Array arr = { infos.size() * 4 };
-	for (const ResourceInfo &E : infos) {
+	for (const RS::ResourceInfo &E : infos) {
 		arr.push_back(E.path);
 		arr.push_back(E.format);
 		arr.push_back(E.type);
@@ -60,7 +60,7 @@ bool ServersDebugger::ResourceUsage::deserialize(const Array &p_arr) {
 	CHECK_SIZE(p_arr, 1 + size, "ResourceUsage");
 	uint32_t idx = 1;
 	while (idx < 1 + size) {
-		ResourceInfo info;
+		RS::ResourceInfo info;
 		info.path = p_arr[idx];
 		info.format = p_arr[idx + 1];
 		info.type = p_arr[idx + 2];
@@ -426,67 +426,13 @@ Error ServersDebugger::_capture(void *p_user, const String &p_cmd, const Array &
 
 void ServersDebugger::_send_resource_usage() {
 	ServersDebugger::ResourceUsage usage;
+	RS::get_singleton()->resource_debug_usage(&usage.infos);
 
-	List<RS::TextureInfo> tinfo;
-	RS::get_singleton()->texture_debug_usage(&tinfo);
-
-	for (const RS::TextureInfo &E : tinfo) {
-		ServersDebugger::ResourceInfo info;
-		info.path = E.path;
-		info.vram = E.bytes;
-		info.id = E.texture;
-
-		switch (E.type) {
-			case RS::TextureType::TEXTURE_TYPE_2D:
-				info.type = "Texture2D";
-				break;
-			case RS::TextureType::TEXTURE_TYPE_3D:
-				info.type = "Texture3D";
-				break;
-			case RS::TextureType::TEXTURE_TYPE_LAYERED:
-				info.type = "TextureLayered";
-				break;
-		}
-
+	for (RS::ResourceInfo &E : usage.infos) {
 		String possible_type = _get_resource_type_from_path(E.path);
 		if (!possible_type.is_empty()) {
-			info.type = possible_type;
+			E.type = possible_type;
 		}
-
-		if (E.depth == 0) {
-			info.format = itos(E.width) + "x" + itos(E.height) + " " + Image::get_format_name(E.format);
-		} else {
-			info.format = itos(E.width) + "x" + itos(E.height) + "x" + itos(E.depth) + " " + Image::get_format_name(E.format);
-		}
-		usage.infos.push_back(info);
-	}
-
-	List<RS::MeshInfo> mesh_info;
-	RS::get_singleton()->mesh_debug_usage(&mesh_info);
-
-	for (const RS::MeshInfo &E : mesh_info) {
-		ServersDebugger::ResourceInfo info;
-		info.path = E.path;
-		// We use 64-bit integers to avoid overflow, if for whatever reason, the sum is bigger than 4GB.
-		uint64_t vram = E.vertex_buffer_size + E.attribute_buffer_size + E.skin_buffer_size + E.index_buffer_size + E.blend_shape_buffer_size + E.lod_index_buffers_size;
-		// But can info.vram even hold that, and why is it an int instead of an uint?
-		info.vram = vram;
-
-		// Even though these empty meshes can be indicative of issues somewhere else
-		// for UX reasons, we don't want to show them.
-		if (vram == 0 && E.path.is_empty()) {
-			continue;
-		}
-
-		info.id = E.mesh;
-		info.type = "Mesh";
-		String possible_type = _get_resource_type_from_path(E.path);
-		if (!possible_type.is_empty()) {
-			info.type = possible_type;
-		}
-
-		info.format = itos(E.vertex_count) + " Vertices";
-		usage.infos.push_back(info);
 	}
 
 	EngineDebugger::get_singleton()->send_message("servers:memory_usage", usage.serialize());

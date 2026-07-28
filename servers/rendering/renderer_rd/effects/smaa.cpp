@@ -112,6 +112,7 @@ SMAA::SMAA() {
 		tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT;
 
 		smaa.search_tex = RD::get_singleton()->texture_create(tf, RD::TextureView(), Vector<Vector<unsigned char>>{ Image(search_tex_png).get_data() });
+		RD::get_singleton()->set_resource_name(smaa.search_tex, "SMAA Search");
 	}
 
 	{
@@ -123,6 +124,7 @@ SMAA::SMAA() {
 		tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT;
 
 		smaa.area_tex = RD::get_singleton()->texture_create(tf, RD::TextureView(), Vector<Vector<unsigned char>>{ Image(area_tex_png).get_data() });
+		RD::get_singleton()->set_resource_name(smaa.area_tex, "SMAA Area");
 	}
 
 	{

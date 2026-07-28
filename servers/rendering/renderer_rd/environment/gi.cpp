@@ -99,6 +99,9 @@ void GI::voxel_gi_allocate_data(RID p_voxel_gi, const Transform3D &p_to_cell_xfo
 		voxel_gi->data_buffer = RD::get_singleton()->storage_buffer_create(p_data_cells.size(), p_data_cells);
 		voxel_gi->data_buffer_size = p_data_cells.size();
 
+		RD::get_singleton()->set_resource_name(voxel_gi->octree_buffer, "VoxelGI Octree");
+		RD::get_singleton()->set_resource_name(voxel_gi->data_buffer, "VoxelGI Data");
+
 		if (p_distance_field.size()) {
 			RD::TextureFormat tf;
 			tf.format = RD::DATA_FORMAT_R8_UNORM;
@@ -586,6 +589,12 @@ void GI::SDFGI::create(RID p_env, const Vector3 &p_world_position, uint32_t p_re
 		cascade.solid_cell_dispatch_buffer_storage = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * 4, Vector<uint8_t>());
 		cascade.solid_cell_dispatch_buffer_call = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * 4, Vector<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
 		cascade.lights_buffer = RD::get_singleton()->storage_buffer_create(sizeof(SDFGIShader::Light) * MAX(SDFGI::MAX_STATIC_LIGHTS, SDFGI::MAX_DYNAMIC_LIGHTS));
+
+		RD::get_singleton()->set_resource_name(cascade.solid_cell_buffer, "SDFGI Cascade Solid Cell");
+		RD::get_singleton()->set_resource_name(cascade.solid_cell_dispatch_buffer_storage, "SDFGI Cascade Solid Cell Dispatch");
+		RD::get_singleton()->set_resource_name(cascade.solid_cell_dispatch_buffer_call, "SDFGI Cascade Solid Cell Call");
+		RD::get_singleton()->set_resource_name(cascade.lights_buffer, "SDFGI Cascade Lights");
+
 		{
 			Vector<RD::Uniform> uniforms;
 			{
@@ -2565,6 +2574,7 @@ void GI::VoxelGIInstance::update(bool p_update_light_instances, const Vector<RID
 				}
 
 				write_buffer = RD::get_singleton()->storage_buffer_create(total_elements * 16);
+				RD::get_singleton()->set_resource_name(write_buffer, "VoxelGI Write");
 			}
 
 			for (int i = 0; i < levels.size(); i++) {
@@ -3782,7 +3792,7 @@ void GI::setup_voxel_gi_instances(RenderDataRD *p_render_data, Ref<RenderSceneBu
 			rbgi->uniform_set[v] = RID();
 		}
 
-		if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
+		if (p_render_buffers->has_custom_data(RB_SCOPE_FOG) && RendererSceneRenderRD::get_singleton()->environment_get_volumetric_fog_enabled(p_render_data->environment)) {
 			// VoxelGI instances have changed, so we need to update volumetric fog.
 			Ref<RendererRD::Fog::VolumetricFog> fog = p_render_buffers->get_custom_data(RB_SCOPE_FOG);
 			fog->sync_gi_dependent_sets_validity(true);

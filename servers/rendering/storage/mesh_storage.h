@@ -77,8 +77,6 @@ public:
 	virtual void mesh_surface_remove(RID p_mesh, int p_surface) = 0;
 	virtual void mesh_clear(RID p_mesh) = 0;
 
-	virtual void mesh_debug_usage(List<RS::MeshInfo> *r_info) = 0;
-
 	virtual bool mesh_needs_instance(RID p_mesh, bool p_has_skeleton) = 0;
 
 	/* MESH INSTANCE */
@@ -216,6 +214,10 @@ public:
 	virtual void skeleton_set_base_transform_2d(RID p_skeleton, const Transform2D &p_base_transform) = 0;
 
 	virtual void skeleton_update_dependency(RID p_base, DependencyTracker *p_instance) = 0;
+
+	/* DEBUG */
+
+	virtual void resource_debug_usage(List<RS::ResourceInfo> *r_info) const = 0;
 
 	/* INTERPOLATION */
 

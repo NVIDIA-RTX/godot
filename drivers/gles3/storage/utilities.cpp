@@ -480,4 +480,9 @@ uint64_t Utilities::get_maximum_uniform_buffer_size() const {
 	return uint64_t(config->max_uniform_buffer_size);
 }
 
+void Utilities::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
+	GLES3::TextureStorage::get_singleton()->resource_debug_usage(r_info);
+	GLES3::MeshStorage::get_singleton()->resource_debug_usage(r_info);
+}
+
 #endif // GLES3_ENABLED

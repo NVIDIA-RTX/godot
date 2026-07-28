@@ -50,6 +50,7 @@ private:
 
 	float fsr_sharpness = 0.0;
 	float texture_mipmap_bias = 0.0;
+	uint32_t jitter_phase_count = 0;
 	bool use_taa = false;
 	bool use_debanding = false;
 	bool use_frame_generation = false;
@@ -97,6 +98,9 @@ public:
 	bool get_use_frame_generation() const { return use_frame_generation; }
 	void set_use_frame_generation(bool p_frame_generation) { use_frame_generation = p_frame_generation; }
 
+	uint32_t get_jitter_phase_count() const { return jitter_phase_count; }
+	void set_jitter_phase_count(uint32_t p_jitter_phase_count) { jitter_phase_count = p_jitter_phase_count; }
+
 	RenderSceneBuffersConfiguration() {}
 	virtual ~RenderSceneBuffersConfiguration() {}
 };
@@ -112,6 +116,8 @@ public:
 	virtual ~RenderSceneBuffers() {}
 
 	virtual void configure(const RenderSceneBuffersConfiguration *p_config) = 0;
+	virtual Size2i get_internal_size() const = 0;
+	virtual uint32_t get_jitter_phase_count() const = 0;
 
 	// for those settings that are unlikely to require buffers to be recreated, we'll add setters
 	virtual void set_fsr_sharpness(float p_fsr_sharpness) = 0;
@@ -136,6 +142,8 @@ public:
 	virtual ~RenderSceneBuffersExtension() {}
 
 	virtual void configure(const RenderSceneBuffersConfiguration *p_config) override;
+	virtual Size2i get_internal_size() const override;
+	virtual uint32_t get_jitter_phase_count() const override;
 
 	virtual void set_fsr_sharpness(float p_fsr_sharpness) override;
 	virtual void set_texture_mipmap_bias(float p_texture_mipmap_bias) override;

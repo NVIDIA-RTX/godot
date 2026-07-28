@@ -109,10 +109,12 @@ void Luminance::LuminanceBuffers::configure(RenderSceneBuffersRD *p_render_buffe
 		}
 
 		RID texture = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(texture, "LuminanceBuffers Reduce");
 		reduce.push_back(texture);
 
 		if (final) {
 			current = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(current, "LuminanceBuffers Final");
 			RD::get_singleton()->texture_clear(current, Color(0.0, 0.0, 0.0), 0u, 1u, 0u, 1u);
 			break;
 		}

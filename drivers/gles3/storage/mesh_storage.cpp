@@ -2549,4 +2549,8 @@ void MeshStorage::skeleton_update_dependency(RID p_skeleton, DependencyTracker *
 	p_instance->update_dependency(&skeleton->dependency);
 }
 
+void MeshStorage::resource_debug_usage(List<RS::ResourceInfo> *r_info) const {
+	// Do nothing.
+}
+
 #endif // GLES3_ENABLED

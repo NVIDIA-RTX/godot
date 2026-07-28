@@ -328,6 +328,7 @@ private:
 	float scaling_3d_scale = 1.0;
 	bool frame_generation = false;
 	float fsr_sharpness = 0.2f;
+	Viewport *shared_viewport = nullptr;
 	float texture_mipmap_bias = 0.0f;
 	AnisotropicFiltering anisotropic_filtering_level = ANISOTROPY_4X;
 	bool use_debanding = false;
@@ -606,6 +607,9 @@ public:
 
 	void set_fsr_sharpness(float p_fsr_sharpness);
 	float get_fsr_sharpness() const;
+
+	void set_shared_viewport(Viewport *p_shared_viewport);
+	Viewport *get_shared_viewport() const;
 
 	void set_texture_mipmap_bias(float p_texture_mipmap_bias);
 	float get_texture_mipmap_bias() const;

@@ -477,10 +477,10 @@ void ScriptEditorDebugger::_msg_servers_memory_usage(uint64_t p_thread_id, const
 
 	uint64_t total = 0;
 
-	for (const ServersDebugger::ResourceInfo &E : usage.infos) {
+	for (const RS::ResourceInfo &E : usage.infos) {
 		TreeItem *it = vmem_tree->create_item(root);
 		String type = E.type;
-		int bytes = E.vram;
+		uint64_t bytes = E.vram;
 		it->set_text(0, E.path);
 		it->set_text(1, type);
 		it->set_text(2, E.format);

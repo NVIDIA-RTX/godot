@@ -98,8 +98,6 @@ public:
 	virtual void texture_set_detect_normal_callback(RID p_texture, RS::TextureDetectCallback p_callback, void *p_userdata) = 0;
 	virtual void texture_set_detect_roughness_callback(RID p_texture, RS::TextureDetectRoughnessCallback p_callback, void *p_userdata) = 0;
 
-	virtual void texture_debug_usage(List<RS::TextureInfo> *r_info) = 0;
-
 	virtual void texture_set_force_redraw_if_visible(RID p_texture, bool p_enable) = 0;
 
 	virtual Size2 texture_size_with_proxy(RID p_proxy) = 0;
@@ -194,4 +192,8 @@ public:
 	// Motion vectors
 	virtual void render_target_set_velocity_target_size(RID p_render_target, const Size2i &p_target_size) = 0;
 	virtual Size2i render_target_get_velocity_target_size(RID p_render_target) const = 0;
+
+	/* DEBUG */
+
+	virtual void resource_debug_usage(List<RS::ResourceInfo> *r_info) const = 0;
 };
