@@ -3449,6 +3449,7 @@
 		</member>
 		<member name="rendering/streamline/reflex_mode" type="int" setter="" getter="" default="0">
 			If [code]1[/code], enables NVIDIA Reflex, which reduces latency by rendering just before vertical sync. When the value is set to 2, will also enable low latency boost.
+			[b]Note:[/b] Reflex is required by DLSS Frame Generation. When [member Viewport.frame_generation] is enabled and this setting is [code]0[/code], Reflex is automatically turned on in low latency mode.
 		</member>
 		<member name="rendering/streamline/streamline_imgui" type="bool" setter="" getter="" default="false">
 			If [code]1[/code], enables Streamline ImgUI Plugin. Useful for debugging purposes.

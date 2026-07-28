@@ -346,6 +346,7 @@
 		</member>
 		<member name="frame_generation" type="bool" setter="set_frame_generation" getter="get_frame_generation" default="false">
 			Enables Frame Generation technology on this viewport, if available. (currently DLSS 3.0 is supported - NVIDIA only)
+			[b]Note:[/b] DLSS Frame Generation requires NVIDIA Reflex to be running. If [member ProjectSettings.rendering/streamline/reflex_mode] is [code]0[/code], Reflex is automatically enabled in low latency mode for as long as frame generation is active. Frame generation is not enabled at all if Reflex is unavailable.
 		</member>
 		<member name="fsr_sharpness" type="float" setter="set_fsr_sharpness" getter="get_fsr_sharpness" default="0.2">
 			Determines how sharp the upscaled image will be when using the FSR upscaling mode. Sharpness halves with every whole number. Values go from 0.0 (sharpest) to 2.0. Values above 2.0 won't make a visible difference.

@@ -176,6 +176,8 @@ void StreamlineContext::dlssg_disable() {
 	STREAMLINE_GAME_ONLY; // Disable DLSS-G for editor or project settings.
 
 	dlssg_delay = 10;
+	dlssg_last_status = 0;
+	reflex_set_required_by_dlssg(false);
 
 	if (slDLSSGSetOptions && (uint32_t)dlssg_viewport != UINT_MAX) {
 		WARN_PRINT("Force disabling DLSS-G on viewport: " + itos((unsigned int)StreamlineContext::get().dlssg_viewport));
@@ -195,6 +197,87 @@ void StreamlineContext::reflex_set_options(const sl::ReflexOptions &opts) {
 	reflex_options_dirty = false;
 	sl::Result result = this->slReflexSetOptions ? this->slReflexSetOptions(opts) : sl::Result::eOk;
 	ERR_FAIL_COND_MSG(result != sl::Result::eOk, StreamlineContext::result_to_string(result));
+}
+
+// Recomputes the Reflex mode that is actually applied. DLSS-G only works while Reflex is
+// running, so frame generation promotes an "off" request to low latency instead.
+static sl::ReflexMode _effective_reflex_mode(sl::ReflexMode p_requested, bool p_required_by_dlssg) {
+	if (p_required_by_dlssg && p_requested == sl::ReflexMode::eOff) {
+		return sl::ReflexMode::eLowLatency;
+	}
+	return p_requested;
+}
+
+void StreamlineContext::reflex_request_mode(sl::ReflexMode p_mode) {
+	reflex_requested_mode = p_mode;
+
+	sl::ReflexMode effective = _effective_reflex_mode(reflex_requested_mode, reflex_required_by_dlssg);
+	if (reflex_options.mode != effective) {
+		reflex_options.mode = effective;
+		reflex_options_dirty = true;
+	}
+}
+
+void StreamlineContext::reflex_set_required_by_dlssg(bool p_required) {
+	if (reflex_required_by_dlssg == p_required) {
+		return;
+	}
+	reflex_required_by_dlssg = p_required;
+
+	sl::ReflexMode effective = _effective_reflex_mode(reflex_requested_mode, reflex_required_by_dlssg);
+	if (reflex_options.mode != effective) {
+		if (p_required) {
+			print_verbose("Streamline: enabling Reflex low latency mode, required by DLSS Frame Generation.");
+		}
+		reflex_options.mode = effective;
+		// The options are applied on the main thread in STREAMLINE_MARKER_BEFORE_MESSAGE_LOOP,
+		// since this can be called from the rendering thread.
+		reflex_options_dirty = true;
+	}
+}
+
+void StreamlineContext::dlssg_report_status(const sl::ViewportHandle &p_viewport) {
+	if (slDLSSGGetState == nullptr) {
+		return;
+	}
+
+	sl::DLSSGState state{};
+	if (slDLSSGGetState(p_viewport, state, nullptr) != sl::Result::eOk) {
+		return;
+	}
+
+	uint32_t status = (uint32_t)state.status;
+	if (status == dlssg_last_status) {
+		return; // Only report changes, this is polled every frame.
+	}
+	dlssg_last_status = status;
+
+	if (status == (uint32_t)sl::DLSSGStatus::eOk) {
+		return;
+	}
+
+	// DLSS-G presents magenta frames when any of these are set, so make the reason visible.
+	String reasons;
+	if (status & (uint32_t)sl::DLSSGStatus::eFailResolutionTooLow) {
+		reasons += "\n- Output resolution is too low (minimum " + itos(state.minWidthOrHeight) + " px).";
+	}
+	if (status & (uint32_t)sl::DLSSGStatus::eFailReflexNotDetectedAtRuntime) {
+		reasons += "\n- Reflex is not running. Reflex must be active while DLSS Frame Generation is on.";
+	}
+	if (status & (uint32_t)sl::DLSSGStatus::eFailHDRFormatNotSupported) {
+		reasons += "\n- The swap chain back buffer format is not supported.";
+	}
+	if (status & (uint32_t)sl::DLSSGStatus::eFailCommonConstantsInvalid) {
+		reasons += "\n- Invalid common constants were provided (camera matrices, jitter or motion vectors).";
+	}
+	if (status & (uint32_t)sl::DLSSGStatus::eFailGetCurrentBackBufferIndexNotCalled) {
+		reasons += "\n- IDXGISwapChain3::GetCurrentBackBufferIndex was not called before presenting.";
+	}
+	if (reasons.is_empty()) {
+		reasons = "\n- Unknown status: " + itos(status) + ".";
+	}
+
+	ERR_PRINT("DLSS Frame Generation is not working and will present corrupted (magenta) frames:" + reasons);
 }
 
 void StreamlineContext::pcl_set_options(const sl::PCLOptions &opts) {

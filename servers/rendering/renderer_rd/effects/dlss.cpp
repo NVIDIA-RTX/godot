@@ -482,6 +482,16 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		bool wantActivateDLSSG = p_params.dlss_g;
 		bool canActivateDLSSG = StreamlineContext::get().dlssg_delay == 0;
 
+		// DLSS-G presents magenta frames unless Reflex is running alongside it, so it needs both
+		// Reflex and PCL (which provides the latency markers Reflex consumes) to be available.
+		if (wantActivateDLSSG && !(StreamlineContext::get().streamline_capabilities.reflex_available && StreamlineContext::get().streamline_capabilities.pcl_available)) {
+			WARN_PRINT_ONCE("DLSS Frame Generation was requested but Reflex is not available on this system. Frame generation requires Reflex and has been disabled.");
+			wantActivateDLSSG = false;
+		}
+
+		// Reflex has to be turned on before frame generation starts, and stays on for as long as it runs.
+		StreamlineContext::get().reflex_set_required_by_dlssg(wantActivateDLSSG);
+
 		// Disable previous DLSS-G context if needed
 		if (StreamlineContext::get().dlssg_viewport != sl::ViewportHandle(-1) && ((!wantActivateDLSSG && StreamlineContext::get().dlssg_viewport == context->viewport) || (wantActivateDLSSG && StreamlineContext::get().dlssg_viewport != context->viewport))) {
 			WARN_PRINT("Disabling DLSS-G on viewport: " + itos((unsigned int)StreamlineContext::get().dlssg_viewport));
@@ -492,19 +502,30 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			}
 
 			StreamlineContext::get().dlssg_viewport = sl::ViewportHandle(-1);
+			StreamlineContext::get().dlssg_last_status = 0;
 		}
+
+		// Wait for Reflex to be running before starting frame generation, otherwise the first
+		// frames are presented as magenta. This costs at most one frame.
+		canActivateDLSSG = canActivateDLSSG && StreamlineContext::get().reflex_is_running();
 
 		// Enable new DLSS-G context if needed
 		if (canActivateDLSSG && wantActivateDLSSG && StreamlineContext::get().dlssg_viewport != context->viewport) {
 			WARN_PRINT("Enabling DLSS-G on viewport: " + itos((unsigned int)context->viewport));
 
 			dlssGOptions.mode = sl::DLSSGMode::eOn;
+			dlssGOptions.numFramesToGenerate = 1;
 			sl::Result result = StreamlineContext::get().slDLSSGSetOptions(context->viewport, dlssGOptions);
 			if (result != sl::Result::eOk) {
 				ERR_FAIL_MSG("Failed to call streamline slDLSSGSetOptions. Result: " + String(StreamlineContext::result_to_string(result)));
 			}
 
 			StreamlineContext::get().dlssg_viewport = context->viewport;
+		}
+
+		// Report why frame generation is failing instead of silently presenting magenta frames.
+		if (StreamlineContext::get().dlssg_viewport == context->viewport) {
+			StreamlineContext::get().dlssg_report_status(context->viewport);
 		}
 	}
 
