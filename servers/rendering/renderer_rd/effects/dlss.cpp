@@ -425,9 +425,9 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		context->constants.prevClipToClip = sl_convert_matrix(p_params.reprojection.inverse()); // inverted reprojection matrix
 
 		context->constants.cameraPos = sl_convert_vector(p_params.cam_transform.get_origin());
-		context->constants.cameraFwd = sl_convert_vector(-p_params.cam_transform.get_basis().rows[2]);
-		context->constants.cameraUp = sl_convert_vector(p_params.cam_transform.get_basis().rows[1]);
-		context->constants.cameraRight = sl_convert_vector(p_params.cam_transform.get_basis().rows[0]);
+		context->constants.cameraFwd = sl_convert_vector(-p_params.cam_transform.get_basis().get_column(2));
+		context->constants.cameraUp = sl_convert_vector(p_params.cam_transform.get_basis().get_column(1));
+		context->constants.cameraRight = sl_convert_vector(p_params.cam_transform.get_basis().get_column(0));
 
 		context->constants.cameraNear = p_params.z_near;
 		context->constants.cameraFar = p_params.z_far;
