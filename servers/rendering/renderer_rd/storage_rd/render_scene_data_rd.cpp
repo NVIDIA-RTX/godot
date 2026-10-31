@@ -209,6 +209,12 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RS::ViewportDebugDraw p
 		if (render_scene_render->environment_get_fog_mode(p_env) == RSE::ENV_FOG_MODE_DEPTH) {
 			ubo.flags |= SCENE_DATA_FLAGS_USE_DEPTH_FOG;
 		}
+		int debug_mode = render_scene_render->environment_get_pathtracing_debug_mode(p_env);
+		if (debug_mode == DEBUG_MODE_VOLUMETRIC_FOG) {
+			ubo.flags |= SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG;
+		} else if (debug_mode == DEBUG_MODE_VOLUMETRIC_FOG_TRANSMITTANCE) {
+			ubo.flags |= SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE;
+		}
 		ubo.fog_density = render_scene_render->environment_get_fog_density(p_env);
 		ubo.fog_height = render_scene_render->environment_get_fog_height(p_env);
 		ubo.fog_height_density = render_scene_render->environment_get_fog_height_density(p_env);

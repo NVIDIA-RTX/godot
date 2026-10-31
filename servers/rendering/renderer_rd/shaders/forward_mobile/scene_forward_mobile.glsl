@@ -10,6 +10,8 @@
 /* Include our forward mobile UBOs definitions etc. */
 #include "scene_forward_mobile_inc.glsl"
 
+#include "../billboard_inc.glsl"
+
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
 
@@ -469,6 +471,10 @@ void vertex_shader(in vec3 vertex,
 
 #ifdef POINT_SIZE_USED
 	float point_size = 1.0;
+#endif
+
+#ifdef BILLBOARD_RENDER_MODE_USED
+	billboard_apply_render_modes(modelview, modelview_normal, read_view_matrix, scene_data.main_cam_inv_view_matrix, inv_view_matrix, projection_matrix, instance_custom, OUTPUT_IS_MULTIVIEW);
 #endif
 
 	{
@@ -982,6 +988,15 @@ layout(location = 14) in vec2 point_coord_interp;
 #define inv_projection_matrix scene_data.inv_projection_matrix
 #endif
 
+// SCENE_DEPTH: opaque scene depth at this fragment (pre-transparent depth copy).
+float scene_depth_fetch() {
+#ifdef USE_MULTIVIEW
+	return texelFetch(multiviewSampler(depth_buffer, SAMPLER_NEAREST_CLAMP), ivec3(ivec2(gl_FragCoord.xy), ViewIndex), 0).r;
+#else
+	return texelFetch(sampler2D(depth_buffer, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
+#endif
+}
+
 #if defined(ENABLE_SSS) && defined(ENABLE_TRANSMITTANCE)
 //both required for transmittance to be enabled
 #define LIGHT_TRANSMITTANCE_USED
@@ -1145,6 +1160,7 @@ void main() {
 	float metallic_highp = 0.0;
 	float specular_highp = 0.5;
 	vec3 emission_highp = vec3(0.0);
+	float emission_indirect = 1.0; // Written by EMISSION_INDIRECT; no indirect emission here.
 	float roughness_highp = 1.0;
 	float rim_highp = 0.0;
 	float rim_tint_highp = 0.0;

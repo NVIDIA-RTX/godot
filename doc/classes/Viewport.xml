@@ -346,6 +346,7 @@
 		</member>
 		<member name="frame_generation" type="bool" setter="set_frame_generation" getter="get_frame_generation" default="false">
 			Enables Frame Generation technology on this viewport, if available. (currently DLSS 3.0 is supported - NVIDIA only)
+			[b]Note:[/b] DLSS Frame Generation requires NVIDIA Reflex to be running. If [member ProjectSettings.rendering/streamline/reflex_mode] is [code]0[/code], Reflex is automatically enabled in low latency mode for as long as frame generation is active. Frame generation is not enabled at all if Reflex is unavailable.
 		</member>
 		<member name="fsr_sharpness" type="float" setter="set_fsr_sharpness" getter="get_fsr_sharpness" default="0.2">
 			Determines how sharp the upscaled image will be when using the FSR upscaling mode. Sharpness halves with every whole number. Values go from 0.0 (sharpest) to 2.0. Values above 2.0 won't make a visible difference.
@@ -476,6 +477,9 @@
 			If [code]true[/code], [OccluderInstance3D] nodes will be usable for occlusion culling in 3D for this viewport. For the root viewport, [member ProjectSettings.rendering/occlusion_culling/use_occlusion_culling] must be set to [code]true[/code] instead.
 			[b]Note:[/b] Enabling occlusion culling has a cost on the CPU. Only enable occlusion culling if you actually plan to use it, and think whether your scene can actually benefit from occlusion culling. Large, open scenes with few or no objects blocking the view will generally not benefit much from occlusion culling. Large open scenes generally benefit more from mesh LOD and visibility ranges ([member GeometryInstance3D.visibility_range_begin] and [member GeometryInstance3D.visibility_range_end]) compared to occlusion culling.
 			[b]Note:[/b] Due to memory constraints, occlusion culling is not supported by default in Web export templates. It can be enabled by compiling custom Web export templates with [code]module_raycast_enabled=yes[/code].
+		</member>
+		<member name="use_pathtracing" type="bool" setter="set_use_pathtracing" getter="is_using_pathtracing" default="true">
+			If [code]false[/code], this viewport always rasterizes, even when its [Environment] has [member Environment.pathtracing_enabled] set. Useful for small render-to-texture viewports (in-world screens, periscopes) that share a path-traced [World3D] but should not run their own path-tracing pass.
 		</member>
 		<member name="use_taa" type="bool" setter="set_use_taa" getter="is_using_taa" default="false">
 			Enables temporal antialiasing for this viewport. TAA works by jittering the camera and accumulating the images of the last rendered frames, motion vector rendering is used to account for camera and object motion.
@@ -655,7 +659,46 @@
 		<constant name="RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="RenderInfo">
 			Total triangles processed by BLAS refits this frame (ray tracing only).
 		</constant>
-		<constant name="RENDER_INFO_MAX" value="8" enum="RenderInfo">
+		<constant name="RENDER_INFO_RT_DYNAMIC_REBAKES" value="8" enum="RenderInfo">
+			Number of camera-dependent or animated entries (billboards, particles) whose ray tracing vertices were regenerated this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES" value="9" enum="RenderInfo">
+			Total vertices written by [constant RENDER_INFO_RT_DYNAMIC_REBAKES] this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_CAPTURED_MESHES" value="10" enum="RenderInfo">
+			Number of meshes whose vertex shader output was captured for ray tracing this frame (ray tracing only). Meshes keeping an earlier capture aren't counted.
+		</constant>
+		<constant name="RENDER_INFO_RT_CAPTURED_VERTICES" value="11" enum="RenderInfo">
+			Total vertices written by [constant RENDER_INFO_RT_CAPTURED_MESHES] this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_DYNAMIC_UPDATED" value="12" enum="RenderInfo">
+			Number of dynamic ray tracing entries whose BLAS was built or refit this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_DYNAMIC_HELD" value="13" enum="RenderInfo">
+			Number of dynamic ray tracing entries that kept last frame's BLAS because they are barely visible (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED" value="14" enum="RenderInfo">
+			Number of dynamic ray tracing entries whose BLAS update was deferred by the per-frame budgets (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_PENDING_SURFACES" value="15" enum="RenderInfo">
+			Number of surfaces left out of the ray tracing scene this frame because their hit shaders are still compiling (ray tracing only). Zero once every visible material is ready.
+		</constant>
+		<constant name="RENDER_INFO_RT_SCRATCH_USED_KB" value="16" enum="RenderInfo">
+			Most scratch memory, in kilobytes, that this frame's acceleration structure builds used at once (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_SCRATCH_SIZE_KB" value="17" enum="RenderInfo">
+			Size, in kilobytes, of the scratch buffer shared by acceleration structure builds (ray tracing only). It grows up to [member ProjectSettings.rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb].
+		</constant>
+		<constant name="RENDER_INFO_RT_SCRATCH_ROLLOVERS" value="18" enum="RenderInfo">
+			Number of barriers this frame's acceleration structure builds needed because the scratch buffer was full at its maximum size (ray tracing only). Raise [member ProjectSettings.rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb] if this is often above zero.
+		</constant>
+		<constant name="RENDER_INFO_RT_CAPTURE_ARENA_USED_KB" value="19" enum="RenderInfo">
+			Memory, in kilobytes, taken by this frame's vertex captures in the capture arena (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB" value="20" enum="RenderInfo">
+			Size, in kilobytes, of the vertex capture arena (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_MAX" value="21" enum="RenderInfo">
 			Represents the size of the [enum RenderInfo] enum.
 		</constant>
 		<constant name="RENDER_INFO_TYPE_VISIBLE" value="0" enum="RenderInfoType">

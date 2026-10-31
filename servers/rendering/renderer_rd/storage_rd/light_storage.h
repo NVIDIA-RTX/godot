@@ -72,6 +72,7 @@ private:
 		uint32_t max_sdfgi_cascade = 2;
 		uint32_t cull_mask = 0xFFFFFFFF;
 		uint32_t shadow_caster_mask = 0xFFFFFFFF;
+		uint32_t shadow_renderers = RS::SHADOW_RENDERER_ALL;
 		bool distance_fade = false;
 		real_t distance_fade_begin = 40.0;
 		real_t distance_fade_shadow = 50.0;
@@ -83,6 +84,8 @@ private:
 		uint64_t version = 0;
 
 		Dependency dependency;
+
+		bool has_shadow_in(RS::ShadowRenderer p_renderer) const { return is_shadow_drawn_by(shadow, param[RS::LIGHT_PARAM_SHADOW_OPACITY], shadow_renderers, p_renderer); }
 	};
 
 	mutable RID_Owner<Light, true> light_owner;
@@ -496,6 +499,7 @@ public:
 	virtual void light_set_reverse_cull_face_mode(RID p_light, bool p_enabled) override;
 	virtual void light_set_shadow_caster_mask(RID p_light, uint32_t p_caster_mask) override;
 	virtual uint32_t light_get_shadow_caster_mask(RID p_light) const override;
+	virtual void light_set_shadow_renderers(RID p_light, BitField<RS::ShadowRenderer> p_renderers) override;
 	virtual void light_set_bake_mode(RID p_light, RS::LightBakeMode p_bake_mode) override;
 	virtual void light_set_max_sdfgi_cascade(RID p_light, uint32_t p_cascade) override;
 
@@ -559,11 +563,42 @@ public:
 		return light->distance_fade_length;
 	}
 
+	// Distance fade factor in [0, 1] at p_distance from the camera: 1 before p_begin, smoothstepped to 0 at p_begin + p_length.
+	static float distance_fade_factor(float p_distance, float p_begin, float p_length) {
+		if (p_distance <= p_begin) {
+			return 1.0f;
+		}
+		if (p_length <= 0.0f) {
+			return 0.0f;
+		}
+		// smoothstep() makes opacity changes more gradual and less noticeable to the player.
+		return Math::smoothstep(0.0f, 1.0f, 1.0f - (p_distance - p_begin) / p_length);
+	}
+
+	// Opacity of a positional light at p_distance from the camera under its distance fade (1 when disabled).
+	_FORCE_INLINE_ float light_get_distance_fade(RID p_light, float p_distance) {
+		const Light *light = light_owner.get_or_null(p_light);
+		return light->distance_fade ? distance_fade_factor(p_distance, light->distance_fade_begin, light->distance_fade_length) : 1.0f;
+	}
+
+	// Whether the rasterizer draws this light's shadow (shadow maps, ray query shadows, GI).
 	virtual bool light_has_shadow(RID p_light) const override {
 		const Light *light = light_owner.get_or_null(p_light);
-		ERR_FAIL_NULL_V(light, RS::LIGHT_DIRECTIONAL);
+		ERR_FAIL_NULL_V(light, false);
 
-		return light->shadow;
+		return light->has_shadow_in(RS::SHADOW_RENDERER_RASTERIZER);
+	}
+
+	// Path-traced shadow strength at p_distance from the camera: shadow opacity times the shadow distance fade, 0 when the path tracer draws no shadow.
+	_FORCE_INLINE_ float light_get_path_traced_shadow_opacity(RID p_light, float p_distance) const {
+		const Light *light = light_owner.get_or_null(p_light);
+		ERR_FAIL_NULL_V(light, 0.0f);
+
+		if (!light->has_shadow_in(RS::SHADOW_RENDERER_PATH_TRACER)) {
+			return 0.0f;
+		}
+		const float fade = light->distance_fade ? distance_fade_factor(p_distance, light->distance_fade_shadow, light->distance_fade_length) : 1.0f;
+		return light->param[RS::LIGHT_PARAM_SHADOW_OPACITY] * fade;
 	}
 
 	virtual bool light_has_projector(RID p_light) const override {
@@ -618,7 +653,7 @@ public:
 		const Light *light = light_owner.get_or_null(light_instance->light);
 		ERR_FAIL_NULL_V(light, false);
 
-		if (!light->shadow) {
+		if (!light->has_shadow_in(RS::SHADOW_RENDERER_RASTERIZER)) {
 			return false;
 		}
 

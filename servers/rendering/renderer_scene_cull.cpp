@@ -55,6 +55,14 @@ static float get_halton_value(int p_index, int p_base) {
 }
 #endif // _3D_DISABLED
 
+static void _geometry_instance_set_shadow_casting(RenderGeometryInstance *p_geometry_instance, const RendererSceneCull::Instance *p_instance) {
+	const RS::ShadowCastingSetting setting = p_instance->cast_shadows;
+	p_geometry_instance->set_cast_double_sided_shadows(setting == RS::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
+	p_geometry_instance->set_rt_shadow_caster(p_instance->casts_shadow_in(RS::SHADOW_RENDERER_PATH_TRACER));
+	p_geometry_instance->set_rt_shadows_only(setting == RS::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	p_geometry_instance->set_rt_self_shadowing(setting == RS::SHADOW_CASTING_SETTING_SELF_SHADOWING);
+}
+
 /* EVENT QUEUING */
 
 void RendererSceneCull::tick() {
@@ -729,7 +737,8 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_use_dynamic_gi(instance->dynamic_gi);
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
-				geom->geometry_instance->set_cast_double_sided_shadows(instance->cast_shadows == RS::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
+				_geometry_instance_set_shadow_casting(geom->geometry_instance, instance);
+				geom->geometry_instance->set_rt_blas_update(instance->rt_blas_update);
 				if (instance->lightmap_sh.size() == 9) {
 					geom->geometry_instance->set_lightmap_capture(instance->lightmap_sh.ptr());
 				}
@@ -1337,31 +1346,53 @@ void RendererSceneCull::instance_geometry_set_cast_shadows_setting(RID p_instanc
 	ERR_FAIL_NULL(instance);
 
 	instance->cast_shadows = p_shadow_casting_setting;
+	_instance_update_shadow_casting(instance);
+}
 
-	if (instance->scenario && instance->array_index >= 0) {
-		InstanceData &idata = instance->scenario->instance_data[instance->array_index];
+void RendererSceneCull::instance_geometry_set_shadow_renderers(RID p_instance, BitField<RS::ShadowRenderer> p_renderers) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
 
-		if (instance->cast_shadows != RS::SHADOW_CASTING_SETTING_OFF) {
+	instance->shadow_renderers = uint32_t(p_renderers) & RS::SHADOW_RENDERER_ALL;
+	_instance_update_shadow_casting(instance);
+}
+
+void RendererSceneCull::_instance_update_shadow_casting(Instance *p_instance) {
+	if (p_instance->scenario && p_instance->array_index >= 0) {
+		InstanceData &idata = p_instance->scenario->instance_data[p_instance->array_index];
+
+		if (p_instance->casts_shadow_in(RS::SHADOW_RENDERER_RASTERIZER)) {
 			idata.flags |= InstanceData::FLAG_CAST_SHADOWS;
 		} else {
 			idata.flags &= ~InstanceData::FLAG_CAST_SHADOWS;
 		}
 
-		if (instance->cast_shadows == RS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+		if (p_instance->cast_shadows == RS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
 			idata.flags |= InstanceData::FLAG_CAST_SHADOWS_ONLY;
 		} else {
 			idata.flags &= ~InstanceData::FLAG_CAST_SHADOWS_ONLY;
 		}
 	}
 
-	if ((1 << instance->base_type) & RS::INSTANCE_GEOMETRY_MASK && instance->base_data) {
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
+	if ((1 << p_instance->base_type) & RS::INSTANCE_GEOMETRY_MASK && p_instance->base_data) {
+		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 		ERR_FAIL_NULL(geom->geometry_instance);
 
-		geom->geometry_instance->set_cast_double_sided_shadows(instance->cast_shadows == RS::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
+		_geometry_instance_set_shadow_casting(geom->geometry_instance, p_instance);
 	}
 
-	_instance_queue_update(instance, false, true);
+	_instance_queue_update(p_instance, false, true);
+}
+
+void RendererSceneCull::instance_geometry_set_rt_blas_update(RID p_instance, RS::RTBlasUpdate p_update) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+	ERR_FAIL_INDEX(p_update, RS::RT_BLAS_UPDATE_REBUILD + 1);
+
+	instance->rt_blas_update = p_update;
+	if ((1 << instance->base_type) & RS::INSTANCE_GEOMETRY_MASK && instance->base_data) {
+		static_cast<InstanceGeometryData *>(instance->base_data)->geometry_instance->set_rt_blas_update(p_update);
+	}
 }
 
 void RendererSceneCull::instance_geometry_set_material_override(RID p_instance, RID p_material) {
@@ -1607,6 +1638,10 @@ uint32_t RendererSceneCull::get_pipeline_compilations(RS::PipelineSource p_sourc
 	return scene_render->get_pipeline_compilations(p_source);
 }
 
+BitField<RS::RenderingNotReadyReason> RendererSceneCull::get_not_ready_reasons() {
+	return scene_render->get_not_ready_reasons();
+}
+
 void RendererSceneCull::instance_geometry_get_shader_parameter_list(RID p_instance, List<PropertyInfo> *p_parameters) const {
 	ERR_FAIL_NULL(p_parameters);
 	const Instance *instance = instance_owner.get_or_null(p_instance);
@@ -1836,7 +1871,7 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 			//always dirty when added
 			idata.flags |= InstanceData::FLAG_REFLECTION_PROBE_DIRTY;
 		}
-		if (p_instance->cast_shadows != RS::SHADOW_CASTING_SETTING_OFF) {
+		if (p_instance->casts_shadow_in(RS::SHADOW_RENDERER_RASTERIZER)) {
 			idata.flags |= InstanceData::FLAG_CAST_SHADOWS;
 		}
 		if (p_instance->cast_shadows == RS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
@@ -2871,6 +2906,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 	for (uint64_t i = p_from; i < p_to; i++) {
 		bool mesh_visible = false;
 		bool in_frustum = false;
+		bool particles_requested = false;
 
 		InstanceData &idata = cull_data.scenario->instance_data[i];
 		uint32_t visibility_flags = idata.flags & (InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN_CLOSE_RANGE | InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN | InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN);
@@ -2950,19 +2986,8 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 					if (base_type == RS::INSTANCE_MESH) {
 						mesh_visible = true;
 					} else if (base_type == RS::INSTANCE_PARTICLES) {
-						//particles visible? process them
-						if (RSG::particles_storage->particles_is_inactive(idata.base_rid)) {
-							//but if nothing is going on, don't do it.
-							keep = false;
-						} else {
-							cull_data.cull->lock.lock();
-							RSG::particles_storage->particles_request_process(idata.base_rid);
-							cull_data.cull->lock.unlock();
-
-							RS::get_singleton()->call_on_render_thread(callable_mp_static(&RendererSceneCull::_scene_particles_set_view_axis).bind(idata.base_rid, -cull_data.cam_transform.basis.get_column(2).normalized(), cull_data.cam_transform.basis.get_column(1).normalized()));
-							//particles visible? request redraw
-							RenderingServerDefault::redraw_request();
-						}
+						keep = _scene_particles_request_process(cull_data, idata.base_rid);
+						particles_requested = true;
 					}
 
 					if (idata.parent_array_index != -1) {
@@ -3199,8 +3224,8 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 			// HIDDEN_CLOSE_RANGE (fully faded out), matching the point where raster
 			// switches over. In-frustum children are subject to the same rule.
 			if (cull_data.cull->rt_enabled && (idata.layer_mask & ((1 << 20) - 1))) {
-				// For off-frustum instances, also run VIS_CHECK to match raster gating.
-				bool rt_in_range = in_frustum || (cull_data.scenario->instance_aabbs[i].in_aabb(cull_data.cull->rt_aabb) && VIS_CHECK);
+				// For off-frustum instances, also run LAYER_CHECK and VIS_CHECK to match raster gating.
+				bool rt_in_range = in_frustum || (LAYER_CHECK && cull_data.scenario->instance_aabbs[i].in_aabb(cull_data.cull->rt_aabb) && VIS_CHECK);
 				if (rt_in_range) {
 					// Exclude visibility-parent children while their parent is in the
 					// FADE_CHILDREN cross-fade band. PT is binary: only one LOD at a time.
@@ -3218,10 +3243,15 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 						uint32_t base_type = idata.flags & InstanceData::FLAG_BASE_TYPE_MASK;
 						if (base_type == RSE::INSTANCE_LIGHT) {
 							cull_result.rt_light_instances.push_back(RID::from_uint64(idata.instance_data_rid));
-						} else if ((base_type == RSE::INSTANCE_MESH || base_type == RSE::INSTANCE_MULTIMESH) &&
-								!(idata.flags & InstanceData::FLAG_CAST_SHADOWS_ONLY)) {
+						} else if (base_type == RSE::INSTANCE_DECAL) {
+							cull_result.rt_decal_instances.push_back(RID::from_uint64(idata.instance_data_rid));
+						} else if (base_type == RSE::INSTANCE_MESH || base_type == RSE::INSTANCE_MULTIMESH) {
 							cull_result.rt_geometry_instances.push_back(idata.instance_geometry);
 							mesh_visible = true; // For skinned/deformed meshes..
+						} else if (base_type == RSE::INSTANCE_PARTICLES) {
+							if (particles_requested ? !RSG::particles_storage->particles_is_inactive(idata.base_rid) : _scene_particles_request_process(cull_data, idata.base_rid)) {
+								cull_result.rt_geometry_instances.push_back(idata.instance_geometry);
+							}
 						}
 					}
 				}
@@ -3262,6 +3292,19 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 			cull_result.mesh_instances.push_back(cull_data.scenario->instance_data[i].instance->mesh_instance);
 		}
 	}
+}
+
+bool RendererSceneCull::_scene_particles_request_process(CullData &p_cull_data, RID p_particles) {
+	if (RSG::particles_storage->particles_is_inactive(p_particles)) {
+		return false;
+	}
+	p_cull_data.cull->lock.lock();
+	RSG::particles_storage->particles_request_process(p_particles);
+	p_cull_data.cull->lock.unlock();
+
+	RS::get_singleton()->call_on_render_thread(callable_mp_static(&RendererSceneCull::_scene_particles_set_view_axis).bind(p_particles, -p_cull_data.cam_transform.basis.get_column(2).normalized(), p_cull_data.cam_transform.basis.get_column(1).normalized()));
+	RenderingServerDefault::redraw_request();
+	return true;
 }
 
 void RendererSceneCull::_scene_particles_set_view_axis(RID p_particles, const Vector3 &p_axis, const Vector3 &p_up_axis) {
@@ -3327,8 +3370,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	cull.frustum = Frustum(planes);
 
 	// RT: build wider AABB cull volume for TLAS and light gathering.
-	cull.rt_enabled = p_environment.is_valid() &&
-			scene_render->environment_get_pathtracing_enabled(p_environment);
+	cull.rt_enabled = p_reflection_probe.is_null() && scene_render->pathtracing_is_used(p_environment, p_viewport);
 	if (cull.rt_enabled) {
 		float z_far = p_camera_data->main_projection.get_z_far();
 		Vector3 cam_origin = p_camera_data->main_transform.origin;
@@ -3480,7 +3522,8 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		for (uint32_t i = 0; i < (uint32_t)scene_cull_result.lights.size(); i++) {
 			Instance *ins = scene_cull_result.lights[i];
 
-			if (!p_shadow_atlas.is_valid()) {
+			// Path tracing never draws the atlas, so don't let it record shadows as up to date.
+			if (!p_shadow_atlas.is_valid() || cull.rt_enabled) {
 				continue;
 			}
 
@@ -3662,8 +3705,13 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		prev_camera_data = RSG::viewport->viewport_get_prev_camera_data(p_viewport);
 	}
 
+	RendererSceneRender::RTCullData rt_cull;
+	rt_cull.instances = &scene_cull_result.rt_geometry_instances;
+	rt_cull.lights = &scene_cull_result.rt_light_instances;
+	rt_cull.decals = &scene_cull_result.rt_decal_instances;
+
 	RENDER_TIMESTAMP("Render 3D Scene");
-	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, 1.0f /* window_output_max_value: SDR default; HDR not backported */, &sdfgi_update_data, r_render_info, &scene_cull_result.rt_geometry_instances, &scene_cull_result.rt_light_instances);
+	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, 1.0f /* window_output_max_value: SDR default; HDR not backported */, &sdfgi_update_data, r_render_info, &rt_cull, p_viewport);
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);
@@ -4151,7 +4199,7 @@ void RendererSceneCull::_update_dirty_instance(Instance *p_instance) const {
 
 			p_instance->instance_uniforms.materials_start();
 
-			if (p_instance->cast_shadows == RS::SHADOW_CASTING_SETTING_OFF) {
+			if (!p_instance->casts_shadow_in(RS::SHADOW_RENDERER_RASTERIZER)) {
 				can_cast_shadows = false;
 			}
 

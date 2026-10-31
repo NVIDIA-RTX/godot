@@ -83,6 +83,7 @@ private:
 			SHADER_GROUP_NO_ATOMICS,
 			SHADER_GROUP_VULKAN_MEMORY_MODEL,
 			SHADER_GROUP_VULKAN_MEMORY_MODEL_NO_ATOMICS,
+			SHADER_GROUP_MAX,
 		};
 
 		enum FogSet {
@@ -191,6 +192,7 @@ private:
 		};
 
 		VolumetricFogProcessShaderRD process_shader;
+		String process_shader_defines;
 
 		RID process_shader_version;
 		PipelineDeferredRD process_pipelines[VOLUMETRIC_FOG_PROCESS_SHADER_MAX];
@@ -320,6 +322,11 @@ public:
 		RID fog_uniform_set;
 		RID copy_uniform_set;
 
+		// Textures bound by the copy and process sets that the fog doesn't own.
+		RID shadow_atlas_depth;
+		RID directional_shadow_depth;
+		RID radiance_texture;
+
 		struct {
 			RID process_uniform_set_density;
 			RID process_uniform_set;
@@ -346,6 +353,19 @@ public:
 	void init_fog_shader(uint32_t p_max_directional_lights, int p_roughness_layers, bool p_is_using_radiance_octmap_array);
 	void free_fog_shader();
 
+	const String &get_process_shader_defines() const { return volumetric_fog.process_shader_defines; }
+	static String get_process_shader_group_define(int p_group);
+	static int get_process_shader_group() { return _get_fog_shader_group(); }
+	static int get_process_shader_group_count() { return VolumetricFogShader::SHADER_GROUP_MAX; }
+
+	// Replaces shadow map lookups of the density pass with ray queries, set 1 and 2 are owned by the caller. The caller
+	// also orders the buffers read through device addresses, which the draw graph can't see.
+	struct VolumetricFogRayQueryShadows {
+		RID pipeline;
+		RID uniform_set;
+		RID bindless_uniform_set;
+	};
+
 	struct VolumetricFogSettings {
 		Vector2i rb_size;
 		double time;
@@ -368,6 +388,8 @@ public:
 		Ref<GI::RenderBuffersGI> rbgi;
 		RID env;
 		SkyRD *sky;
+
+		const VolumetricFogRayQueryShadows *ray_query_shadows = nullptr;
 	};
 	void volumetric_fog_update(const VolumetricFogSettings &p_settings, const Projection &p_cam_projection, const Transform3D &p_cam_transform, const Transform3D &p_prev_cam_inv_transform, RID p_shadow_atlas, int p_directional_light_count, bool p_use_directional_shadows, int p_positional_light_count, int p_voxel_gi_count, const PagedArray<RID> &p_fog_volumes);
 };

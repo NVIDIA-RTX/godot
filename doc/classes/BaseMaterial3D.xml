@@ -218,6 +218,9 @@
 		<member name="emission_energy_multiplier" type="float" setter="set_emission_energy_multiplier" getter="get_emission_energy_multiplier" default="1.0">
 			Multiplier for emitted light. See [member emission_enabled].
 		</member>
+		<member name="emission_indirect_energy" type="float" setter="set_emission_indirect_energy" getter="get_emission_indirect_energy" default="1.0">
+			Multiplier for emitted light seen through indirect lighting (SDFGI and path tracing). [code]0.0[/code] makes the emission invisible to bounces, values above [code]1.0[/code] boost it. In path tracing, like [member Light3D.light_indirect_energy], it applies after the first diffuse bounce; directly visible emission and specular reflections are unaffected. In path tracing, it also scales the color of unshaded materials, even with [member emission_enabled] disabled.
+		</member>
 		<member name="emission_intensity" type="float" setter="set_emission_intensity" getter="get_emission_intensity">
 			Luminance of emitted light, measured in nits (candela per square meter). Only available when [member ProjectSettings.rendering/lights_and_shadows/use_physical_light_units] is enabled. The default is roughly equivalent to an indoor lightbulb.
 		</member>
@@ -664,6 +667,9 @@
 		</constant>
 		<constant name="BLEND_MODE_PREMULT_ALPHA" value="4" enum="BlendMode">
 			The color of the object is added to the background and the alpha channel is used to mask out the background. This is effectively a hybrid of the blend mix and add modes, useful for effects like fire where you want the flame to add but the smoke to mix. By default, this works with unshaded materials using premultiplied textures. For shaded materials, use the [code]PREMUL_ALPHA_FACTOR[/code] built-in so that lighting can be modulated as well.
+		</constant>
+		<constant name="BLEND_MODE_OIT" value="5" enum="BlendMode">
+			Uses weighted blended order-independent transparency in raster forward rendering. This avoids sorting artifacts when transparent surfaces overlap. Path-traced transparency instead handles this mode with bounded peeling. In unsupported raster configurations, this falls back to premultiplied alpha blending.
 		</constant>
 		<constant name="ALPHA_ANTIALIASING_OFF" value="0" enum="AlphaAntiAliasing">
 			Disables Alpha AntiAliasing for the material.

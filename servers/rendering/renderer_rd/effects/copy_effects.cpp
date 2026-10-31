@@ -118,6 +118,7 @@ CopyEffects::CopyEffects(BitField<RasterEffects> p_raster_effects) {
 		copy_modes.push_back("\n#define MODE_TWO_SOURCES\n"); // COPY_TO_FB_COPY2
 		copy_modes.push_back("\n#define MODE_SET_COLOR\n"); // COPY_TO_FB_SET_COLOR
 		copy_modes.push_back("\n#define MODE_COPY_DEPTH\n"); // COPY_TO_FB_COPY_DEPTH
+		copy_modes.push_back("\n#define MODE_TIMING_HEATMAP\n"); // COPY_TO_FB_TIMING_HEATMAP
 		copy_modes.push_back("\n#define USE_MULTIVIEW\n"); // COPY_TO_FB_MULTIVIEW
 		copy_modes.push_back("\n#define USE_MULTIVIEW\n#define MODE_TWO_SOURCES\n"); // COPY_TO_FB_MULTIVIEW_WITH_DEPTH
 
@@ -142,7 +143,16 @@ CopyEffects::CopyEffects(BitField<RasterEffects> p_raster_effects) {
 					dss.enable_depth_write = true;
 					copy_to_fb.pipelines[i].setup(copy_to_fb.shader.version_get_shader(copy_to_fb.shader_version, i), RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), dss, RD::PipelineColorBlendState::create_disabled(0), 0);
 				} else {
-					copy_to_fb.pipelines[i].setup(copy_to_fb.shader.version_get_shader(copy_to_fb.shader_version, i), RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), RD::PipelineDepthStencilState(), RD::PipelineColorBlendState::create_disabled(), 0);
+					RD::PipelineColorBlendState blend = RD::PipelineColorBlendState::create_disabled();
+					if (i == COPY_TO_FB_TIMING_HEATMAP) {
+						RD::PipelineColorBlendState::Attachment &attachment = blend.attachments.write[0];
+						attachment.enable_blend = true;
+						attachment.src_color_blend_factor = RD::BLEND_FACTOR_SRC_ALPHA;
+						attachment.dst_color_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+						// Preserve the viewport alpha, including transparent backgrounds.
+						attachment.write_a = false;
+					}
+					copy_to_fb.pipelines[i].setup(copy_to_fb.shader.version_get_shader(copy_to_fb.shader_version, i), RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), RD::PipelineDepthStencilState(), blend, 0);
 				}
 			} else {
 				copy_to_fb.pipelines[i].clear();
@@ -707,6 +717,30 @@ void CopyEffects::copy_to_fb_rect(RID p_source_rd_texture, RID p_dest_framebuffe
 	}
 	RD::get_singleton()->draw_list_bind_index_array(draw_list, material_storage->get_quad_index_array());
 	RD::get_singleton()->draw_list_set_push_constant(draw_list, &copy_to_fb.push_constant, sizeof(CopyToFbPushConstant));
+	RD::get_singleton()->draw_list_draw(draw_list, true);
+	RD::get_singleton()->draw_list_end();
+}
+
+void CopyEffects::copy_timing_heatmap_to_fb(RID p_source_texture, RID p_dest_framebuffer, const Rect2i &p_rect, float p_max_ticks, float p_opacity, bool p_linear) {
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+	ERR_FAIL_NULL(uniform_set_cache);
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	ERR_FAIL_NULL(material_storage);
+
+	CopyToFbPushConstant push_constant = {};
+	push_constant.set_color[0] = MAX(p_max_ticks, 1.0f);
+	push_constant.set_color[1] = CLAMP(p_opacity, 0.0f, 1.0f);
+	push_constant.flags = p_linear ? COPY_TO_FB_FLAG_LINEAR : 0;
+	RID sampler = material_storage->sampler_rd_get_default(RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RD::Uniform source(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ sampler, p_source_texture }));
+	RID shader = copy_to_fb.shader.version_get_shader(copy_to_fb.shader_version, COPY_TO_FB_TIMING_HEATMAP);
+	ERR_FAIL_COND(shader.is_null());
+
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_dest_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 1.0f, 0, p_rect);
+	RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, copy_to_fb.pipelines[COPY_TO_FB_TIMING_HEATMAP].get_render_pipeline(RD::INVALID_ID, RD::get_singleton()->framebuffer_get_format(p_dest_framebuffer)));
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, source), 0);
+	RD::get_singleton()->draw_list_bind_index_array(draw_list, material_storage->get_quad_index_array());
+	RD::get_singleton()->draw_list_set_push_constant(draw_list, &push_constant, sizeof(push_constant));
 	RD::get_singleton()->draw_list_draw(draw_list, true);
 	RD::get_singleton()->draw_list_end();
 }

@@ -1385,7 +1385,12 @@ void ParticlesStorage::_particles_update_buffers(Particles *particles) {
 
 		data.resize_initialized(particle_instance_buffer_size);
 
-		particles->particle_instance_buffer = RD::get_singleton()->storage_buffer_create(particle_instance_buffer_size, data);
+		// Ray tracing reads per-instance custom data through the buffer device address.
+		BitField<RD::BufferCreationBits> instance_flags = 0;
+		if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+			instance_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		}
+		particles->particle_instance_buffer = RD::get_singleton()->storage_buffer_create(particle_instance_buffer_size, data, 0, instance_flags);
 
 		{
 			Vector<RD::Uniform> uniforms;

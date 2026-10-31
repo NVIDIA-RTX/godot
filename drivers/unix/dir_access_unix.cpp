@@ -145,7 +145,7 @@ uint64_t DirAccessUnix::get_modified_time(String p_file) {
 	return 0;
 }
 
-String DirAccessUnix::get_next() {
+String DirAccessUnix::_get_next_entry() {
 	if (!dir_stream) {
 		return "";
 	}

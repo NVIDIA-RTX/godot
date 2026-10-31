@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RDPipelineShader" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="shader" type="RID" setter="set_shader" getter="get_shader" default="RID()">
+		</member>
+		<member name="specialization_constants" type="RDPipelineSpecializationConstant[]" setter="set_specialization_constants" getter="get_specialization_constants" default="[]">
+		</member>
+	</members>
+</class>

@@ -164,6 +164,11 @@ public:
 
 	virtual Transform3D get_camera_transform() const;
 	virtual Projection get_camera_projection() const;
+	real_t get_fov_interpolated() const;
+	real_t get_size_interpolated() const;
+	real_t get_near_interpolated() const;
+	real_t get_far_interpolated() const;
+	Vector2 get_frustum_offset_interpolated() const;
 
 	virtual Vector3 project_ray_normal(const Point2 &p_pos) const;
 	virtual Vector3 project_ray_origin(const Point2 &p_pos) const;

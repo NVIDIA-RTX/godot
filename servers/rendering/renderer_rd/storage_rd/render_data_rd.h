@@ -71,6 +71,7 @@ public:
 
 	uint32_t directional_light_count = 0;
 	bool directional_light_soft_shadows = false;
+	bool shadows_from_ray_queries = false;
 
 	bool lightmap_bicubic_filter = false;
 
@@ -79,6 +80,7 @@ public:
 	/* Viewport data */
 	bool transparent_bg = false;
 	Rect2i render_region;
+	RID viewport;
 
 	/* Shadow data */
 	const RendererSceneRender::RenderShadowData *render_shadows = nullptr;
@@ -98,4 +100,5 @@ public:
 	/* RT-extra: AABB-culled instances/lights outside frustum for TLAS and light gathering. */
 	const PagedArray<RenderGeometryInstance *> *rt_instances = nullptr;
 	const PagedArray<RID> *rt_lights = nullptr;
+	const PagedArray<RID> *rt_decals = nullptr;
 };

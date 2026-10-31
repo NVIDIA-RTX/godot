@@ -156,6 +156,13 @@ void LightStorage::light_set_param(RID p_light, RS::LightParam p_param, float p_
 				light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_LIGHT_SOFT_SHADOW_AND_PROJECTOR);
 			}
 		} break;
+		case RS::LIGHT_PARAM_SHADOW_OPACITY: {
+			if (is_shadow_opacity_visible(light->param[p_param]) != is_shadow_opacity_visible(p_value)) {
+				// Toggles whether the shadow is rendered at all.
+				light->version++;
+				light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_LIGHT);
+			}
+		} break;
 		default: {
 		}
 	}
@@ -227,6 +234,16 @@ uint32_t LightStorage::light_get_shadow_caster_mask(RID p_light) const {
 	ERR_FAIL_NULL_V(light, 0);
 
 	return light->shadow_caster_mask;
+}
+
+void LightStorage::light_set_shadow_renderers(RID p_light, BitField<RS::ShadowRenderer> p_renderers) {
+	Light *light = light_owner.get_or_null(p_light);
+	ERR_FAIL_NULL(light);
+
+	light->shadow_renderers = uint32_t(p_renderers) & RS::SHADOW_RENDERER_ALL;
+
+	light->version++;
+	light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_LIGHT);
 }
 
 void LightStorage::light_set_distance_fade(RID p_light, bool p_enabled, float p_begin, float p_shadow, float p_length) {

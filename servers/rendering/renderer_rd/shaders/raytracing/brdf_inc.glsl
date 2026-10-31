@@ -82,6 +82,8 @@ V mul(const M &m, const V &v) {
 	float3x3(r0c0, r0c1, r0c2, r1c0, r1c1, r1c2, r2c0, r2c1, r2c2)
 #endif
 
+#include "../material_inputs_inc.glsl"
+
 // -------------------------------------------------------------------------
 //    Constant Definitions
 // -------------------------------------------------------------------------
@@ -105,6 +107,17 @@ V mul(const M &m, const V &v) {
 // BRDF types
 #define DIFFUSE_TYPE 1
 #define SPECULAR_TYPE 2
+
+// Godot diffuse modes (must match RT_MAT_DIFFUSE_* in render_raytracing.h).
+#define GODOT_DIFFUSE_LAMBERT 0u
+#define GODOT_DIFFUSE_BURLEY 1u
+#define GODOT_DIFFUSE_LAMBERT_WRAP 2u
+#define GODOT_DIFFUSE_TOON 3u
+
+// Godot specular modes (must match RT_MAT_SPECULAR_* in render_raytracing.h).
+#define GODOT_SPECULAR_SCHLICK_GGX 0u
+#define GODOT_SPECULAR_TOON 1u
+#define GODOT_SPECULAR_DISABLED 2u
 
 // PIs
 #ifndef PI
@@ -152,11 +165,7 @@ V mul(const M &m, const V &v) {
 // Nothing has lower reflectance than 2%, but we use 4% to have consistent results with UE4, Frostbite, et al.
 #define MIN_DIELECTRICS_F0 0.04f
 
-// Enable this to weigh diffuse by Fresnel too, otherwise specular and diffuse will be simply added together
-// (this is disabled by default for Frostbite diffuse which is normalized to combine well with GGX Specular BRDF)
-#if DIFFUSE_BRDF != FROSTBITE
-#define COMBINE_BRDFS_WITH_FRESNEL 1
-#endif
+// Diffuse and specular are simply added together, like the rasterizer (no (1 - F) weighting of diffuse).
 
 // Uncomment this to use "general" version of G1 which is not optimized and uses NDF-specific G_Lambda (can be useful for experimenting and debugging)
 //#define Smith_G1 Smith_G1_General
@@ -166,6 +175,9 @@ V mul(const M &m, const V &v) {
 
 // Enable height correlated version of G2 term. Separable version will be used otherwise
 #define USE_HEIGHT_CORRELATED_G2 1
+
+// Use Hammon's height-correlated G2 approximation, which is Godot's V_GGX (requires USE_OPTIMIZED_G2 and GGX)
+#define USE_HAMMON_G2 1
 
 // Master toggle for the shading-normal clamp at grazing angles.
 // 0 -> clampShadingNormal becomes a passthrough; only the mirror fallback in
@@ -276,6 +288,11 @@ struct MaterialProperties {
 	float dielectricF0; // Base reflectance for dielectrics (e.g. 0.04 for default 4% reflectance).
 	float transmissivness;
 	float opacity;
+
+	float3 energyCompensation; // Godot's DFG multiscatter compensation: 1 + F0 * (1 / dfg.y - 1).
+	float3 backlight; // BACKLIGHT; light leaking through from behind the surface.
+	uint diffuseMode; // GODOT_DIFFUSE_*
+	uint specularMode; // GODOT_SPECULAR_*
 };
 
 // Data needed to evaluate BRDF (surface and material properties at given point + configuration of light and normal vectors)
@@ -291,6 +308,7 @@ struct BrdfData {
 
 	// Commonly used terms for BRDF evaluation
 	float3 F; //< Fresnel term
+	float f90; //< Fresnel reflectance at grazing angles (see 'godotF90')
 
 	// Vectors
 	float3 V; //< Direction to viewer (or opposite direction of incident ray)
@@ -357,7 +375,7 @@ void evalIndirectVoid(const BrdfData data, float2 u, OUT_PARAMETER(float3) rayDi
 	weight = float3(0.0f, 0.0f, 0.0f);
 }
 
-float3 sampleSpecularVoid(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float2 u, OUT_PARAMETER(float3) weight) {
+float3 sampleSpecularVoid(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float f90, float3 energyCompensation, float2 u, OUT_PARAMETER(float3) weight) {
 	weight = float3(0.0f, 0.0f, 0.0f);
 	return float3(0.0f, 0.0f, 0.0f);
 }
@@ -439,7 +457,7 @@ float diffusePdf(float NdotL) {
 // -------------------------------------------------------------------------
 
 // Schlick's approximation to Fresnel term
-// f90 should be 1.0, except for the trick used by Schuler (see 'shadowedF90' function)
+// f90 should be 1.0, except for specular occlusion tricks (see 'godotF90' function)
 float3 evalFresnelSchlick(float3 f0, float f90, float NdotS) {
 	return f0 + (f90 - f0) * pow(1.0f - NdotS, 5.0f);
 }
@@ -464,17 +482,10 @@ float3 evalFresnel(float3 f0, float f90, float NdotS) {
 	return evalFresnelSchlick(f0, f90, NdotS);
 }
 
-// Attenuates F90 for very low F0 values
-// Source: "An efficient and Physically Plausible Real-Time Shading Model" in ShaderX7 by Schuler
-// Also see section "Overbright highlights" in Hoffman's 2010 "Crafting Physically Motivated Shading Models for Game Development" for discussion
-// IMPORTANT: Note that when F0 is calculated using metalness, it's value is never less than MIN_DIELECTRICS_F0, and therefore,
-// this adjustment has no effect. To be effective, F0 must be authored separately, or calculated in different way. See main text for discussion.
-float shadowedF90(float3 F0) {
-	// This scaler value is somewhat arbitrary, Schuler used 60 in his article. In here, we derive it from MIN_DIELECTRICS_F0 so
-	// that it takes effect for any reflectance lower than least reflective dielectrics
-	//const float t = 60.0f;
-	const float t = (1.0f / MIN_DIELECTRICS_F0);
-	return min(1.0f, t * luminance(F0));
+// Godot's direct-light F90: Filament's specular occlusion term, never below metalness
+// Source: scene_forward_lights_inc.glsl light_compute()
+float godotF90(float3 F0, float metalness) {
+	return clamp(dot(F0, float3(50.0f * 0.33f)), metalness, 1.0f);
 }
 
 // -------------------------------------------------------------------------
@@ -529,7 +540,7 @@ float3 samplePhong(float3 Vlocal, float2 alpha2D, float2 u) {
 }
 
 // Sampling the specular BRDF based on Phong, includes normalization term
-float3 sampleSpecularPhong(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float2 u, OUT_PARAMETER(float3) weight) {
+float3 sampleSpecularPhong(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float f90, float3 energyCompensation, float2 u, OUT_PARAMETER(float3) weight) {
 	// First convert roughness to shininess (Phong exponent)
 	float shininess = beckmannAlphaToShininess(alpha);
 
@@ -741,11 +752,12 @@ float Smith_G2_Over_G1_Height_Correlated(float alpha, float alphaSquared, float 
 // Also note that when USE_OPTIMIZED_G2 is specified, returned value will be: G2 / (4 * NdotL * NdotV) if GG-X is selected
 float Smith_G2(float alpha, float alphaSquared, float NdotL, float NdotV) {
 #if USE_OPTIMIZED_G2 && (MICROFACET_DISTRIBUTION == GGX)
-#if USE_HEIGHT_CORRELATED_G2
 #define G2_DIVIDED_BY_DENOMINATOR 1
+#if USE_HAMMON_G2
+	return Smith_G2_Height_Correlated_GGX_Hammon(alpha, NdotL, NdotV);
+#elif USE_HEIGHT_CORRELATED_G2
 	return Smith_G2_Height_Correlated_GGX_Lagarde(alphaSquared, NdotL, NdotV);
 #else
-#define G2_DIVIDED_BY_DENOMINATOR 1
 	return Smith_G2_Separable_GGX_Lagarde(alphaSquared, NdotL, NdotV);
 #endif
 #else
@@ -850,7 +862,10 @@ float3 sampleBeckmannWalter(float3 Vlocal, float2 alpha2D, float2 u) {
 
 // Weight for the reflection ray sampled from GGX distribution using VNDF method
 float specularSampleWeightGGXVNDF(float alpha, float alphaSquared, float NdotL, float NdotV, float HdotL, float NdotH) {
-#if USE_HEIGHT_CORRELATED_G2
+#if G2_DIVIDED_BY_DENOMINATOR
+	// BRDF * NdotL / PDF = F * D * G2' * NdotL / (D * G1(V) / (4 * NdotV)), with G2' = G2 / (4 * NdotL * NdotV)
+	return (4.0f * NdotL * NdotV * Smith_G2(alpha, alphaSquared, NdotL, NdotV)) / Smith_G1_GGX(alpha, NdotV, alphaSquared, NdotV * NdotV);
+#elif USE_HEIGHT_CORRELATED_G2
 	return Smith_G2_Over_G1_Height_Correlated(alpha, alphaSquared, NdotL, NdotV);
 #else
 	return Smith_G1_GGX(alpha, NdotL, alphaSquared, NdotL * NdotL);
@@ -862,23 +877,9 @@ float specularSampleWeightBeckmannWalter(float alpha, float alphaSquared, float 
 	return (HdotL * Smith_G2(alpha, alphaSquared, NdotL, NdotV)) / (NdotV * NdotH);
 }
 
-// Multiple scattering compensation approximations for GGX
-// Ems = (1-Ess) / Ess
-float evalEmsApprox(float r2, float NdV) {
-	float r4 = r2 * r2;
-	float nv0 = 0.2 * r2;
-	float nv1 = 0.32 * r2 + 1.94 * r4;
-	return lerp(nv0, nv1, NdV);
-}
-
-float3 evalMultiScatterApproximation(float alpha, float NdV, float3 F0) {
-	float Ems = evalEmsApprox(alpha, NdV);
-	return 1.0 + F0 * Ems;
-}
-
 // Samples a reflection ray from the rough surface using selected microfacet distribution and sampling method
-// Resulting weight includes multiplication by cosine (NdotL) term
-float3 sampleSpecularMicrofacet(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float2 u, OUT_PARAMETER(float3) weight) {
+// Resulting weight includes multiplication by cosine (NdotL) term and the multiscatter energy compensation
+float3 sampleSpecularMicrofacet(float3 Vlocal, float alpha, float alphaSquared, float3 specularF0, float f90, float3 energyCompensation, float2 u, OUT_PARAMETER(float3) weight) {
 	// Sample a microfacet normal (H) in local space
 	float3 Hlocal;
 	if (alpha == 0.0f) {
@@ -899,17 +900,11 @@ float3 sampleSpecularMicrofacet(float3 Vlocal, float alpha, float alphaSquared, 
 	float NdotL = max(0.00001f, min(1.0f, dot(Nlocal, Llocal)));
 	float NdotV = max(0.00001f, min(1.0f, dot(Nlocal, Vlocal)));
 	float NdotH = max(0.00001f, min(1.0f, dot(Nlocal, Hlocal)));
-	float3 F = evalFresnel(specularF0, shadowedF90(specularF0), HdotL);
-
-#if MICROFACET_DISTRIBUTION == GGX
-	float3 ms = evalMultiScatterApproximation(alpha, NdotV, specularF0);
-#else
-	float3 ms = vec3(1.0f, 1.0f, 1.0f);
-#endif
+	float3 F = evalFresnel(specularF0, f90, HdotL);
 
 	// Calculate weight of the sample specific for selected sampling method
 	// (this is microfacet BRDF divided by PDF of sampling method - notice how most terms cancel out)
-	weight = ms * F * specularSampleWeight(alpha, alphaSquared, NdotL, NdotV, HdotL, NdotH);
+	weight = energyCompensation * F * specularSampleWeight(alpha, alphaSquared, NdotL, NdotV, HdotL, NdotH);
 
 	return Llocal;
 }
@@ -918,13 +913,69 @@ float3 sampleSpecularMicrofacet(float3 Vlocal, float alpha, float alphaSquared, 
 float3 evalMicrofacet(const BrdfData data) {
 	float D = Microfacet_D(max(0.00001f, data.alphaSquared), data.NdotH);
 	float G2 = Smith_G2(data.alpha, data.alphaSquared, data.NdotL, data.NdotV);
-	//float3 F = evalFresnel(data.specularF0, shadowedF90(data.specularF0), data.VdotH); //< Unused, F is precomputed already
 
 #if G2_DIVIDED_BY_DENOMINATOR
 	return data.F * (G2 * D * data.NdotL);
 #else
 	return ((data.F * G2 * D) / (4.0f * data.NdotL * data.NdotV)) * data.NdotL;
 #endif
+}
+
+// -------------------------------------------------------------------------
+//    Godot shading model
+// -------------------------------------------------------------------------
+// Direct-light terms mirror light_compute() in scene_forward_lights_inc.glsl so
+// raster and path traced images agree for the same material.
+
+// Diffuse BRDF times NdotL, without albedo. 'NdotL' is unclamped so lambert wrap
+// and toon can reach past the terminator.
+float godotDiffuseNdotL(const BrdfData data, float NdotL, uint diffuseMode) {
+	float cNdotL = max(NdotL, 0.0f);
+	float r = data.roughness;
+	switch (diffuseMode) {
+		case GODOT_DIFFUSE_BURLEY:
+			return disneyDiffuse(data) * cNdotL * ONE_OVER_PI;
+		case GODOT_DIFFUSE_LAMBERT_WRAP: {
+			float opRoughness = 1.0f + r;
+			return max(0.0f, (NdotL + r) / (opRoughness * opRoughness)) * ONE_OVER_PI;
+		}
+		case GODOT_DIFFUSE_TOON:
+			return smoothstep(-r, max(r, 0.01f), NdotL) * ONE_OVER_PI;
+		default:
+			return cNdotL * ONE_OVER_PI;
+	}
+}
+
+// Weight of a cosine-weighted hemisphere sample (diffuse BRDF * NdotL / PDF), without albedo.
+// Wrap and toon have no ambient counterpart in the rasterizer and fall back to Lambert.
+float godotDiffuseSampleWeight(const BrdfData data, uint diffuseMode) {
+	return diffuseMode == GODOT_DIFFUSE_BURLEY ? disneyDiffuse(data) : 1.0f;
+}
+
+// Specular BRDF times NdotL. Toon specular is tinted by the diffuse reflectance
+// because the rasterizer accumulates it into diffuse_light.
+float3 godotSpecularNdotL(const BrdfData data, uint specularMode, float3 energyCompensation) {
+	// The rasterizer skips direct specular for perfectly smooth surfaces.
+	if (data.roughness <= 0.0f || specularMode == GODOT_SPECULAR_DISABLED) {
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+	if (specularMode == GODOT_SPECULAR_TOON) {
+		float RdotV = dot(reflect(-data.L, data.N), data.V);
+		float mid = (1.0f - data.roughness) * (1.0f - data.roughness);
+		float halfWidth = data.roughness * 0.5f;
+		return data.diffuseReflectance * (smoothstep(mid - halfWidth, mid + halfWidth, RdotV) * mid);
+	}
+	if (data.Lbackfacing) {
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+	return energyCompensation * evalMicrofacet(data);
+}
+
+// True when a light behind the shading normal can still contribute.
+bool godotShadesBackfacingLight(MaterialProperties material) {
+	return any(greaterThan(material.backlight, float3(0.0f, 0.0f, 0.0f))) ||
+			material.diffuseMode == GODOT_DIFFUSE_LAMBERT_WRAP || material.diffuseMode == GODOT_DIFFUSE_TOON ||
+			material.specularMode == GODOT_SPECULAR_TOON;
 }
 
 // -------------------------------------------------------------------------
@@ -1047,53 +1098,21 @@ BrdfData prepareBRDFData(float3 N, float3 L, float3 V, MaterialProperties materi
 	data.alphaSquared = data.alpha * data.alpha;
 
 	// Pre-calculate some more BRDF terms
-	data.F = evalFresnel(data.specularF0, shadowedF90(data.specularF0), data.LdotH);
+	data.f90 = godotF90(data.specularF0, material.metalness);
+	data.F = evalFresnel(data.specularF0, data.f90, data.LdotH);
 
 	return data;
 }
 
-// This is an entry point for evaluation of all other BRDFs based on selected configuration (for direct light)
-float3 evalCombinedBRDF(float3 N, float3 L, float3 V, MaterialProperties material) {
-	// Prepare data needed for BRDF evaluation - unpack material properties and evaluate commonly used terms (e.g. Fresnel, NdotL, ...)
-	const BrdfData data = prepareBRDFData(N, L, V, material);
-
-	// Ignore V and L rays "below" the hemisphere
-	if (data.Vbackfacing || data.Lbackfacing) {
-		return float3(0.0f, 0.0f, 0.0f);
-	}
-
-	// Eval specular and diffuse BRDFs
-	float3 specular = evalSpecular(data);
-	float3 diffuse = evalDiffuse(data);
-
-	// Combine specular and diffuse layers
-#if COMBINE_BRDFS_WITH_FRESNEL
-	// Specular is already multiplied by F, just attenuate diffuse
-	return (float3(1.0f, 1.0f, 1.0f) - data.F) * diffuse + specular;
-#else
-	return diffuse + specular;
-#endif
-}
-
-// Version that returns diffuse and specular separately.
+// Entry point for direct light: diffuse (including backlight) and specular, both times NdotL.
+// Returned separately so the caller can apply the light's specular amount.
 void evalCombinedBRDFSeparate(float3 N, float3 L, float3 V, MaterialProperties material, OUT_PARAMETER(float3) outDiffuse, OUT_PARAMETER(float3) outSpecular) {
-	outDiffuse = float3(0.0f, 0.0f, 0.0f);
-	outSpecular = float3(0.0f, 0.0f, 0.0f);
-	// Prepare data needed for BRDF evaluation (uses shading normal N for all BRDF math).
+	// Uses shading normal N for all BRDF math.
 	const BrdfData data = prepareBRDFData(N, L, V, material);
-	// Ignore L rays "below" the hemisphere
-	if (data.Lbackfacing) {
-		return;
-	}
-
-	// Eval specular and diffuse BRDFs
-	outSpecular = evalSpecular(data);
-	outDiffuse = evalDiffuse(data);
-
-#if COMBINE_BRDFS_WITH_FRESNEL
-	// Specular is already multiplied by F, just attenuate diffuse
-	outDiffuse = (float3(1.0f, 1.0f, 1.0f) - data.F) * outDiffuse;
-#endif
+	float diffuseNdotL = godotDiffuseNdotL(data, dot(N, L), material.diffuseMode);
+	float3 backlit = material.backlight * (ONE_OVER_PI - diffuseNdotL);
+	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) + backlit);
+	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation);
 }
 
 // This is an entry point for evaluation of all other BRDFs based on selected configuration (for indirect light)
@@ -1114,21 +1133,12 @@ bool evalIndirectCombinedBRDF(float2 u, float3 shadingNormal, float3 geometryNor
 		rayDirectionLocal = sampleHemisphere(u);
 		const BrdfData data = prepareBRDFData(Nlocal, rayDirectionLocal, Vlocal, material);
 
-		// Function 'diffuseTerm' is predivided by PDF of sampling the cosine weighted hemisphere
-		sampleWeight = data.diffuseReflectance * diffuseTerm(data);
-
-#if COMBINE_BRDFS_WITH_FRESNEL
-		// Sample a half-vector of specular BRDF. Note that we're reusing random variable 'u' here, but correctly it should be an new independent random number
-		float3 Hspecular = sampleSpecularHalfVector(Vlocal, float2(data.alpha, data.alpha), u);
-
-		// Clamp HdotL to small value to prevent numerical instability. Assume that rays incident from below the hemisphere have been filtered
-		float VdotH = max(0.00001f, min(1.0f, dot(Vlocal, Hspecular)));
-		sampleWeight *= (float3(1.0f, 1.0f, 1.0f) - evalFresnel(data.specularF0, shadowedF90(data.specularF0), VdotH));
-#endif
+		sampleWeight = data.diffuseReflectance * godotDiffuseSampleWeight(data, material.diffuseMode);
 
 	} else if (brdfType == SPECULAR_TYPE) {
+		// Indirect specular stays GGX for every specular mode, like the rasterizer's reflections.
 		const BrdfData data = prepareBRDFData(Nlocal, float3(0.0f, 0.0f, 1.0f) /* unused L vector */, Vlocal, material);
-		rayDirectionLocal = sampleSpecular(Vlocal, data.alpha, data.alphaSquared, data.specularF0, u, sampleWeight);
+		rayDirectionLocal = sampleSpecular(Vlocal, data.alpha, data.alphaSquared, data.specularF0, data.f90, material.energyCompensation, u, sampleWeight);
 	}
 
 	// Transform sampled direction Llocal back to V vector space.
@@ -1155,25 +1165,13 @@ bool evalIndirectCombinedBRDF(float2 u, float3 shadingNormal, float3 geometryNor
 //    DLSS-RR G-buffer helpers (Environment BRDF approximation)
 // -------------------------------------------------------------------------
 
-// Environment BRDF approximation from https://www.unrealengine.com/fr/blog/physically-based-shading-on-mobile
-// Author: Brian Karis, License: 'Epic Games, Inc. gives you permission to use, copy, modify, and distribute the code samples in this article as you see fit with no attribution required.'
-// Returns specular albedo directly (F0 * scale + bias).
-float3 DLSSRR_envBRDFApprox(float3 specularColor, float roughness, float NdotV) {
-	const float4 c0 = { -1, -0.0275, -0.572, 0.022 };
-	const float4 c1 = { 1, 0.0425, 1.04, -0.04 };
-	float4 r = roughness * c0 + c1;
-	float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
-	float2 AB = float2(-1.04, 1.04) * a004 + r.zw;
-	return (specularColor * AB.x + AB.y) * 2.0f;
-}
-
 float3 DLSSRR_computeDiffuseAlbedo(float3 baseColor, float metalness) {
-	return baseColor * (1.0f - metalness);
+	return material_diffuse_albedo(baseColor, metalness);
 }
 
 float3 DLSSRR_computeSpecularAlbedo(float3 baseColor, float metalness, float dielectricF0, float roughness, float NdotV) {
 	float3 F0 = baseColorToSpecularF0(baseColor, metalness, dielectricF0);
-	return DLSSRR_envBRDFApprox(F0, roughness, NdotV);
+	return material_specular_albedo(F0, roughness, NdotV);
 }
 
 // Fudges diffuse albedo so that is	never zero. Needed for stable demodulation.

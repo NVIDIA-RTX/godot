@@ -47,6 +47,7 @@ class CrashHandler {
 	bool disabled;
 
 public:
+	// Installs the unhandled exception filter, the abort, pure call and invalid parameter hooks, and the main thread's stack overflow reserve.
 	void initialize();
 
 	void disable();

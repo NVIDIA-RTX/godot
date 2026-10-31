@@ -42,16 +42,46 @@
 				Returns whether or not the specified layer of the [member cull_mask] is enabled, given a [param layer_number] between 1 and 20.
 			</description>
 		</method>
+		<method name="get_far_interpolated" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the cached physics-interpolated value of [member far]. Read from [signal RenderingServer.frame_pre_draw] for the finalized render-frame value. Inside a physics callback, or when physics interpolation is disabled, returns the regular property value instead. This method does not advance interpolation. Use [member projection] to determine which projection properties are active, and the existing setters to apply the value to a camera.
+			</description>
+		</method>
+		<method name="get_fov_interpolated" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the cached physics-interpolated value of [member fov]. Read from [signal RenderingServer.frame_pre_draw] for the finalized render-frame value. Inside a physics callback, or when physics interpolation is disabled, returns the regular property value instead. This method does not advance interpolation. Use [member projection] to determine which projection properties are active, and the existing setters to apply the value to a camera.
+			</description>
+		</method>
 		<method name="get_frustum" qualifiers="const">
 			<return type="Plane[]" />
 			<description>
 				Returns the camera's frustum planes in world space units as an array of [Plane]s in the following order: near, far, left, top, right, bottom. Not to be confused with [member frustum_offset].
 			</description>
 		</method>
+		<method name="get_frustum_offset_interpolated" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				Returns the cached physics-interpolated value of [member frustum_offset]. Read from [signal RenderingServer.frame_pre_draw] for the finalized render-frame value. Inside a physics callback, or when physics interpolation is disabled, returns the regular property value instead. This method does not advance interpolation. Use [member projection] to determine which projection properties are active, and the existing setters to apply the value to a camera.
+			</description>
+		</method>
+		<method name="get_near_interpolated" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the cached physics-interpolated value of [member near]. Read from [signal RenderingServer.frame_pre_draw] for the finalized render-frame value. Inside a physics callback, or when physics interpolation is disabled, returns the regular property value instead. This method does not advance interpolation. Use [member projection] to determine which projection properties are active, and the existing setters to apply the value to a camera.
+			</description>
+		</method>
 		<method name="get_pyramid_shape_rid">
 			<return type="RID" />
 			<description>
 				Returns the RID of a pyramid shape encompassing the camera's view frustum, ignoring the camera's near plane. The tip of the pyramid represents the position of the camera.
+			</description>
+		</method>
+		<method name="get_size_interpolated" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the cached physics-interpolated value of [member size]. Read from [signal RenderingServer.frame_pre_draw] for the finalized render-frame value. Inside a physics callback, or when physics interpolation is disabled, returns the regular property value instead. This method does not advance interpolation. Use [member projection] to determine which projection properties are active, and the existing setters to apply the value to a camera.
 			</description>
 		</method>
 		<method name="is_position_behind" qualifiers="const">

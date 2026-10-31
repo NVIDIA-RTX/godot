@@ -419,6 +419,9 @@ void ShaderRD::_compile_variant(uint32_t p_variant, CompileData p_data) {
 	{
 		p_data.version->variants.write[variant] = RD::get_singleton()->shader_create_from_bytecode_with_samplers(shader_data, p_data.version->variants[variant], immutable_samplers);
 		p_data.version->variant_data.write[variant] = shader_data;
+		if (p_data.version->variants[variant].is_valid()) {
+			RD::get_singleton()->set_resource_name(p_data.version->variants[variant], name + ":" + itos(variant));
+		}
 	}
 }
 
@@ -680,6 +683,7 @@ bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
 			}
 
 			p_version->variants.write[variant_id] = shader;
+			RD::get_singleton()->set_resource_name(shader, name + ":" + itos(variant_id));
 		}
 	}
 
@@ -880,6 +884,37 @@ bool ShaderRD::version_is_valid(RID p_version) {
 
 	_compile_ensure_finished(version);
 
+	return version->valid;
+}
+
+bool ShaderRD::version_is_group_compiled(RID p_version, int p_group) {
+	ERR_FAIL_INDEX_V(p_group, group_enabled.size(), false);
+	if (!group_enabled[p_group]) {
+		return false;
+	}
+	Version *version = version_owner.get_or_null(p_version);
+	ERR_FAIL_NULL_V(version, false);
+
+	MutexLock lock(*version->mutex);
+
+	if (version->dirty) {
+		_initialize_version(version);
+		for (int i = 0; i < group_enabled.size(); i++) {
+			if (!group_enabled[i]) {
+				_allocate_placeholders(version, i);
+				continue;
+			}
+			_compile_version_start(version, i);
+		}
+	}
+
+	const WorkerThreadPool::GroupID task = version->group_compilation_tasks[p_group];
+	if (task != 0) {
+		if (!WorkerThreadPool::get_singleton()->is_group_task_completed(task)) {
+			return false;
+		}
+		_compile_version_end(version, p_group);
+	}
 	return version->valid;
 }
 

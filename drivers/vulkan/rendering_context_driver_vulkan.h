@@ -40,6 +40,7 @@
 #endif
 
 #include "drivers/vulkan/godot_vulkan.h"
+#include "drivers/vulkan/rt_validation_tracker.h"
 
 class RenderingContextDriverVulkan : public RenderingContextDriver {
 public:
@@ -105,6 +106,7 @@ private:
 	VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
 	VkDebugReportCallbackEXT debug_report = VK_NULL_HANDLE;
 	Functions functions;
+	RTValidationTracker rt_validation_tracker;
 
 	Error _initialize_vulkan_version();
 	void _register_requested_instance_extension(const CharString &p_extension_name, bool p_required);
@@ -160,6 +162,7 @@ public:
 	VkQueueFamilyProperties queue_family_get(uint32_t p_device_index, uint32_t p_queue_family_index) const;
 	bool queue_family_supports_present(VkPhysicalDevice p_physical_device, uint32_t p_queue_family_index, SurfaceID p_surface) const;
 	const Functions &functions_get() const;
+	RTValidationTracker &rt_validation_tracker_get();
 
 	static VkAllocationCallbacks *get_allocation_callbacks(VkObjectType p_type);
 

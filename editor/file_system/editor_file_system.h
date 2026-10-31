@@ -170,8 +170,15 @@ class EditorFileSystem : public Node {
 	struct ScannedDirectory {
 		String name;
 		String full_path;
+		uint64_t modified_time = 0;
 		Vector<ScannedDirectory *> subdirs;
 		List<String> files;
+		HashMap<String, uint64_t> file_modified_times; // Captured during enumeration; absent entry = file did not exist.
+
+		uint64_t get_file_modified_time(const String &p_file) const {
+			const uint64_t *mt = file_modified_times.getptr(p_file);
+			return mt ? *mt : 0;
+		}
 
 		~ScannedDirectory();
 	};
@@ -279,6 +286,11 @@ class EditorFileSystem : public Node {
 
 	bool _test_for_reimport(const String &p_path, const String &p_expected_import_md5);
 	bool _is_test_for_reimport_needed(const String &p_path, uint64_t p_last_modification_time, uint64_t p_modification_time, uint64_t p_last_import_modification_time, uint64_t p_import_modification_time, const Vector<String> &p_import_dest_paths);
+
+	// One-pass snapshot of .godot/imported, so import destination checks don't do per-file exists() calls.
+	HashSet<String> imported_dest_dir_snapshot;
+	bool imported_dest_dir_snapshot_valid = false;
+	bool _import_dest_file_exists(const String &p_path);
 	bool _can_import_file(const String &p_path);
 	Vector<String> _get_import_dest_paths(const String &p_path);
 

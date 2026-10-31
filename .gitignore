@@ -397,3 +397,6 @@ $RECYCLE.BIN/
 *.msp
 *.lnk
 *.generated.props
+
+# Ignore hidden folders in root dir
+/.*/

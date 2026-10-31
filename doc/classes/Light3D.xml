@@ -126,7 +126,10 @@
 			Offsets the lookup into the shadow map by the object's normal. This can be used to reduce self-shadowing artifacts without using [member shadow_bias]. In practice, this value should be tweaked along with [member shadow_bias] to reduce artifacts as much as possible.
 		</member>
 		<member name="shadow_opacity" type="float" setter="set_param" getter="get_param" default="1.0">
-			The opacity to use when rendering the light's shadow map. Values lower than [code]1.0[/code] make the light appear through shadows. This can be used to fake global illumination at a low performance cost.
+			The opacity to use when rendering the light's shadow map. Values lower than [code]1.0[/code] make the light appear through shadows. This can be used to fake global illumination at a low performance cost. At [code]0.0[/code], the shadow is skipped entirely, as if [member shadow_enabled] was [code]false[/code].
+		</member>
+		<member name="shadow_renderers" type="int" setter="set_shadow_renderers" getter="get_shadow_renderers" enum="RenderingServer.ShadowRenderer" is_bitfield="true" default="3">
+			The renderers that draw this light's shadow while [member shadow_enabled] is [code]true[/code]. Unticking [b]Rasterizer[/b] skips shadow maps, ray query shadows and GI shadows entirely. Unticking [b]Path Tracer[/b] skips the path tracer's shadow rays. [member shadow_opacity] and [member distance_fade_shadow] apply to both renderers.
 		</member>
 		<member name="shadow_reverse_cull_face" type="bool" setter="set_shadow_reverse_cull_face" getter="get_shadow_reverse_cull_face" default="false">
 			If [code]true[/code], reverses the backface culling of the mesh. This can be useful when you have a flat mesh that has a light behind it. If you need to cast a shadow on both sides of the mesh, set the mesh to use double-sided shadows with [constant GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED].

@@ -36,6 +36,10 @@
 #include "renderer_scene_cull.h"
 #include "rendering_server_globals.h"
 
+#ifdef STREAMLINE_ENABLED
+#include "drivers/streamline/streamline_context.h"
+#endif
+
 // careful, these may run in different threads than the rendering server
 
 int RenderingServerDefault::changes = 0;
@@ -66,7 +70,11 @@ void RenderingServerDefault::request_frame_drawn_callback(const Callable &p_call
 	frame_drawn_callbacks.push_back(p_callable);
 }
 
-void RenderingServerDefault::_draw(bool p_swap_buffers, double frame_step) {
+void RenderingServerDefault::_draw(bool p_swap_buffers, double frame_step, void *p_frame_token) {
+#ifdef STREAMLINE_ENABLED
+	StreamlineContext::get().render_token = (sl::FrameToken *)p_frame_token;
+#endif
+
 	GodotProfileZoneGroupedFirst(_profile_zone, "rasterizer->begin_frame");
 	RSG::rasterizer->begin_frame(frame_step);
 
@@ -318,6 +326,16 @@ uint64_t RenderingServerDefault::get_rendering_info(RenderingInfo p_info) {
 	return RSG::utilities->get_rendering_info(p_info);
 }
 
+BitField<RenderingServer::RenderingNotReadyReason> RenderingServerDefault::get_rendering_not_ready_reasons() {
+	if (Thread::get_caller_id() != server_thread) {
+		BitField<RenderingNotReadyReason> ret;
+		command_queue.push_and_ret(RSG::scene, &RenderingMethod::get_not_ready_reasons, &ret);
+		return ret;
+	}
+	command_queue.flush_if_pending();
+	return RSG::scene->get_not_ready_reasons();
+}
+
 RenderingDevice::DeviceType RenderingServerDefault::get_video_adapter_type() const {
 	return RSG::utilities->get_video_adapter_type();
 }
@@ -438,10 +456,15 @@ void RenderingServerDefault::draw(bool p_present, double frame_step) {
 	// Needs to be done before changes is reset to 0, to not force the editor to redraw.
 	RS::get_singleton()->emit_signal(SNAME("frame_pre_draw"));
 	changes = 0;
+	// Captured here: the main thread swaps the token before the render thread reaches this draw.
+	void *frame_token = nullptr;
+#ifdef STREAMLINE_ENABLED
+	frame_token = StreamlineContext::get().last_token;
+#endif
 	if (create_thread) {
-		command_queue.push(this, &RenderingServerDefault::_draw, p_present, frame_step);
+		command_queue.push(this, &RenderingServerDefault::_draw, p_present, frame_step, frame_token);
 	} else {
-		_draw(p_present, frame_step);
+		_draw(p_present, frame_step, frame_token);
 	}
 }
 

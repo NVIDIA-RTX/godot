@@ -1,6 +1,6 @@
 // Light sampling and Next Event Estimation (NEE) for raytracing.
-// Requires: raytracing_inc.glsl, brdf_inc.glsl, tlas at binding 1, payload at location 0.
-// Note: ray_query_alpha_test() still requires GL_EXT_ray_query (used by DLSS-RR path or when USE_RAY_QUERY_SHADOWS is defined).
+// Requires: raytracing_inc.glsl, brdf_inc.glsl, tlas at binding 1, payload at location 0, bindless_textures[].
+// Note: raytracing_shadow_query_inc.glsl requires GL_EXT_ray_query.
 
 // ============================================================================
 // Light Types and Constants
@@ -16,8 +16,28 @@
 #endif
 
 // ============================================================================
-// Light Data (matches C++ RT_LightData, 80 bytes, std430)
+// Light Data (matches C++ RT_LightData, 64 bytes, std430)
 // ============================================================================
+
+#define RT_LIGHT_NO_PROJECTOR 0u // Bindless default white texture.
+
+// Bitfield words of C++ RT_LightData; see it for the layout. Positional-only fields are zero for directional lights.
+struct RTLightPacked {
+	vec3 position; // World pos (omni/spot) or normalized direction (directional).
+	float range; // Omni/spot range, 0 = infinite.
+	uint emission_rg; // fp16 r, g.
+	uint emission_b_radius; // fp16 b, radius.
+	uint energy; // fp16 specular, indirect.
+	uint masks; // cull_mask : 20, type : 2, unused : 2, shadow_ray_mask : 8.
+	uint attenuation_shadow; // fp16 attenuation, shadow opacity.
+	uint spot; // fp16 1 - cos(spot angle), 1 / spot attenuation.
+	uint orientation_xy; // snorm16 quaternion x, y.
+	uint orientation_zw; // snorm16 quaternion z, w.
+	uint projector_texture; // index : 24, unused : 8.
+	uint reserved0; // Free for future fields, keeps the 64-byte stride.
+	uint reserved1;
+	uint reserved2;
+};
 
 struct RTLightData {
 	vec3 position; // World pos (omni/spot) or direction (directional).
@@ -29,11 +49,12 @@ struct RTLightData {
 	float max_range_squared; // range^2 (0 = infinite).
 	float specular_amount; // Godot specular multiplier [0..1].
 	float indirect_energy; // Godot indirect energy multiplier.
+	float shadow_opacity; // 0 skips the shadow ray; otherwise blends traced transmittance towards 1.
+	float one_minus_cos_spot; // 1 - cosine of the spot cone half-angle.
 	float inv_spot_attenuation; // Spot cone softness.
-	float cos_spot_angle; // Cosine of spot cone half-angle.
-	float _pad0;
-	vec3 spot_direction; // Spot direction (normalized, world space).
-	float _pad1;
+	uint light_masks; // Bits 0-19: light_cull_mask (lighting test). Bits 24-31: TLAS shadow-ray mask.
+	uint projector_texture; // Bindless sRGB index, RT_LIGHT_NO_PROJECTOR when unset.
+	vec4 orientation; // Unit rotation quaternion (omni/spot); the spot cone points along local -Z.
 };
 
 // Light buffer SSBO (binding provided by the including shader via RT_LIGHT_BUFFER_BINDING).
@@ -42,8 +63,45 @@ struct RTLightData {
 #endif
 
 layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer LightBuffer {
-	RTLightData rt_lights[];
+	RTLightPacked rt_light_buffer[];
 };
+
+layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
+
+uint lights_get_type(uint idx) {
+	return bitfieldExtract(rt_light_buffer[idx].masks, 20, 2);
+}
+
+RTLightData lights_get(uint idx) {
+	RTLightPacked p = rt_light_buffer[idx];
+	RTLightData light;
+	light.position = p.position;
+	light.type = bitfieldExtract(p.masks, 20, 2);
+	vec2 emission_b_radius = unpackHalf2x16(p.emission_b_radius);
+	light.emission = vec3(unpackHalf2x16(p.emission_rg), emission_b_radius.x);
+	light.radius = emission_b_radius.y;
+	vec2 energy = unpackHalf2x16(p.energy);
+	light.specular_amount = energy.x;
+	light.indirect_energy = energy.y;
+	vec2 attenuation_shadow = unpackHalf2x16(p.attenuation_shadow);
+	light.attenuation = attenuation_shadow.x;
+	light.shadow_opacity = attenuation_shadow.y;
+	light.inv_max_range = p.range > 0.0 ? 1.0 / p.range : -1.0;
+	light.max_range_squared = p.range * p.range;
+	vec2 spot = unpackHalf2x16(p.spot);
+	light.one_minus_cos_spot = spot.x;
+	light.inv_spot_attenuation = spot.y;
+	light.light_masks = p.masks;
+	light.projector_texture = bitfieldExtract(p.projector_texture, 0, 24);
+	vec4 q = vec4(unpackSnorm2x16(p.orientation_xy), unpackSnorm2x16(p.orientation_zw));
+	light.orientation = q * inversesqrt(max(dot(q, q), 1e-8));
+	return light;
+}
+
+// Rotates p_v by the unit quaternion p_q.
+vec3 lights_rotate(vec4 p_q, vec3 p_v) {
+	return p_v + 2.0 * cross(p_q.xyz, cross(p_q.xyz, p_v) + p_q.w * p_v);
+}
 
 // ============================================================================
 // Unified Cone Sampling (for sphere, directional, spot lights)
@@ -126,15 +184,16 @@ vec3 lights_sample_cone(LightSample ls, vec2 u, out float pdf) {
 // Attenuation
 // ============================================================================
 
-// Godot-style windowed distance attenuation.
-// window = (1 - (d/range)^4)^2, combined with pow(d, -decay).
+// Godot-style windowed distance attenuation, identical to the rasterizer's get_omni_attenuation().
+// window = (1 - (d/range)^4)^2, combined with pow(d, -decay). Not clamped: lights closer than
+// 1 unit must brighten past 1.0, which small-range fixture lights rely on.
 float lights_get_attenuation(LightSample ls, float inv_max_range, float decay) {
 	if (ls.distance_sq <= 0.0) {
 		return 1.0; // Directional: no distance attenuation.
 	}
 
 	float distance = sqrt(ls.distance_sq);
-	float atten = min(pow(max(distance, 0.0001), -decay), 1.0);
+	float atten = pow(max(distance, 0.0001), -decay);
 
 	// Windowed falloff if range is finite (inv_max_range >= 0).
 	if (inv_max_range >= 0.0) {
@@ -159,127 +218,143 @@ float lights_get_specular_multiplier(float specular_amount, float roughness) {
 	}
 }
 
-// ============================================================================
-// Inline Alpha Test (shared by all ray query proceed loops)
-// ============================================================================
-
-/// Inline alpha test for ray query candidates. Returns true if the hit is opaque (alpha >= 0.5).
-/// Mirrors the any-hit shader logic for use with inline ray queries.
-bool ray_query_alpha_test(uint geometry_idx, uint primitive_id, vec2 candidate_bary) {
-	vec3 bary = vec3(1.0 - candidate_bary.x - candidate_bary.y, candidate_bary.x, candidate_bary.y);
-
-	GeometryData geom = geometries[geometry_idx];
-	uint i0, i1, i2;
-	get_triangle_indices_ex(geom, primitive_id, i0, i1, i2);
-	vec2 uv = fetch_uv(geom, i0, i1, i2, bary);
-
-	MaterialData mat = materials[geometry_idx];
-	uv = uv * mat.uv1_scale + mat.uv1_offset;
-	float alpha = texture(sampler2D(bindless_textures[nonuniformEXT(mat.albedo_texture_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv).a;
-	alpha *= mat.albedo_color.a;
-
-	return alpha >= 0.5;
+// Projector tint for light-to-surface direction p_dir, using the rasterizer's mapping. 1.0 without a projector.
+vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
+	if (light.projector_texture == RT_LIGHT_NO_PROJECTOR) {
+		return vec3(1.0);
+	}
+	vec3 local = lights_rotate(vec4(-light.orientation.xyz, light.orientation.w), p_dir);
+	vec2 uv;
+	if (light.type == RT_LIGHT_TYPE_SPOT) {
+		// Perspective onto [-1, 1] along -Z with the rasterizer's fov = 2 * spot angle, clamped below 90 degrees.
+		// The texture's V axis points down.
+		float omc = light.one_minus_cos_spot;
+		float cot_spot = max(1.0 - omc, 0.0017453) * inversesqrt(max(omc * (2.0 - omc), 1e-8));
+		vec2 ndc = local.xy * cot_spot / max(-local.z, 1e-4);
+		uv = vec2(ndc.x, -ndc.y) * 0.5 + 0.5;
+	} else {
+		// Equirectangular panorama, as the rasterizer's decal atlas converts it to dual paraboloid: -Z at u = 0, down at v = 0.
+		uv = vec2(fract(atan(-local.x, -local.z) * (0.5 / PI)), acos(clamp(-local.y, -1.0, 1.0)) * (1.0 / PI));
+	}
+	vec4 projector = textureLod(sampler2D(bindless_textures[nonuniformEXT(light.projector_texture)], rt_light_projector_sampler), uv, 0.0);
+	return projector.rgb * projector.a;
 }
+
+#include "raytracing_shadow_query_inc.glsl"
 
 // ============================================================================
 // Shadow Ray (traceRayEXT pipeline)
 // ============================================================================
 
-/// Returns true if light is visible.
-/// Uses SkipClosestHitShader so only any_hit (alpha test) and miss are invoked.
-/// TerminateOnFirstHit causes early exit on first confirmed opaque hit.
-bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout uint rng_state) {
+// Returns colored light transmittance.
+// Uses SkipClosestHitShader so only any_hit (alpha test) and miss are invoked.
+// TerminateOnFirstHit exits on the first opaque or stochastic alpha blocker.
+// p_shadow_mask is the light's 8-bit shadow-caster group mask.
+vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p_shadow_mask, inout uint rng_state) {
 #ifdef USE_RAY_QUERY_SHADOWS
-	// Ray queries are significantly faster, but can not handle complex alpha materials
-	rayQueryEXT shadow_rq;
-	rayQueryInitializeEXT(shadow_rq, tlas,
-			gl_RayFlagsTerminateOnFirstHitEXT,
-			0xFF, origin, 0.001, direction, max_dist - 0.001);
-
-	while (rayQueryProceedEXT(shadow_rq)) {
-		if (rayQueryGetIntersectionTypeEXT(shadow_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
-			// quick and dirty way to check transparency by sampling the alpha texture
-			// this completely ignores the actual material, so might not be accurate
-			if (ray_query_alpha_test(
-						rayQueryGetIntersectionInstanceCustomIndexEXT(shadow_rq, false),
-						rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false),
-						rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false))) {
-				rayQueryConfirmIntersectionEXT(shadow_rq);
-			}
-		}
-	}
-
-	return rayQueryGetIntersectionTypeEXT(shadow_rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+	// Ray queries are faster but approximate custom or animated material outputs
+	// with a direct albedo texture sample.
+	return ray_query_shadow_transmittance(origin, direction, 0.001, max_dist - 0.001, p_shadow_mask, 0.0, rng_state);
 #elif defined(USE_SER)
+	PathPayload saved_payload = payload;
+	PathState shadow_ps;
+	shadow_ps.radiance = vec3(0.0);
+	shadow_ps.throughput = vec3(1.0);
+	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
+	shadow_ps.rng_state = rng_state;
+	shadow_ps.hit_t = 0.0;
+	shadow_ps.offset_normal = vec3(0.0, 0.0, 1.0);
+	shadow_ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
+	path_pack(payload, shadow_ps);
+
 	hitObjectNV hitObject;
 	hitObjectTraceRayNV(hitObject, tlas,
-			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			0xFF, 0, 0, 0,
+			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsNoOpaqueEXT,
+			p_shadow_mask, 0, 0, 0,
 			origin, 0.001, direction, max_dist - 0.001, 0);
 
-	return !(hitObjectIsHitNV(hitObject));
+	shadow_ps = path_unpack(payload);
+	rng_state = shadow_ps.rng_state;
+	payload = saved_payload;
+	return hitObjectIsHitNV(hitObject) ? vec3(0.0) : shadow_ps.throughput;
 #else
-	/// The miss shader writes radiance = vec3(1.0) for shadow rays (visible).
-	/// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).
+	// The miss shader copies accumulated transmittance to radiance.
+	// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).
 	// Save full payload, set up shadow ray, then restore after trace.
 	PathPayload saved_payload = payload;
 
 	PathState shadow_ps;
 	shadow_ps.radiance = vec3(0.0);
-	shadow_ps.throughput = vec3(0.0);
+	shadow_ps.throughput = vec3(1.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
-	shadow_ps.rng_state = 0u;
+	shadow_ps.rng_state = rng_state;
 	shadow_ps.hit_t = 0.0;
 	shadow_ps.offset_normal = vec3(0.0, 0.0, 1.0);
 	shadow_ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
 	path_pack(payload, shadow_ps);
 
 	traceRayEXT(tlas,
-			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			0xFF, 0, 0, 0,
+			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsNoOpaqueEXT,
+			p_shadow_mask, 0, 0, 0,
 			origin, 0.001, direction, max_dist - 0.001, 0);
 
-	// Unpack to check visibility (miss shader packs radiance = 1.0).
+	// Unpack the colored visibility written by the miss shader.
 	shadow_ps = path_unpack(payload);
-	bool visible = shadow_ps.radiance.x > 0.5;
+	vec3 transmittance = shadow_ps.radiance;
+	rng_state = shadow_ps.rng_state;
 
 	payload = saved_payload;
 
-	return visible;
+	return transmittance;
 #endif
+}
+
+// Shadow transmittance from origin towards the light, blended towards 1 by the light's shadow opacity.
+// Skips the trace when the path tracer draws no shadow for this light. p_receiver_shadow_mask filters the light's caster groups.
+vec3 lights_shadow_transmittance(RTLightData light, vec3 origin, vec3 direction, float max_dist, uint p_receiver_shadow_mask, inout uint rng_state) {
+	if (light.shadow_opacity <= 0.001) {
+		return vec3(1.0);
+	}
+	vec3 traced = lights_trace_shadow_ray(origin, direction, max_dist, (light.light_masks >> 24u) & p_receiver_shadow_mask, rng_state);
+	return mix(vec3(1.0), traced, light.shadow_opacity);
 }
 
 // ============================================================================
 // Next Event Estimation (NEE) - Direct Light Sampling
 // ============================================================================
 
-// Evaluate direct lighting using NEE with stochastic light selection.
-// Uses mini-batch reservoir sampling for importance-weighted light selection.
-vec3 lights_evaluate_direct_lighting(
-		vec3 hit_pos,
-		vec3 N,
-		vec3 V,
-		MaterialProperties material,
-		inout uint rng_state,
-		bool is_indirect_bounce,
-		uint light_count) {
-	if (light_count == 0u) {
-		return vec3(0.0);
+// gather_lights() packs every directional light before the positional ones.
+uint lights_directional_count(uint light_count) {
+	uint count = 0u;
+	while (count < light_count && lights_get_type(count) == RT_LIGHT_TYPE_DIRECTIONAL) {
+		count++;
+	}
+	return count;
+}
+
+// Mini-batch reservoir selection over rt_light_buffer[first, first + count): draws k
+// candidates and keeps one valid light uniformly. Returns false if none is valid.
+bool lights_select(vec3 hit_pos, uint first, uint count, uint instance_layers, inout uint rng_state,
+		out uint r_idx, out float r_select_pdf) {
+	r_idx = first;
+	r_select_pdf = 1.0;
+	if (count == 0u) {
+		return false;
 	}
 
-	// Mini-batch reservoir sampling: sample k lights, pick the best valid one.
-	const uint k = uint(min(RT_LIGHT_RESERVOIR_SIZE, int(light_count)));
+	const uint k = min(uint(RT_LIGHT_RESERVOIR_SIZE), count);
 	uint valid_found = 0u;
-	uint selected_idx = 0u;
 
 	for (uint i = 0u; i < k; i++) {
-		uint idx = min(uint(rand(rng_state) * float(light_count)), light_count - 1u);
-		RTLightData test_light = rt_lights[idx];
+		uint idx = first + min(uint(rand(rng_state) * float(count)), count - 1u);
+		RTLightData test_light = lights_get(idx);
+
+		// light_cull_mask: the light only affects intersecting layers.
+		bool is_valid = (test_light.light_masks & instance_layers & 0xFFFFFu) != 0u;
 
 		// Range check for positional lights.
 		bool is_positional = (test_light.type == RT_LIGHT_TYPE_OMNI || test_light.type == RT_LIGHT_TYPE_SPOT);
-		bool is_valid = !is_positional;
-		if (!is_valid) {
+		if (is_valid && is_positional) {
 			vec3 to_l = test_light.position - hit_pos;
 			float d2 = dot(to_l, to_l);
 			is_valid = (test_light.max_range_squared == 0.0 || d2 <= test_light.max_range_squared);
@@ -288,108 +363,168 @@ vec3 lights_evaluate_direct_lighting(
 		if (is_valid) {
 			valid_found++;
 			if (rand(rng_state) < 1.0 / float(valid_found)) {
-				selected_idx = idx;
+				r_idx = idx;
 			}
 		}
 	}
 
 	if (valid_found == 0u) {
-		return vec3(0.0);
+		return false;
 	}
 
 	// Estimate valid count from sample ratio, PDF = 1/validCount.
-	float valid_count_estimate = float(light_count) * (float(valid_found) / float(k));
-	float light_select_pdf = 1.0 / max(valid_count_estimate, 1.0);
+	float valid_count_estimate = float(count) * (float(valid_found) / float(k));
+	r_select_pdf = 1.0 / max(valid_count_estimate, 1.0);
+	return true;
+}
 
-	RTLightData light = rt_lights[selected_idx];
-	vec2 u = rand2(rng_state);
+// Unweighted contribution of one omni or spot light, one shadow ray.
+vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
+		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask) {
+	vec3 to_light = light.position - hit_pos;
+	float dist_sq = dot(to_light, to_light);
 
-	// === POSITIONAL LIGHT PATH (omni + spot) ===
-	if (light.type == RT_LIGHT_TYPE_OMNI || light.type == RT_LIGHT_TYPE_SPOT) {
-		vec3 to_light = light.position - hit_pos;
-		float dist_sq = dot(to_light, to_light);
-
-		// Early out: outside max range.
-		if (light.max_range_squared != 0.0 && dist_sq > light.max_range_squared) {
-			return vec3(0.0);
-		}
-
-		float dist = sqrt(dist_sq);
-		vec3 L;
-		float shadow_dist;
-
-		if (light.radius <= 0.01) {
-			// True point light: exact direction.
-			L = to_light / max(dist, 0.0001);
-			shadow_dist = dist;
-		} else {
-			// Sphere light: cone sampling for soft shadows.
-			LightSample ls = lights_prepare_sample(hit_pos, light);
-			float light_pdf;
-			L = lights_sample_cone(ls, u, light_pdf);
-			float t_center = dot(to_light, L);
-			vec3 perp = to_light - t_center * L;
-			float perp_sq = dot(perp, perp);
-			float dt = sqrt(max(0.0, light.radius * light.radius - perp_sq));
-			shadow_dist = max(0.0, t_center - dt);
-		}
-
-		// Spot cone early-out.
-		float spot_atten = 1.0;
-		if (light.type == RT_LIGHT_TYPE_SPOT) {
-			float scos = dot(-L, light.spot_direction);
-			if (scos <= light.cos_spot_angle) {
-				return vec3(0.0);
-			}
-			float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - light.cos_spot_angle));
-			spot_atten = 1.0 - pow(spot_rim, light.inv_spot_attenuation);
-		}
-
-		if (!lights_trace_shadow_ray(hit_pos, L, shadow_dist, rng_state)) {
-			return vec3(0.0);
-		}
-
-		// Evaluate BRDF (diffuse + specular separately for specular_amount control).
-		vec3 brdf_diffuse, brdf_specular;
-		evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
-
-		// Distance attenuation.
-		LightSample ls_atten;
-		ls_atten.distance_sq = dist_sq;
-		float atten = lights_get_attenuation(ls_atten, light.inv_max_range, light.attenuation) * spot_atten;
-
-		float spec_mul = lights_get_specular_multiplier(light.specular_amount, material.roughness);
-		vec3 brdf_value = brdf_diffuse + brdf_specular * spec_mul;
-
-		float indirect_mul = is_indirect_bounce ? light.indirect_energy : 1.0;
-
-		// NdotL is already included in brdf_value (evalLambertian/evalMicrofacet bake it in).
-		vec3 contribution = brdf_value * light.emission * atten * indirect_mul;
-		return contribution / max(light_select_pdf, 1e-10);
+	// Early out: outside max range.
+	if (light.max_range_squared != 0.0 && dist_sq > light.max_range_squared) {
+		return vec3(0.0);
 	}
-	// === CONE LIGHT PATH (directional) ===
-	else {
+
+	float dist = sqrt(dist_sq);
+	vec3 L;
+	float shadow_dist;
+
+	if (light.radius <= 0.01) {
+		// True point light: exact direction.
+		L = to_light / max(dist, 0.0001);
+		shadow_dist = dist;
+	} else {
+		// Sphere light: cone sampling for soft shadows.
 		LightSample ls = lights_prepare_sample(hit_pos, light);
 		float light_pdf;
-		vec3 L = lights_sample_cone(ls, u, light_pdf);
-
-		float NdotL = dot(N, L);
-		if (NdotL <= 0.0) {
-			return vec3(0.0);
-		}
-
-		if (!lights_trace_shadow_ray(hit_pos, L, ls.max_distance, rng_state)) {
-			return vec3(0.0);
-		}
-
-		vec3 brdf_diffuse, brdf_specular;
-		evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
-
-		float spec_mul = lights_get_specular_multiplier(light.specular_amount, material.roughness);
-		vec3 brdf_value = brdf_diffuse + brdf_specular * spec_mul;
-
-		float indirect_mul = is_indirect_bounce ? light.indirect_energy : 1.0;
-
-		return brdf_value * light.emission * indirect_mul / max(light_select_pdf, 1e-10);
+		L = lights_sample_cone(ls, rand2(rng_state), light_pdf);
+		float t_center = dot(to_light, L);
+		vec3 perp = to_light - t_center * L;
+		float perp_sq = dot(perp, perp);
+		float dt = sqrt(max(0.0, light.radius * light.radius - perp_sq));
+		shadow_dist = max(0.0, t_center - dt);
 	}
+
+	// Spot cone early-out.
+	float spot_atten = 1.0;
+	if (light.type == RT_LIGHT_TYPE_SPOT) {
+		float one_minus_scos = 1.0 + dot(L, lights_rotate(light.orientation, vec3(0.0, 0.0, -1.0)));
+		if (one_minus_scos >= light.one_minus_cos_spot) {
+			return vec3(0.0);
+		}
+		float spot_rim = max(1e-4, one_minus_scos / light.one_minus_cos_spot);
+		spot_atten = 1.0 - pow(spot_rim, light.inv_spot_attenuation);
+	}
+
+	// From the light center, as in raster, so area lights keep a sharp projection.
+	vec3 projector_color = lights_projector_color(light, -to_light / max(dist, 0.0001));
+	if (all(lessThanEqual(projector_color, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+
+	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, shadow_dist, p_receiver_shadow_mask, rng_state);
+
+	// Evaluate BRDF (diffuse incl. backlight, specular separately for specular_amount control).
+	vec3 brdf_diffuse, brdf_specular;
+	evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
+
+	// Distance attenuation.
+	LightSample ls_atten;
+	ls_atten.distance_sq = dist_sq;
+	float atten = lights_get_attenuation(ls_atten, light.inv_max_range, light.attenuation) * spot_atten;
+
+	float spec_mul = lights_get_specular_multiplier(light.specular_amount, material.roughness);
+	vec3 brdf_value = brdf_diffuse + brdf_specular * spec_mul;
+
+	float indirect_mul = is_indirect_bounce ? light.indirect_energy : 1.0;
+
+	// NdotL is already included in brdf_value.
+	return brdf_value * light.emission * projector_color * shadow_transmittance * atten * indirect_mul;
+}
+
+// Unweighted contribution of one directional light, one shadow ray.
+vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
+		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask) {
+	LightSample ls = lights_prepare_sample(hit_pos, light);
+	float light_pdf;
+	vec3 L = lights_sample_cone(ls, rand2(rng_state), light_pdf);
+
+	if (dot(N, L) <= 0.0 && !godotShadesBackfacingLight(material)) {
+		return vec3(0.0);
+	}
+
+	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state);
+
+	vec3 brdf_diffuse, brdf_specular;
+	evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
+
+	float spec_mul = lights_get_specular_multiplier(light.specular_amount, material.roughness);
+	vec3 brdf_value = brdf_diffuse + brdf_specular * spec_mul;
+
+	float indirect_mul = is_indirect_bounce ? light.indirect_energy : 1.0;
+
+	return brdf_value * light.emission * shadow_transmittance * indirect_mul;
+}
+
+// NEE with one shadow ray to a single light selected among all lights.
+vec3 lights_evaluate_direct_lighting(
+		vec3 hit_pos,
+		vec3 N,
+		vec3 V,
+		MaterialProperties material,
+		inout uint rng_state,
+		bool is_indirect_bounce,
+		uint light_count,
+		uint instance_layers,
+		uint p_receiver_shadow_mask) {
+	uint idx;
+	float select_pdf;
+	if (!lights_select(hit_pos, 0u, light_count, instance_layers, rng_state, idx, select_pdf)) {
+		return vec3(0.0);
+	}
+
+	RTLightData light = lights_get(idx);
+	vec3 contribution;
+	if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
+		contribution = lights_evaluate_directional(light, hit_pos, N, V, material,
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+	} else {
+		contribution = lights_evaluate_positional(light, hit_pos, N, V, material,
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+	}
+	return contribution / max(select_pdf, 1e-10);
+}
+
+// NEE with up to two shadow rays: one to a directional light and one to a
+// positional light, each selected within its own group.
+vec3 lights_evaluate_direct_lighting_per_group(
+		vec3 hit_pos,
+		vec3 N,
+		vec3 V,
+		MaterialProperties material,
+		inout uint rng_state,
+		bool is_indirect_bounce,
+		uint light_count,
+		uint instance_layers,
+		uint p_receiver_shadow_mask) {
+	vec3 result = vec3(0.0);
+	uint directional_count = lights_directional_count(light_count);
+
+	uint idx;
+	float select_pdf;
+	if (lights_select(hit_pos, 0u, directional_count, instance_layers, rng_state, idx, select_pdf)) {
+		vec3 contribution = lights_evaluate_directional(lights_get(idx), hit_pos, N, V, material,
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+		result += contribution / max(select_pdf, 1e-10);
+	}
+	if (lights_select(hit_pos, directional_count, light_count - directional_count, instance_layers, rng_state, idx, select_pdf)) {
+		vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+		result += contribution / max(select_pdf, 1e-10);
+	}
+	return result;
 }

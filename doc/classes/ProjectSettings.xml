@@ -3218,9 +3218,49 @@
 		<member name="rendering/pathtracing/async_shader_compilation" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], path tracing ray hit shaders are compiled asynchronously in the background. This avoids frame stalls when new shader variants are first encountered during rendering. While a shader is compiling, a fallback shader may be used, which can cause temporary visual artifacts. Disable this if you require fully deterministic rendering from the first frame at the cost of potential stalls on shader warm-up.
 		</member>
+		<member name="rendering/pathtracing/debug_heatmap_max_ticks" type="float" setter="" getter="" default="100000.0">
+			Elapsed device clock ticks mapped to purple in [constant Environment.RT_DEBUG_TIMING_HEATMAP]. Zero ticks map to green, with cyan halfway through the range. Larger durations saturate at purple. Adjust this to the scene and GPU; Vulkan does not define a portable clock period for shader clocks. Measures all samples per pixel together.
+		</member>
+		<member name="rendering/pathtracing/debug_heatmap_opacity" type="float" setter="" getter="" default="0.35">
+			Opacity of [constant Environment.RT_DEBUG_TIMING_HEATMAP], applied after denoising and tone mapping. Set to [code]0.0[/code] to view the original shading while timing remains enabled, or [code]1.0[/code] for the heatmap alone.
+		</member>
+		<member name="rendering/pathtracing/decals" type="int" setter="" getter="" default="0">
+			Which path vertices the path tracer projects [Decal]s onto. [b]All Hits[/b] applies them everywhere, matching the rasterizer. [b]Skip After Diffuse[/b] stops once the path has bounced diffusely, where decals rarely change the result. [b]Singular Only[/b] applies them to camera hits and mirror-like reflections and refractions only, excluding rough specular bounces as well.
+		</member>
 		<member name="rendering/pathtracing/deformed_mesh_cache_ttl_frames" type="int" setter="" getter="" default="60">
 			Number of frames a skinned or vertex-displaced deformed-mesh BLAS is kept alive in the path tracer cache after its last visible frame. Once this threshold is exceeded the BLAS and its associated buffers are freed. Increase this value if deformed meshes flicker back into view after brief occlusion; decrease it to reclaim GPU memory sooner.
 			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/dynamic_blas_build_triangle_budget" type="int" setter="" getter="" default="500000">
+			Maximum number of triangles in full BLAS builds of dynamic geometry (GPU particles, camera-facing MultiMeshes) per frame, shared by all viewports. Items that need a periodic rebuild fall back to a refit once this budget is spent.
+		</member>
+		<member name="rendering/pathtracing/dynamic_blas_max_operations" type="int" setter="" getter="" default="2000">
+			Maximum number of BLAS builds plus refits of dynamic geometry per frame, shared by all viewports. Items beyond the budget keep last frame's BLAS; the most visible items are updated first.
+		</member>
+		<member name="rendering/pathtracing/dynamic_blas_update_triangle_budget" type="int" setter="" getter="" default="1500000">
+			Maximum number of triangles in BLAS refits of dynamic geometry per frame, shared by all viewports.
+		</member>
+		<member name="rendering/pathtracing/dynamic_max_stale_frames" type="int" setter="" getter="" default="30">
+			Dynamic geometry that has not been updated for this many frames is updated even when the visibility estimate says it can wait.
+		</member>
+		<member name="rendering/pathtracing/dynamic_offscreen_size_weight" type="float" setter="" getter="" default="0.25">
+			Priority weight of dynamic geometry outside the camera frustum, which only reflections, refractions and shadows can see. Lower values update on-screen geometry first when budgets run out.
+		</member>
+		<member name="rendering/pathtracing/dynamic_rebuild_interval_frames" type="int" setter="" getter="" default="4">
+			One in this many BLAS updates of dynamic geometry is a full rebuild instead of a refit, restoring the BVH quality that refits slowly lose as particles spread. Geometry updated every frame rebuilds every this many frames; each item has its own phase, so rebuilds spread evenly over frames.
+			Per shader, [code]render_mode rt_blas_refit[/code] only refits (foliage swaying in the wind) and [code]rt_blas_rebuild[/code] only rebuilds (spreading particles); [member GeometryInstance3D.rt_blas_update] overrides it per instance.
+		</member>
+		<member name="rendering/pathtracing/max_decals" type="int" setter="" getter="" default="1024">
+			Maximum number of [Decal]s the path tracer considers per frame, from [code]0[/code] to [code]65536[/code]. Decals around the camera, including those behind it, are gathered and the ones covering the largest solid angle are kept, preferring decals in front of the camera. Up to 4 decals are blended at any point; past that the bottom-most are dropped. Set to [code]0[/code] to compile decals out of the path tracing pipeline entirely. Changing between [code]0[/code] and a non-zero value switches pipelines, which may compile shaders.
+		</member>
+		<member name="rendering/pathtracing/max_transparency_layers" type="int" setter="" getter="" default="4">
+			Maximum number of transparent layers the path tracer peels on primary (camera) segments, from [code]0[/code] to [code]64[/code]. Bounce segments use [member rendering/pathtracing/max_transparency_layers_reflection] and [member rendering/pathtracing/max_transparency_layers_indirect]. This applies to every blend mode. Peeling also stops when cumulative transmittance falls below [code]1.0 / 256.0[/code]. Layers beyond these limits are ignored. Set to [code]0[/code] to disable path traced transparency.
+		</member>
+		<member name="rendering/pathtracing/max_transparency_layers_indirect" type="int" setter="" getter="" default="1">
+			Maximum number of transparent layers the path tracer peels on non-singular (diffuse and glossy) bounce segments, from [code]0[/code] to [code]64[/code]. These segments are also limited by [member rendering/pathtracing/transparency_indirect_range]. Raising this value makes transparent surfaces more accurate in indirect lighting at a cost on every bounce.
+		</member>
+		<member name="rendering/pathtracing/max_transparency_layers_reflection" type="int" setter="" getter="" default="4">
+			Maximum number of transparent layers the path tracer peels on singular (mirror) reflection chains after the camera segment, from [code]0[/code] to [code]64[/code].
 		</member>
 		<member name="rendering/pathtracing/multimesh_blas_cache_ttl_frames" type="int" setter="" getter="" default="3600">
 			Number of frames a merged MultiMesh BLAS is kept alive in the path tracer cache after its last visible frame. At 60 fps, the default of 3600 corresponds to approximately one minute. Once this threshold is exceeded the BLAS and all merged vertex, attribute, and index buffers are freed. Decrease this value to reclaim GPU memory when MultiMeshes disappear from the scene.
@@ -3236,12 +3276,43 @@
 			Maximum total triangle count ([code]instance_count * triangles_per_surface[/code]) for a [MultiMesh] surface to use a single merged BLAS in the path tracer. When the combined triangle count exceeds this value, the path tracer falls back to one TLAS entry per instance sharing a common BLAS instead. Lower this value to reduce peak GPU memory for large MultiMeshes; raise it to prefer the merged path (which avoids per-instance TLAS overhead).
 			[b]Note:[/b] Requires a restart to take effect.
 		</member>
+		<member name="rendering/pathtracing/parallel_planning" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], the path tracer plans its per-frame instance records on the worker thread pool once a viewport has at least 256 instances. Instances that need to create or modify shared resources are deferred and planned serially afterwards, so the result matches serial planning. Disable this to plan on the render thread only, for example to rule out threading issues while debugging.
+		</member>
+		<member name="rendering/pathtracing/transparency_dominant_layer_alpha" type="float" setter="" getter="" default="0.5">
+			Minimum alpha the nearest transparent layer needs to become the pixel's dominant surface in the path tracer. The dominant surface writes depth and motion vectors instead of the geometry behind it, and blends into the DLSS Ray Reconstruction guides. Dense smoke and flipbook particles then move with their own motion instead of smearing with the background. Additive and subtractive layers never become dominant unless they use [code]depth_draw_always[/code]. [code]0[/code] disables dominance, so transparent layers keep the motion of what is behind them.
+		</member>
+		<member name="rendering/pathtracing/transparency_indirect_fade" type="float" setter="" getter="" default="0.0">
+			Distance in meters over which transparent layers fade out before reaching [member rendering/pathtracing/transparency_indirect_range]. A faded layer contributes and attenuates proportionally less. [code]0[/code] gives a hard cutoff.
+		</member>
+		<member name="rendering/pathtracing/transparency_indirect_range" type="float" setter="" getter="" default="0.0">
+			Maximum distance in meters that indirect (bounce) ray segments trace for transparent surfaces. Transparent layers beyond this distance are ignored on indirect segments, bounding traversal cost for sky-facing bounces. Primary segments and singular (mirror) reflection chains always use the full range. [code]0[/code] disables the limit.
+		</member>
+		<member name="rendering/pathtracing/transparency_max_bounce" type="int" setter="" getter="" default="2">
+			Last bounce index at which the path tracer performs transparency handling. Each segment peels up to its layer budget: [member rendering/pathtracing/max_transparency_layers] for primary segments, [member rendering/pathtracing/max_transparency_layers_reflection] for singular chains, and [member rendering/pathtracing/max_transparency_layers_indirect] for other bounces. Local lighting is composited deterministically. Each layer offers an indirect continuation with a probability equal to its alpha, and one continuation is chosen by throughput-weighted reservoir sampling to keep path count bounded. Beyond this bounce, the transparent camera lane is not peeled.
+		</member>
 		<member name="rendering/pathtracing/use_shader_execution_reordering" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], enables NVIDIA Shader Execution Reordering in the path tracer. SET reorders ray tracing shader invocations at runtime to improve GPU occupancy and reduce divergence between threads executing different materials. This can significantly improve path tracing performance on NVIDIA Ada Lovelace and later GPUs. Has no effect on hardware that does not support SET.
 		</member>
 		<member name="rendering/pathtracing/use_simple_shadows" type="bool" setter="" getter="" default="false">
-			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick alpha texture fetch, which can produce incorrect shadows on materials with generated/animated alpha textures. Fully traced shadow rays are more accurate but incur a higher GPU cost.
+			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick albedo texture fetch. Both paths use stochastic alpha coverage and tint transmitted light with the transparent material's albedo; generated or animated custom material outputs are more accurate with fully traced shadow rays.
 			[b]Note:[/b] Only has an effect when path tracing is enabled on the active [Environment].
+		</member>
+		<member name="rendering/pathtracing/vertex_capture_mode" type="int" setter="" getter="" default="0">
+			Controls which surfaces the path tracer vertex-captures: it runs the material's raster [code]vertex()[/code] function and traces the resulting geometry, so custom vertex displacement, hand-written [code]MODELVIEW_MATRIX[/code] billboards and particle trails match the rasterized image. Fixed-function [code]billboard[/code] render modes don't need a capture.
+			- [b]Automatic[/b] ([code]0[/code]): Captures shaders that write [code]VERTEX[/code] or [code]MODELVIEW_MATRIX[/code] in [code]vertex()[/code], and shaders using [code]particle_trails[/code].
+			- [b]Opt-in[/b] ([code]1[/code]): Only captures shaders with [code]render_mode rt_vertex_dynamic[/code] or [code]rt_vertex_frozen[/code] and shaders using [code]particle_trails[/code].
+			- [b]Disabled[/b] ([code]2[/code]): Never captures; surfaces are traced with their undeformed mesh.
+			Per shader, [code]rt_vertex_auto[/code] (default) follows this setting, [code]rt_vertex_dynamic[/code] always captures unless this setting is [b]Disabled[/b], [code]rt_vertex_static[/code] never captures, and [code]rt_vertex_frozen[/code] captures like [code]rt_vertex_dynamic[/code] but keeps the first capture until the mesh, skeleton, blend shapes or MultiMesh and particle instances change, ignoring [code]TIME[/code], the camera, the node transform and uniforms. Changing this setting drops every kept capture.
+			A capture is kept until an input its [code]vertex()[/code] function reads changes: [code]TIME[/code] and global uniforms every frame, the camera (per viewport, each viewport keeps its own capture), the node transform, instance uniforms, material uniforms, or the skeleton and blend shapes. Recaptures share the [member rendering/pathtracing/dynamic_blas_max_operations] budget with other dynamic geometry.
+		</member>
+		<member name="rendering/pathtracing/volumetric_fog_positional_shadow_rays" type="int" setter="" getter="" default="2">
+			Maximum number of shadow rays traced per volumetric fog froxel for shadowed [OmniLight3D]s and [SpotLight3D]s when path tracing. Lights are picked stochastically by their contribution, so more rays reduce noise in scenes with many overlapping lights. Shadowed [DirectionalLight3D]s always use one additional ray, shared stochastically between them.
+			[b]Note:[/b] Only has an effect when path tracing and [member Environment.volumetric_fog_enabled] are enabled on the active [Environment].
+		</member>
+		<member name="rendering/pathtracing/volumetric_fog_shadows" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], volumetric fog traces ray query shadows for shadowed lights when path tracing. If [code]false[/code], those lights scatter into the fog unoccluded, which is faster and useful to check whether geometry is blocking the fog lighting.
+			[b]Note:[/b] Only has an effect when path tracing and [member Environment.volumetric_fog_enabled] are enabled on the active [Environment].
 		</member>
 		<member name="rendering/reflections/reflection_atlas/reflection_count" type="int" setter="" getter="" default="64">
 			Number of cubemaps to store in the reflection atlas. The number of [ReflectionProbe]s in a scene will be limited by this amount. A higher number requires more VRAM.
@@ -3287,6 +3358,9 @@
 		</member>
 		<member name="rendering/renderer/rendering_method.web" type="String" setter="" getter="" default="&quot;gl_compatibility&quot;">
 			Override for [member rendering/renderer/rendering_method] on web.
+		</member>
+		<member name="rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb" type="int" setter="" getter="" default="256">
+			The maximum size in megabytes of the scratch buffer shared by acceleration structures built together in one batch, as the path tracer does. Builds take consecutive ranges of it. The buffer starts small and doubles whenever the rest is too small, until it reaches this size; after that, the next build waits for the previous ones and starts over at the beginning. Larger values let more builds run concurrently. A single build that needs more than this grows the buffer to fit and prints a warning.
 		</member>
 		<member name="rendering/rendering_device/d3d12/agility_sdk_version" type="int" setter="" getter="" default="618">
 			Version code of the [url=https://devblogs.microsoft.com/directx/directx12agility/]Direct3D 12 Agility SDK[/url] to use ([code]D3D12SDKVersion[/code]). This must match the [i]minor[/i] version that is installed next to the editor binary and in the export templates directory for the current editor version. For example, if you have [code]1.618.5[/code] installed, you need to input [code]618[/code] here.
@@ -3361,6 +3435,9 @@
 		<member name="rendering/rendering_device/pipeline_cache/enable" type="bool" setter="" getter="" default="true">
 			Enable the pipeline cache that is saved to disk if the graphics API supports it.
 			[b]Note:[/b] This property is unable to control the pipeline caching the GPU driver itself does. Only turn this off along with deleting the contents of the driver's cache if you wish to simulate the experience a user will get when starting the game for the first time.
+		</member>
+		<member name="rendering/rendering_device/pipeline_cache/max_size_mb" type="int" setter="" getter="" default="1024">
+			Maximum size of the pipeline cache on disk. The cache grows with every new pipeline and is never pruned, so a larger cache file is discarded at startup and rebuilt, and saving stops once the cache grows past this size. Capped below 2 GiB, which the cache format cannot represent.
 		</member>
 		<member name="rendering/rendering_device/pipeline_cache/save_chunk_size_mb" type="float" setter="" getter="" default="3.0">
 			Determines at which interval pipeline cache is saved to disk. The lower the value, the more often it is saved.
@@ -3438,6 +3515,10 @@
 		<member name="rendering/shading/overrides/force_vertex_shading" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], forces vertex shading for all rendering. This can increase performance a lot, but also reduces quality immensely. Can be used to optimize performance on low-end mobile devices.
 		</member>
+		<member name="rendering/shading/overrides/preserve_front_facing_when_mirrored" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], [code]FRONT_FACING[/code] follows the mesh winding on instances with a negative scale (or seen through a mirrored camera), in both the rasterizer and the path tracer. If [code]false[/code], it follows the on-screen winding, which flips the normals of double-sided and front-culled materials on mirrored instances.
+			[b]Note:[/b] This setting is only read on startup. Only supported by the Forward+ renderer.
+		</member>
 		<member name="rendering/streamline/dlss_preset" type="String" setter="" getter="" default="&quot;?&quot;">
 			The default NVIDIA DLSS Super Resolution preset to use.
 		</member>
@@ -3449,6 +3530,7 @@
 		</member>
 		<member name="rendering/streamline/reflex_mode" type="int" setter="" getter="" default="0">
 			If [code]1[/code], enables NVIDIA Reflex, which reduces latency by rendering just before vertical sync. When the value is set to 2, will also enable low latency boost.
+			[b]Note:[/b] Reflex is required by DLSS Frame Generation. When [member Viewport.frame_generation] is enabled and this setting is [code]0[/code], Reflex is automatically turned on in low latency mode.
 		</member>
 		<member name="rendering/streamline/streamline_imgui" type="bool" setter="" getter="" default="false">
 			If [code]1[/code], enables Streamline ImgUI Plugin. Useful for debugging purposes.

@@ -177,6 +177,7 @@ private:
 		int pathtracing_samples_per_pixel = 1;
 		int pathtracing_max_bounces = 3;
 		RSE::PathtracingDenoiser pathtracing_denoiser = RSE::PT_DENOISER_NONE;
+		bool pathtracing_sky_shader_enabled = false;
 
 		// Adjustments
 		bool adjustments_enabled = false;
@@ -331,8 +332,9 @@ public:
 	RS::EnvironmentSDFGIYScale environment_get_sdfgi_y_scale(RID p_env) const;
 
 	// Pathtracing
-	void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser);
+	void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_sky_shader_enabled);
 	bool environment_get_pathtracing_enabled(RID p_env) const;
+	bool environment_get_pathtracing_sky_shader_enabled(RID p_env) const;
 	int environment_get_pathtracing_debug_mode(RID p_env) const;
 	int environment_get_pathtracing_samples_per_pixel(RID p_env) const;
 	int environment_get_pathtracing_max_bounces(RID p_env) const;

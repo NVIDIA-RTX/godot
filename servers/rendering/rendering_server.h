@@ -232,6 +232,7 @@ public:
 
 	virtual void shader_set_code(RID p_shader, const String &p_code) = 0;
 	virtual void shader_set_code_rt(RID p_shader, const String &p_code_rt) = 0;
+	virtual void shader_set_builtin_standard_3d(RID p_shader, bool p_enabled) = 0;
 	virtual void shader_set_path_hint(RID p_shader, const String &p_path) = 0;
 	virtual String shader_get_code(RID p_shader) const = 0;
 	virtual void get_shader_parameter_list(RID p_shader, List<PropertyInfo> *p_param_list) const = 0;
@@ -579,6 +580,14 @@ public:
 	virtual void light_set_distance_fade(RID p_light, bool p_enabled, float p_begin, float p_shadow, float p_length) = 0;
 	virtual void light_set_reverse_cull_face_mode(RID p_light, bool p_enabled) = 0;
 	virtual void light_set_shadow_caster_mask(RID p_light, uint32_t p_caster_mask) = 0;
+
+	enum ShadowRenderer {
+		SHADOW_RENDERER_RASTERIZER = 1,
+		SHADOW_RENDERER_PATH_TRACER = 2,
+		SHADOW_RENDERER_ALL = SHADOW_RENDERER_RASTERIZER | SHADOW_RENDERER_PATH_TRACER,
+	};
+
+	virtual void light_set_shadow_renderers(RID p_light, BitField<ShadowRenderer> p_renderers) = 0;
 
 	enum LightBakeMode {
 		LIGHT_BAKE_DISABLED,
@@ -1096,10 +1105,13 @@ public:
 	virtual void viewport_set_screen_space_aa(RID p_viewport, ViewportScreenSpaceAA p_mode) = 0;
 
 	virtual void viewport_set_use_taa(RID p_viewport, bool p_use_taa) = 0;
+	virtual void viewport_set_use_pathtracing(RID p_viewport, bool p_use_pathtracing) = 0;
 
 	virtual void viewport_set_use_debanding(RID p_viewport, bool p_use_debanding) = 0;
 
 	virtual void viewport_set_force_motion_vectors(RID p_viewport, bool p_force_motion_vectors) = 0;
+	// Prefixes this viewport's GPU marker labels (see --gpu-markers).
+	virtual void viewport_set_debug_name(RID p_viewport, const String &p_name) = 0;
 
 	virtual void viewport_set_mesh_lod_threshold(RID p_viewport, float p_pixels) = 0;
 
@@ -1123,6 +1135,19 @@ public:
 		VIEWPORT_RENDER_INFO_RT_BLAS_REFITS,
 		VIEWPORT_RENDER_INFO_RT_TRIANGLES_BUILT,
 		VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT,
+		VIEWPORT_RENDER_INFO_RT_DYNAMIC_REBAKES,
+		VIEWPORT_RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES,
+		VIEWPORT_RENDER_INFO_RT_CAPTURED_MESHES,
+		VIEWPORT_RENDER_INFO_RT_CAPTURED_VERTICES,
+		VIEWPORT_RENDER_INFO_RT_DYNAMIC_UPDATED,
+		VIEWPORT_RENDER_INFO_RT_DYNAMIC_HELD,
+		VIEWPORT_RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED,
+		VIEWPORT_RENDER_INFO_RT_PENDING_SURFACES,
+		VIEWPORT_RENDER_INFO_RT_SCRATCH_USED_KB,
+		VIEWPORT_RENDER_INFO_RT_SCRATCH_SIZE_KB,
+		VIEWPORT_RENDER_INFO_RT_SCRATCH_ROLLOVERS,
+		VIEWPORT_RENDER_INFO_RT_CAPTURE_ARENA_USED_KB,
+		VIEWPORT_RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB,
 		VIEWPORT_RENDER_INFO_MAX,
 	};
 
@@ -1397,7 +1422,10 @@ public:
 		PT_DENOISER_DLSS_RAY_RECONSTRUCTION,
 	};
 
-	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, PathtracingDenoiser p_denoiser) = 0;
+	static constexpr int PT_DEBUG_TIMING_HEATMAP = 24;
+	static constexpr int PT_DEBUG_DYNAMIC_GEOMETRY = 29;
+
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, PathtracingDenoiser p_denoiser, bool p_sky_shader_enabled) = 0;
 	virtual void environment_set_fog_depth(RID p_env, float p_curve, float p_begin, float p_end) = 0;
 
 	virtual void environment_set_volumetric_fog(RID p_env, bool p_enable, float p_density, const Color &p_albedo, const Color &p_emission, float p_emission_energy, float p_anisotropy, float p_length, float p_detail_spread, float p_gi_inject, bool p_temporal_reprojection, float p_temporal_reprojection_amount, float p_ambient_inject, float p_sky_affect) = 0;
@@ -1523,6 +1551,7 @@ public:
 		SHADOW_CASTING_SETTING_ON,
 		SHADOW_CASTING_SETTING_DOUBLE_SIDED,
 		SHADOW_CASTING_SETTING_SHADOWS_ONLY,
+		SHADOW_CASTING_SETTING_SELF_SHADOWING,
 	};
 
 	enum VisibilityRangeFadeMode {
@@ -1531,8 +1560,17 @@ public:
 		VISIBILITY_RANGE_FADE_DEPENDENCIES,
 	};
 
+	enum RTBlasUpdate {
+		RT_BLAS_UPDATE_AUTO,
+		RT_BLAS_UPDATE_REFIT,
+		RT_BLAS_UPDATE_REBUILD,
+	};
+
 	virtual void instance_geometry_set_flag(RID p_instance, InstanceFlags p_flags, bool p_enabled) = 0;
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, ShadowCastingSetting p_shadow_casting_setting) = 0;
+	// Renderers that draw this instance's shadow while its cast shadows setting is not off.
+	virtual void instance_geometry_set_shadow_renderers(RID p_instance, BitField<ShadowRenderer> p_renderers) = 0;
+	virtual void instance_geometry_set_rt_blas_update(RID p_instance, RTBlasUpdate p_update) = 0;
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material) = 0;
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material) = 0;
 	virtual void instance_geometry_set_visibility_range(RID p_instance, float p_min, float p_max, float p_min_margin, float p_max_margin, VisibilityRangeFadeMode p_fade_mode) = 0;
@@ -1845,6 +1883,17 @@ public:
 	};
 
 	virtual uint64_t get_rendering_info(RenderingInfo p_info) = 0;
+
+	enum RenderingNotReadyReason {
+		RENDERING_NOT_READY_PIPELINE_COMPILATION = 1 << 0,
+		RENDERING_NOT_READY_RT_SHADER_COMPILATION = 1 << 1,
+		RENDERING_NOT_READY_RT_PENDING_SURFACES = 1 << 2,
+		RENDERING_NOT_READY_RT_STALE_GEOMETRY = 1 << 3,
+	};
+
+	// Why the last drawn frame may differ from a fully converged one; empty when output is final.
+	virtual BitField<RenderingNotReadyReason> get_rendering_not_ready_reasons() = 0;
+
 	virtual String get_video_adapter_name() const = 0;
 	virtual String get_video_adapter_vendor() const = 0;
 	virtual RenderingDevice::DeviceType get_video_adapter_type() const = 0;
@@ -1982,6 +2031,7 @@ VARIANT_ENUM_CAST(RenderingServer::MultimeshTransformFormat);
 VARIANT_ENUM_CAST(RenderingServer::MultimeshPhysicsInterpolationQuality);
 VARIANT_ENUM_CAST(RenderingServer::LightType);
 VARIANT_ENUM_CAST(RenderingServer::LightParam);
+VARIANT_BITFIELD_CAST(RenderingServer::ShadowRenderer);
 VARIANT_ENUM_CAST(RenderingServer::LightBakeMode);
 VARIANT_ENUM_CAST(RenderingServer::LightOmniShadowMode);
 VARIANT_ENUM_CAST(RenderingServer::LightDirectionalShadowMode);
@@ -2037,6 +2087,7 @@ VARIANT_ENUM_CAST(RenderingServer::ShadowQuality);
 VARIANT_ENUM_CAST(RenderingServer::InstanceType);
 VARIANT_ENUM_CAST(RenderingServer::InstanceFlags);
 VARIANT_ENUM_CAST(RenderingServer::ShadowCastingSetting);
+VARIANT_ENUM_CAST(RenderingServer::RTBlasUpdate);
 VARIANT_ENUM_CAST(RenderingServer::VisibilityRangeFadeMode);
 VARIANT_ENUM_CAST(RenderingServer::NinePatchAxisMode);
 VARIANT_ENUM_CAST(RenderingServer::CanvasItemTextureFilter);
@@ -2048,6 +2099,7 @@ VARIANT_ENUM_CAST(RenderingServer::CanvasLightShadowFilter);
 VARIANT_ENUM_CAST(RenderingServer::CanvasOccluderPolygonCullMode);
 VARIANT_ENUM_CAST(RenderingServer::GlobalShaderParameterType);
 VARIANT_ENUM_CAST(RenderingServer::RenderingInfo);
+VARIANT_BITFIELD_CAST(RenderingServer::RenderingNotReadyReason);
 VARIANT_ENUM_CAST(RenderingServer::SplashStretchMode);
 VARIANT_ENUM_CAST(RenderingServer::CanvasTextureChannel);
 VARIANT_ENUM_CAST(RenderingServer::BakeChannels);

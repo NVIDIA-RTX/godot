@@ -37,6 +37,11 @@ class RendererLightStorage {
 public:
 	virtual ~RendererLightStorage() {}
 
+	_FORCE_INLINE_ static bool is_shadow_opacity_visible(float p_opacity) { return p_opacity > 0.0f; }
+	_FORCE_INLINE_ static bool is_shadow_drawn_by(bool p_shadow, float p_opacity, BitField<RS::ShadowRenderer> p_renderers, RS::ShadowRenderer p_renderer) {
+		return p_shadow && is_shadow_opacity_visible(p_opacity) && p_renderers.has_flag(p_renderer);
+	}
+
 	/* Light API */
 
 	virtual RID directional_light_allocate() = 0;
@@ -60,6 +65,7 @@ public:
 	virtual void light_set_reverse_cull_face_mode(RID p_light, bool p_enabled) = 0;
 	virtual void light_set_shadow_caster_mask(RID p_light, uint32_t p_caster_mask) = 0;
 	virtual uint32_t light_get_shadow_caster_mask(RID p_light) const = 0;
+	virtual void light_set_shadow_renderers(RID p_light, BitField<RS::ShadowRenderer> p_renderers) = 0;
 	virtual void light_set_bake_mode(RID p_light, RS::LightBakeMode p_bake_mode) = 0;
 	virtual void light_set_max_sdfgi_cascade(RID p_light, uint32_t p_cascade) = 0;
 

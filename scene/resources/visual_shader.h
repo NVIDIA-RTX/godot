@@ -165,6 +165,9 @@ private:
 
 	bool _check_reroute_subgraph(Type p_type, int p_target_port_type, int p_reroute_node, List<int> *r_visited_reroute_nodes = nullptr) const;
 
+	bool _is_node_reaching_output_port(Type p_type, int p_node, const String &p_output_port_name) const;
+	void _apply_node_render_modes(HashMap<String, int> &r_modes, HashSet<StringName> &r_flags) const;
+
 protected:
 	virtual void _update_shader() const override;
 	static void _bind_methods();
@@ -381,6 +384,11 @@ public:
 	virtual String generate_code(Shader::Mode p_mode, VisualShader::Type p_type, int p_id, const String *p_input_vars, const String *p_output_vars, bool p_for_preview = false) const = 0;
 
 	virtual String get_warning(Shader::Mode p_mode, VisualShader::Type p_type) const;
+
+	// Render modes this node needs. Only applied while its output reaches the
+	// output node's transform port (the vertex Model View Matrix); a reported
+	// billboard mode overrides the shader's Billboard setting.
+	virtual Vector<StringName> get_render_modes(Shader::Mode p_mode, VisualShader::Type p_type) const { return Vector<StringName>(); }
 
 	virtual Category get_category() const;
 

@@ -38,6 +38,7 @@
 #include "core/io/image.h"
 #include "renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
+#include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "servers/rendering/renderer_rd/shaders/decal_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/light_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/scene_data_inc.glsl.gen.h"
@@ -1279,6 +1280,57 @@ void RendererSceneRenderRD::decals_set_filter(RenderingServer::DecalFilter p_fil
 	decals_filter = p_filter;
 	_update_shader_quality_settings();
 }
+
+RID RendererSceneRenderRD::decals_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const {
+	RS::CanvasItemTextureFilter filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+	switch (decals_filter) {
+		case RS::DECAL_FILTER_NEAREST:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST;
+			break;
+		case RS::DECAL_FILTER_LINEAR:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR;
+			break;
+		case RS::DECAL_FILTER_NEAREST_MIPMAPS:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS;
+			break;
+		case RS::DECAL_FILTER_LINEAR_MIPMAPS:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+			break;
+		case RS::DECAL_FILTER_NEAREST_MIPMAPS_ANISOTROPIC:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+		case RS::DECAL_FILTER_LINEAR_MIPMAPS_ANISOTROPIC:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+	}
+	return p_samplers.get_sampler(filter, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+}
+
+RID RendererSceneRenderRD::light_projectors_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const {
+	RS::CanvasItemTextureFilter filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+	switch (light_projectors_filter) {
+		case RS::LIGHT_PROJECTOR_FILTER_NEAREST:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST;
+			break;
+		case RS::LIGHT_PROJECTOR_FILTER_LINEAR:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR;
+			break;
+		case RS::LIGHT_PROJECTOR_FILTER_NEAREST_MIPMAPS:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS;
+			break;
+		case RS::LIGHT_PROJECTOR_FILTER_LINEAR_MIPMAPS:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+			break;
+		case RS::LIGHT_PROJECTOR_FILTER_NEAREST_MIPMAPS_ANISOTROPIC:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+		case RS::LIGHT_PROJECTOR_FILTER_LINEAR_MIPMAPS_ANISOTROPIC:
+			filter = RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+	}
+	return p_samplers.get_sampler(filter, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+}
+
 void RendererSceneRenderRD::light_projectors_set_filter(RenderingServer::LightProjectorFilter p_filter) {
 	if (light_projectors_filter == p_filter) {
 		return;
@@ -1365,7 +1417,7 @@ void RendererSceneRenderRD::_post_prepass_render(RenderDataRD *p_render_data, bo
 	}
 }
 
-void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingMethod::RenderInfo *r_render_info, const PagedArray<RenderGeometryInstance *> *p_rt_instances, const PagedArray<RID> *p_rt_lights) {
+void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingMethod::RenderInfo *r_render_info, const RTCullData *p_rt_cull, RID p_viewport) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -1479,8 +1531,12 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 		render_data.sdfgi_update_data = p_sdfgi_update_data;
 
 		render_data.render_info = r_render_info;
-		render_data.rt_instances = p_rt_instances;
-		render_data.rt_lights = p_rt_lights;
+		if (p_rt_cull) {
+			render_data.rt_instances = p_rt_cull->instances;
+			render_data.rt_lights = p_rt_cull->lights;
+			render_data.rt_decals = p_rt_cull->decals;
+		}
+		render_data.viewport = p_viewport;
 
 		if (p_render_buffers.is_valid() && p_reflection_probe.is_null()) {
 			render_data.transparent_bg = texture_storage->render_target_get_transparent(rb->get_render_target());
@@ -1695,6 +1751,14 @@ RendererSceneRenderRD *RendererSceneRenderRD::singleton = nullptr;
 
 bool RendererSceneRenderRD::is_vrs_supported() const {
 	return RD::get_singleton()->has_feature(RD::SUPPORTS_ATTACHMENT_VRS);
+}
+
+BitField<RS::RenderingNotReadyReason> RendererSceneRenderRD::get_not_ready_reasons() {
+	BitField<RS::RenderingNotReadyReason> reasons = 0;
+	if (pipeline_hash_map_rd_compilations_in_flight.get() > 0) {
+		reasons.set_flag(RS::RENDERING_NOT_READY_PIPELINE_COMPILATION);
+	}
+	return reasons;
 }
 
 bool RendererSceneRenderRD::is_dynamic_gi_supported() const {

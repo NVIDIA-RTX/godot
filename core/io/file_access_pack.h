@@ -266,9 +266,11 @@ class DirAccessPack : public DirAccess {
 
 	PackedData::PackedDir *_find_dir(const String &p_dir);
 
+protected:
+	virtual String _get_next_entry() override;
+
 public:
 	virtual Error list_dir_begin() override;
-	virtual String get_next() override;
 	virtual bool current_is_dir() const override;
 	virtual bool current_is_hidden() const override;
 	virtual void list_dir_end() override;

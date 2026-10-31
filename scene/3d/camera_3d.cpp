@@ -289,6 +289,41 @@ Projection Camera3D::get_camera_projection() const {
 	return _get_camera_projection(_near);
 }
 
+real_t Camera3D::get_fov_interpolated() const {
+	if (is_physics_interpolated_and_enabled() && !Engine::get_singleton()->is_in_physics_frame()) {
+		return fov.interpolated();
+	}
+	return fov;
+}
+
+real_t Camera3D::get_size_interpolated() const {
+	if (is_physics_interpolated_and_enabled() && !Engine::get_singleton()->is_in_physics_frame()) {
+		return size.interpolated();
+	}
+	return size;
+}
+
+real_t Camera3D::get_near_interpolated() const {
+	if (is_physics_interpolated_and_enabled() && !Engine::get_singleton()->is_in_physics_frame()) {
+		return _near.interpolated();
+	}
+	return _near;
+}
+
+real_t Camera3D::get_far_interpolated() const {
+	if (is_physics_interpolated_and_enabled() && !Engine::get_singleton()->is_in_physics_frame()) {
+		return _far.interpolated();
+	}
+	return _far;
+}
+
+Vector2 Camera3D::get_frustum_offset_interpolated() const {
+	if (is_physics_interpolated_and_enabled() && !Engine::get_singleton()->is_in_physics_frame()) {
+		return frustum_offset.interpolated();
+	}
+	return frustum_offset;
+}
+
 void Camera3D::set_perspective(real_t p_fovy_degrees, real_t p_z_near, real_t p_z_far) {
 	if (!force_change && fov == p_fovy_degrees && p_z_near == _near && p_z_far == _far && mode == PROJECTION_PERSPECTIVE) {
 		return;
@@ -629,6 +664,11 @@ void Camera3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_current"), &Camera3D::is_current);
 	ClassDB::bind_method(D_METHOD("get_camera_transform"), &Camera3D::get_camera_transform);
 	ClassDB::bind_method(D_METHOD("get_camera_projection"), &Camera3D::get_camera_projection);
+	ClassDB::bind_method(D_METHOD("get_fov_interpolated"), &Camera3D::get_fov_interpolated);
+	ClassDB::bind_method(D_METHOD("get_size_interpolated"), &Camera3D::get_size_interpolated);
+	ClassDB::bind_method(D_METHOD("get_near_interpolated"), &Camera3D::get_near_interpolated);
+	ClassDB::bind_method(D_METHOD("get_far_interpolated"), &Camera3D::get_far_interpolated);
+	ClassDB::bind_method(D_METHOD("get_frustum_offset_interpolated"), &Camera3D::get_frustum_offset_interpolated);
 	ClassDB::bind_method(D_METHOD("get_fov"), &Camera3D::get_fov);
 	ClassDB::bind_method(D_METHOD("get_frustum_offset"), &Camera3D::get_frustum_offset);
 	ClassDB::bind_method(D_METHOD("get_size"), &Camera3D::get_size);

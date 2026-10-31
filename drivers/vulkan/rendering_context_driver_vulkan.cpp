@@ -32,8 +32,8 @@
 
 #include "rendering_context_driver_vulkan.h"
 
-#include "vk_enum_string_helper.h"
 #include "core/config/engine.h"
+#include "vk_enum_string_helper.h"
 
 #if defined(USE_VOLK) && defined(STREAMLINE_ENABLED) && defined(_WIN32)
 #include <windows.h>
@@ -454,7 +454,8 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 #else
 	bool want_debug_utils = OS::get_singleton()->is_stdout_verbose();
 #endif
-	if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+	// Ray tracing validation reports through the debug utils messenger.
+	if (Engine::get_singleton() && (Engine::get_singleton()->is_gpu_markers_enabled() || Engine::get_singleton()->is_raytracing_validation_enabled())) {
 		want_debug_utils = true;
 	}
 	if (want_debug_utils) {
@@ -635,11 +636,14 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderingContextDriverVulkan::_debug_messenger_ca
 		}
 	}
 
+	RenderingContextDriverVulkan *context = static_cast<RenderingContextDriverVulkan *>(p_user_data);
+	const String acceleration_structures_string = context ? context->rt_validation_tracker.annotate(p_callback_data->pMessage) : String();
+
 	String error_message(type_string +
 			" - Message Id Number: " + String::num_int64(p_callback_data->messageIdNumber) +
 			" | Message Id Name: " + p_callback_data->pMessageIdName +
 			"\n\t" + p_callback_data->pMessage +
-			objects_string + labels_string);
+			objects_string + labels_string + acceleration_structures_string);
 
 	// Use fprintf to stderr directly to avoid re-entering the rendering device via EditorLog.
 	switch (p_message_severity) {
@@ -1083,6 +1087,10 @@ bool RenderingContextDriverVulkan::queue_family_supports_present(VkPhysicalDevic
 
 const RenderingContextDriverVulkan::Functions &RenderingContextDriverVulkan::functions_get() const {
 	return functions;
+}
+
+RTValidationTracker &RenderingContextDriverVulkan::rt_validation_tracker_get() {
+	return rt_validation_tracker;
 }
 
 #endif // VULKAN_ENABLED

@@ -53,6 +53,8 @@ public:
 	// Reflex
 	sl::ReflexOptions reflex_options;
 	bool reflex_options_dirty = true;
+	sl::ReflexMode reflex_requested_mode = sl::ReflexMode::eOff;
+	bool reflex_required_by_dlssg = false;
 	PFun_slReflexGetState *slReflexGetState = nullptr;
 	PFun_slReflexSetOptions *slReflexSetOptions = nullptr;
 	PFun_slReflexSleep *slReflexSleep = nullptr;
@@ -69,6 +71,14 @@ public:
 	PFun_slDLSSSetOptions *slDLSSSetOptions = nullptr;
 	char dlss_default_preset = '?';
 	char dlss_rr_default_preset = '?';
+
+	// DLSS only accepts render sizes within the ranges its quality modes report, and those ranges
+	// have gaps between them, so a size derived from an arbitrary resolution scale often matches no
+	// mode at all and makes DLSS drop upscaling entirely. Rounds r_render_* down to the exact size
+	// of the nearest mode that is not larger than requested, and returns true if it changed them.
+	// Sizes a mode already accepts are left untouched. Queries the Super Resolution table, matching
+	// DLSSEffect::create_context.
+	bool dlss_clamp_render_size(int p_target_width, int p_target_height, int &r_render_width, int &r_render_height);
 
 	// DLSS Ray Reconstruction (DLSS-D / DLSS-RR)
 	PFun_slDLSSDGetOptimalSettings *slDLSSDGetOptimalSettings = nullptr;
@@ -95,6 +105,14 @@ public:
 	static const char *result_to_string(sl::Result result);
 
 	void reflex_set_options(const sl::ReflexOptions &opts);
+	void reflex_request_mode(sl::ReflexMode p_mode);
+	// DLSS-G renders magenta frames when Reflex is not running (DLSSGStatus::eFailReflexNotDetectedAtRuntime),
+	// so Reflex is forced on for as long as frame generation is active.
+	void reflex_set_required_by_dlssg(bool p_required);
+	bool reflex_is_active() const { return reflex_options.mode != sl::ReflexMode::eOff; }
+	// True once the active Reflex options have actually been submitted to Streamline, which
+	// happens on the main thread. DLSS-G must not be enabled before that.
+	bool reflex_is_running() const { return reflex_is_active() && !reflex_options_dirty; }
 	void reflex_sleep(sl::FrameToken *frameToken);
 	void reflex_get_state(sl::ReflexState &reflexState);
 	void pcl_set_options(const sl::PCLOptions &opts);
@@ -107,11 +125,16 @@ public:
 
 	static StreamlineContext &get();
 
-	sl::FrameToken *last_token = nullptr;
+	sl::FrameToken *last_token = nullptr; // Main thread only.
+	sl::FrameToken *render_token = nullptr; // Token of the draw being rendered; render thread only.
 	bool is_game = false;
 
 	sl::ViewportHandle dlssg_viewport;
 	int dlssg_delay = 0;
+	bool dlssg_active() const { return (uint32_t)dlssg_viewport != UINT_MAX; }
+	// Last reported DLSSGStatus bitmask, used to only log status changes.
+	uint32_t dlssg_last_status = 0;
+	void dlssg_report_status(const sl::ViewportHandle &p_viewport);
 
 #if STREAMLINE_ENABLED_VULKAN
 	StreamlineCapabilities enumerate_support_vulkan(void *vk_physical_device);

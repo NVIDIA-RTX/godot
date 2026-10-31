@@ -153,6 +153,12 @@
 #include "tests/scene/test_viewport.h"
 #include "tests/scene/test_visual_shader.h"
 #include "tests/scene/test_window.h"
+#ifdef RD_ENABLED
+#include "tests/servers/rendering/test_render_raytracing.h"
+#include "tests/servers/rendering/test_render_raytracing_capture.h"
+#include "tests/servers/rendering/test_render_raytracing_plan.h"
+#include "tests/servers/rendering/test_render_raytracing_scheduler.h"
+#endif
 #include "tests/servers/rendering/test_shader_preprocessor.h"
 #include "tests/servers/test_nav_heap.h"
 #include "tests/servers/test_text_server.h"
@@ -180,6 +186,7 @@
 #ifdef MODULE_GLTF_ENABLED
 #include "tests/scene/test_gltf_document.h"
 #endif
+#include "tests/scene/test_glyph_hull.h"
 #include "tests/scene/test_path_3d.h"
 #include "tests/scene/test_path_follow_3d.h"
 #include "tests/scene/test_primitives.h"

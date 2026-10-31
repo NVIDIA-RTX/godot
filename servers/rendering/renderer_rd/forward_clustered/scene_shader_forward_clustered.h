@@ -31,8 +31,10 @@
 #pragma once
 
 #include "../storage_rd/material_storage.h"
+#include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_capture.h"
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl.gen.h"
+#include "servers/rendering/rendering_billboard.h"
 
 namespace RendererSceneRenderImplementation {
 
@@ -47,6 +49,10 @@ public:
 		SHADER_GROUP_ADVANCED,
 		SHADER_GROUP_MULTIVIEW,
 		SHADER_GROUP_ADVANCED_MULTIVIEW,
+		SHADER_GROUP_OIT, // Compiled on first blend_oit material.
+		SHADER_GROUP_OIT_MULTIVIEW,
+		SHADER_GROUP_OIT_UNUSED, // OIT combos that are never requested; never enabled.
+		SHADER_GROUP_RT_CAPTURE, // Path tracer vertex capture; compiled on first capture.
 	};
 
 	// Not an enum because these values are constants that are processed as numbers
@@ -70,8 +76,12 @@ public:
 		SHADER_COLOR_PASS_FLAG_LIGHTMAP = 1 << 2,
 		SHADER_COLOR_PASS_FLAG_MULTIVIEW = 1 << 3,
 		SHADER_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
-		SHADER_COLOR_PASS_FLAG_COUNT = 1 << 5
+		SHADER_COLOR_PASS_FLAG_OIT = 1 << 5,
+		SHADER_COLOR_PASS_FLAG_COUNT = 1 << 6
 	};
+
+	// Single variant after the color pass combinations; has no ubershader.
+	static constexpr uint16_t SHADER_VERSION_RT_CAPTURE = ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + SHADER_COLOR_PASS_FLAG_COUNT;
 
 	enum PipelineVersion {
 		PIPELINE_VERSION_DEPTH_PASS,
@@ -84,6 +94,7 @@ public:
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW,
 		PIPELINE_VERSION_COLOR_PASS,
+		PIPELINE_VERSION_RT_CAPTURE,
 		PIPELINE_VERSION_MAX
 	};
 
@@ -93,7 +104,8 @@ public:
 		PIPELINE_COLOR_PASS_FLAG_LIGHTMAP = 1 << 2,
 		PIPELINE_COLOR_PASS_FLAG_MULTIVIEW = 1 << 3,
 		PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
-		PIPELINE_COLOR_PASS_FLAG_OPTIONS = 5,
+		PIPELINE_COLOR_PASS_FLAG_OIT = 1 << 5, // Only combines with TRANSPARENT (+ LIGHTMAP/MULTIVIEW).
+		PIPELINE_COLOR_PASS_FLAG_OPTIONS = 6,
 		PIPELINE_COLOR_PASS_FLAG_COMBINATIONS = 1 << PIPELINE_COLOR_PASS_FLAG_OPTIONS,
 	};
 
@@ -126,11 +138,14 @@ public:
 				uint32_t multimesh_has_color : 1;
 				uint32_t multimesh_has_custom_data : 1;
 				uint32_t fog_use_legacy_blending : 1;
+				uint32_t material_debug_mode : 5; // See material_debug_mode_from_environment().
 			};
 		};
 
 		uint32_t packed_2;
 	};
+
+	static uint32_t material_debug_mode_from_environment(int p_pathtracing_debug_mode);
 
 	struct UbershaderConstants {
 		union {
@@ -169,6 +184,19 @@ public:
 			ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE_AND_TO_ONE
 		};
 
+		enum DiffuseMode {
+			DIFFUSE_LAMBERT,
+			DIFFUSE_BURLEY,
+			DIFFUSE_LAMBERT_WRAP,
+			DIFFUSE_TOON,
+		};
+
+		enum SpecularMode {
+			SPECULAR_SCHLICK_GGX,
+			SPECULAR_TOON,
+			SPECULAR_DISABLED,
+		};
+
 		enum StencilFlags {
 			STENCIL_FLAG_READ = 1,
 			STENCIL_FLAG_WRITE = 2,
@@ -190,6 +218,7 @@ public:
 			RD::VertexFormatID vertex_format_id;
 			RD::FramebufferFormatID framebuffer_format_id;
 			RD::PolygonCullMode cull_mode = RD::POLYGON_CULL_MAX;
+			RD::PolygonFrontFace front_face = RD::POLYGON_FRONT_FACE_CLOCKWISE;
 			RS::PrimitiveType primitive_type = RS::PRIMITIVE_MAX;
 			PipelineVersion version = PipelineVersion::PIPELINE_VERSION_MAX;
 			uint32_t color_pass_flags = 0;
@@ -201,6 +230,7 @@ public:
 				uint32_t h = hash_murmur3_one_64(vertex_format_id);
 				h = hash_murmur3_one_32(framebuffer_format_id, h);
 				h = hash_murmur3_one_32(cull_mode, h);
+				h = hash_murmur3_one_32(front_face, h);
 				h = hash_murmur3_one_32(primitive_type, h);
 				h = hash_murmur3_one_32(version, h);
 				h = hash_murmur3_one_32(color_pass_flags, h);
@@ -218,7 +248,7 @@ public:
 
 		RID version;
 
-		static const uint32_t VERTEX_INPUT_MASKS_SIZE = ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + SHADER_COLOR_PASS_FLAG_COUNT;
+		static const uint32_t VERTEX_INPUT_MASKS_SIZE = SHADER_VERSION_RT_CAPTURE + 1;
 		std::atomic<uint64_t> vertex_input_masks[VERTEX_INPUT_MASKS_SIZE] = {};
 
 		Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
@@ -249,9 +279,15 @@ public:
 		bool uses_particle_trails = false;
 		bool uses_normal_map = false;
 		bool uses_bent_normal_map = false;
+		bool uses_msdf = false;
+		bool uses_vertex_color = false;
+		bool uses_instance_custom = false;
 		bool wireframe = false;
 
 		bool unshaded = false;
+		bool fog_disabled = false;
+		DiffuseMode diffuse_mode = DIFFUSE_LAMBERT;
+		SpecularMode specular_mode = SPECULAR_SCHLICK_GGX;
 		bool uses_vertex = false;
 		bool uses_position = false;
 		bool uses_sss = false;
@@ -264,6 +300,9 @@ public:
 		bool uses_fragment_time = false;
 		bool writes_modelview_or_projection = false;
 		bool uses_world_coordinates = false;
+		RenderingBillboard::Settings billboard;
+		RTVertexCapture::ShaderTraits rt_capture;
+		RS::RTBlasUpdate rt_blas_update = RS::RT_BLAS_UPDATE_AUTO;
 		bool uses_screen_texture_mipmaps = false;
 		bool uses_z_clip_scale = false;
 		RS::CullMode cull_mode = RS::CULL_MODE_DISABLED;
@@ -292,8 +331,17 @@ public:
 			bool uses_screen_texture = false;
 			bool uses_depth_texture = false;
 			bool uses_normal_texture = false;
+			bool force_opaque = false; // render_mode rt_force_opaque
+			bool force_transparent = false; // render_mode rt_force_transparent
 		};
 		RTClassification *rt = nullptr;
+
+		enum RTBlendClass {
+			RT_BLEND_OPAQUE,
+			RT_BLEND_MIX,
+			RT_BLEND_ACCUM,
+			RT_BLEND_OIT,
+		};
 
 		_FORCE_INLINE_ bool uses_alpha_pass() const {
 			bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture || uses_normal_texture;
@@ -316,13 +364,46 @@ public:
 			if (!rt) {
 				return uses_alpha_pass();
 			}
-			bool has_read_screen_alpha = rt->uses_screen_texture || rt->uses_depth_texture || rt->uses_normal_texture;
-			bool has_base_alpha = (rt->uses_alpha && (!rt->uses_alpha_clip || rt->uses_alpha_antialiasing)) || has_read_screen_alpha;
+			if (rt->force_opaque) {
+				return false;
+			}
+			if (rt->force_transparent) {
+				return true;
+			}
+			// Screen/depth reads are shimmed in RT; they do not force transparency.
+			bool has_base_alpha = rt->uses_alpha && (!rt->uses_alpha_clip || rt->uses_alpha_antialiasing);
 			bool has_blend_alpha = rt->uses_blend_alpha;
 			bool has_alpha = has_base_alpha || has_blend_alpha;
 			bool no_depth_draw = rt->depth_draw == DEPTH_DRAW_DISABLED;
 			bool no_depth_test = rt->depth_test != DEPTH_TEST_ENABLED;
-			return has_alpha || has_read_screen_alpha || no_depth_draw || no_depth_test;
+			return has_alpha || no_depth_draw || no_depth_test;
+		}
+
+		_FORCE_INLINE_ RTBlendClass rt_blend_class() const {
+			if (!rt_uses_alpha_pass()) {
+				return RT_BLEND_OPAQUE;
+			}
+			const int bm = rt ? rt->blend_mode : blend_mode;
+			const DepthDraw rt_depth_draw = rt ? rt->depth_draw : depth_draw;
+			// Depth-writing transparency must be visited in deterministic
+			// front-to-back order so its nearest hit can stop traversal.
+			if (rt_depth_draw == DEPTH_DRAW_ALWAYS) {
+				return RT_BLEND_MIX;
+			}
+			switch (bm) {
+				case BLEND_MODE_ADD:
+				case BLEND_MODE_SUB:
+					return RT_BLEND_ACCUM;
+				case BLEND_MODE_OIT:
+					return RT_BLEND_OIT;
+				case BLEND_MODE_MUL: // Orders against Mix; peels as tinted transmittance.
+				default: // MIX / PREMULT / A2C / depth-prepass.
+					return RT_BLEND_MIX;
+			}
+		}
+
+		_FORCE_INLINE_ bool rt_depth_draw_always() const {
+			return (rt ? rt->depth_draw : depth_draw) == DEPTH_DRAW_ALWAYS;
 		}
 
 		_FORCE_INLINE_ bool rt_uses_depth_in_alpha_pass() const {
@@ -340,11 +421,12 @@ public:
 
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RS::CULL_MODE_BACK;
-			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !wireframe && !uses_z_clip_scale && !stencil_enabled;
+			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !billboard.is_camera_dependent() && !wireframe && !uses_z_clip_scale && !stencil_enabled;
 		}
 
 		virtual void set_code(const String &p_Code) override;
 		virtual void set_code_rt(const String &p_code_rt) override;
+		virtual bool requires_custom_rt_hit_group() const override;
 
 		virtual bool is_animated() const override;
 		virtual bool casts_shadows() const override;
@@ -426,6 +508,7 @@ public:
 	void set_default_specialization(const ShaderSpecialization &p_specialization);
 	void enable_multiview_shader_group();
 	void enable_advanced_shader_group(bool p_needs_multiview = false);
+	void enable_oit_shader_group(bool p_needs_multiview = false);
 	bool is_multiview_shader_group_enabled() const;
 	bool is_advanced_shader_group_enabled(bool p_multiview) const;
 	uint32_t get_pipeline_compilations(RS::PipelineSource p_source);

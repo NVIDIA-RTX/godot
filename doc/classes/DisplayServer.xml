@@ -3196,9 +3196,6 @@
 			Sent when the window has been forcibly closed by the display server. The window will immediately hide and clean any internal rendering references.
 			[b]Note:[/b] This flag is implemented only on Linux (Wayland).
 		</constant>
-		<constant name="WINDOW_EVENT_PCL_PING" value="9" enum="WindowEvent">
-			Sent when PC Latency (PCL) receives a ping event. Used for latency measurement.
-		</constant>
 		<constant name="WINDOW_EDGE_TOP_LEFT" value="0" enum="WindowResizeEdge">
 			Top-left edge of a window.
 		</constant>
@@ -3225,6 +3222,9 @@
 		</constant>
 		<constant name="WINDOW_EDGE_MAX" value="8" enum="WindowResizeEdge">
 			Represents the size of the [enum WindowResizeEdge] enum.
+		</constant>
+		<constant name="WINDOW_EVENT_PCL_PING" value="9" enum="WindowEvent">
+			Sent when PC Latency (PCL) receives a ping event. Used for latency measurement.
 		</constant>
 		<constant name="VSYNC_DISABLED" value="0" enum="VSyncMode">
 			No vertical synchronization, which means the engine will display frames as fast as possible (tearing may be visible). Framerate is unlimited (regardless of [member Engine.max_fps]).

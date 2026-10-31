@@ -142,6 +142,11 @@ bool sc_fog_use_legacy_blending() {
 	return ((sc_packed_1() >> 4) & 1U) != 0;
 }
 
+// Material debug view (Environment.pathtracing_debug_mode value), 0 when disabled.
+uint sc_material_debug_mode() {
+	return (sc_packed_1() >> 5) & 31U;
+}
+
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;

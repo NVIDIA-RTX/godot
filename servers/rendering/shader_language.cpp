@@ -11218,6 +11218,20 @@ Error ShaderLanguage::_parse_shader_mode(bool p_is_stencil, const Vector<ModeInf
 		return ERR_PARSE_ERROR;
 	}
 
+	if (!p_is_stencil) {
+		static const char *exclusive_billboard_modes[] = { "billboard", "billboard_y", "billboard_particles" };
+		for (const char *billboard_mode : exclusive_billboard_modes) {
+			if (smode == billboard_mode) {
+				for (const char *other : exclusive_billboard_modes) {
+					if (current_modes.has(StringName(other))) {
+						_set_error(vformat(RTR("Conflicting render modes: '%s' and '%s'. Only one billboard mode can be set."), other, smode));
+						return ERR_PARSE_ERROR;
+					}
+				}
+			}
+		}
+	}
+
 	if (p_is_stencil) {
 		shader->stencil_modes.push_back(mode);
 	} else {

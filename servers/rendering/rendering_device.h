@@ -268,6 +268,17 @@ public:
 	uint8_t *buffer_persistent_map_advance(RID p_buffer);
 	void buffer_flush(RID p_buffer);
 
+#ifdef DEV_ENABLED
+	struct BufferAddressRange {
+		RID buffer;
+		uint64_t address = 0;
+		uint64_t size = 0;
+
+		bool operator<(const BufferAddressRange &p_other) const { return address < p_other.address; }
+	};
+	void buffer_get_device_address_ranges(LocalVector<BufferAddressRange> &r_ranges);
+#endif
+
 private:
 	/******************/
 	/**** CALLBACK ****/
@@ -1230,6 +1241,8 @@ private:
 
 	bool pipeline_cache_enabled = false;
 	size_t pipeline_cache_size = 0;
+	size_t pipeline_cache_max_size = 0; // Bytes; from rendering/rendering_device/pipeline_cache/max_size_mb.
+	bool pipeline_cache_full = false; // Set once the cache outgrows pipeline_cache_max_size; saving stops.
 	String pipeline_cache_file_path;
 	WorkerThreadPool::TaskID pipeline_cache_save_task = WorkerThreadPool::INVALID_TASK_ID;
 
@@ -1321,12 +1334,18 @@ private:
 		RDD::AccelerationStructureType type = {};
 		RDG::ResourceTracker *draw_tracker = nullptr;
 
-		// BLAS/TLAS are weakly linked, as opposed to RD dependencies.
+		// BLAS/TLAS are weakly linked, as opposed to RD dependencies. Builds of acceleration_structure_build_batch() add no links.
 		HashSet<RID> acceleration_structure_dependencies;
 		bool invalidated = true;
+		uint64_t build_serial = 0; // The acceleration_structure_build_serial of the last build or refit.
 
-		// Scratch buffer used during build, owned by the AS.
+		// Scratch buffer used by tracked builds, owned by the AS. Batched builds use acceleration_structure_scratch.
 		RDD::BufferID scratch_buffer;
+
+#ifdef DEV_ENABLED
+		// TLAS last built by acceleration_structure_build_batch(): the BLASes its instances reference.
+		LocalVector<RID> batch_blases;
+#endif
 
 		// --- Bottom Level ---
 		Vector<RDG::ResourceTracker *> draw_trackers;
@@ -1345,7 +1364,29 @@ private:
 		LocalVector<InstanceBuffer> instance_buffers;
 	};
 
+	struct AccelerationStructureScratch {
+		RDD::BufferID buffer;
+		uint64_t size = 0;
+		uint64_t max_size = 0;
+		uint64_t used = 0;
+		uint64_t batch_peak = 0;
+		uint32_t batch_rollovers = 0;
+	};
+
+	struct AccelerationStructureBatch {
+		LocalVector<RDG::RecordedAccelerationStructureBuild> builds;
+		bool barrier_pending = false;
+	};
+
+	AccelerationStructureScratch acceleration_structure_scratch;
+	AccelerationStructureBatch acceleration_structure_batch;
+	uint64_t acceleration_structure_build_serial = 0;
+
+	bool _any_list_active() const;
 	Error _acceleration_structure_scratch_buffer_create(AccelerationStructure *p_acceleration_structure);
+	Error _acceleration_structure_scratch_grow(uint64_t p_size);
+	Error _acceleration_structure_batch_push(RDG::RecordedAccelerationStructureBuild &r_build);
+	Error _blas_batch_add(RID p_blas, bool p_refit);
 	void _blas_remove_tlas_dependencies(AccelerationStructure *p_blas, RID p_blas_id);
 	void _tlas_remove_blas_dependencies(AccelerationStructure *p_tlas, RID p_tlas_id);
 
@@ -1370,6 +1411,8 @@ public:
 			RID index_buffer;
 			uint32_t index_offset = 0;
 			uint32_t index_count = 0;
+			RID transform_buffer;
+			uint32_t transform_offset = 0;
 		};
 
 		// Procedural geometry: buffer of float3 (min, max) AABB pairs.
@@ -1397,6 +1440,7 @@ public:
 
 	RID blas_create(Span<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags);
 	RID tlas_create(uint32_t p_max_instance_count, BitField<AccelerationStructureFlagBits> p_flags);
+	bool acceleration_structure_is_valid(RID p_acceleration_structure);
 
 	typedef int64_t HitShaderBindingTableRange;
 
@@ -1413,7 +1457,29 @@ public:
 	Error blas_update(RID p_blas);
 	Error tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
 
+	struct TLASBuild {
+		RID tlas;
+		Span<AccelerationStructureInstance> instances;
+	};
+
+	Error acceleration_structure_build_batch(Span<RID> p_blas_builds, Span<RID> p_blas_refits, Span<TLASBuild> p_tlas_builds);
+
+	struct AccelerationStructureScratchUsage {
+		uint64_t used = 0;
+		uint64_t size = 0;
+		uint32_t rollovers = 0;
+	};
+	AccelerationStructureScratchUsage acceleration_structure_get_scratch_usage() const;
+	void untracked_barrier();
+#ifdef DEV_ENABLED
+	void tlas_get_stale_blases(RID p_tlas, LocalVector<RID> &r_stale);
+#endif
+
 private:
+	Error _tlas_validate_instances(const AccelerationStructure *p_tlas, Span<AccelerationStructureInstance> p_instances);
+	Error _tlas_batch_add(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
+	Error _tlas_write_instances(AccelerationStructure *p_tlas, RID p_tlas_id, Span<AccelerationStructureInstance> p_instances, LocalVector<RDG::ResourceTracker *> *r_blas_trackers, RDG::RecordedAccelerationStructureBuild &r_build);
+
 	/**********************************/
 	/**** HIT SHADER BINDING TABLE ****/
 	/**********************************/
@@ -1648,7 +1714,6 @@ public:
 	void raytracing_list_bind_raytracing_pipeline(RaytracingListID p_list, RID p_raytracing_pipeline);
 	void raytracing_list_bind_uniform_set(RaytracingListID p_list, RID p_uniform_set, uint32_t p_index);
 	void raytracing_list_set_push_constant(RaytracingListID p_list, const void *p_data, uint32_t p_data_size);
-	void raytracing_list_add_buffer_dependency(RaytracingListID p_list, RID p_buffer, bool p_writable = false);
 	void raytracing_list_trace_rays(RaytracingListID p_list, uint32_t p_raygen_shader_index, RID p_hit_sbt, uint32_t p_width, uint32_t p_height, uint32_t p_depth);
 	void raytracing_list_end();
 
@@ -1774,6 +1839,7 @@ private:
 	bool _dependencies_make_mutable(RID p_id, RDG::ResourceTracker *p_resource_tracker);
 
 	RenderingDeviceGraph draw_graph;
+	String draw_command_label_prefix;
 
 	/**************************/
 	/**** QUEUE MANAGEMENT ****/
@@ -1967,6 +2033,7 @@ public:
 	void _draw_command_begin_label(String p_label_name, const Color &p_color = Color(1, 1, 1, 1));
 	void draw_command_begin_label(const Span<char> p_label_name, const Color &p_color = Color(1, 1, 1, 1));
 	void draw_command_end_label();
+	void draw_command_set_label_prefix(const String &p_prefix);
 
 	String get_device_vendor_name() const;
 	String get_device_name() const;

@@ -373,6 +373,24 @@ GeometryInstance3D::ShadowCastingSetting GeometryInstance3D::get_cast_shadows_se
 	return shadow_casting_setting;
 }
 
+void GeometryInstance3D::set_shadow_renderers(BitField<RS::ShadowRenderer> p_renderers) {
+	shadow_renderers = p_renderers;
+	RS::get_singleton()->instance_geometry_set_shadow_renderers(get_instance(), shadow_renderers);
+}
+
+BitField<RS::ShadowRenderer> GeometryInstance3D::get_shadow_renderers() const {
+	return shadow_renderers;
+}
+
+void GeometryInstance3D::set_rt_blas_update(RTBlasUpdate p_update) {
+	rt_blas_update = p_update;
+	RS::get_singleton()->instance_geometry_set_rt_blas_update(get_instance(), (RS::RTBlasUpdate)p_update);
+}
+
+GeometryInstance3D::RTBlasUpdate GeometryInstance3D::get_rt_blas_update() const {
+	return rt_blas_update;
+}
+
 void GeometryInstance3D::set_extra_cull_margin(float p_margin) {
 	ERR_FAIL_COND(p_margin < 0);
 	extra_cull_margin = p_margin;
@@ -548,6 +566,12 @@ void GeometryInstance3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cast_shadows_setting", "shadow_casting_setting"), &GeometryInstance3D::set_cast_shadows_setting);
 	ClassDB::bind_method(D_METHOD("get_cast_shadows_setting"), &GeometryInstance3D::get_cast_shadows_setting);
 
+	ClassDB::bind_method(D_METHOD("set_shadow_renderers", "renderers"), &GeometryInstance3D::set_shadow_renderers);
+	ClassDB::bind_method(D_METHOD("get_shadow_renderers"), &GeometryInstance3D::get_shadow_renderers);
+
+	ClassDB::bind_method(D_METHOD("set_rt_blas_update", "update"), &GeometryInstance3D::set_rt_blas_update);
+	ClassDB::bind_method(D_METHOD("get_rt_blas_update"), &GeometryInstance3D::get_rt_blas_update);
+
 	ClassDB::bind_method(D_METHOD("set_lod_bias", "bias"), &GeometryInstance3D::set_lod_bias);
 	ClassDB::bind_method(D_METHOD("get_lod_bias"), &GeometryInstance3D::get_lod_bias);
 
@@ -598,11 +622,13 @@ void GeometryInstance3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial", PROPERTY_USAGE_DEFAULT), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_overlay", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial", PROPERTY_USAGE_DEFAULT), "set_material_overlay", "get_material_overlay");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transparency", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_transparency", "get_transparency");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "cast_shadow", PROPERTY_HINT_ENUM, "Off,On,Double-Sided,Shadows Only"), "set_cast_shadows_setting", "get_cast_shadows_setting");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cast_shadow", PROPERTY_HINT_ENUM, "Off,On,Double-Sided,Shadows Only,Self Shadowing"), "set_cast_shadows_setting", "get_cast_shadows_setting");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shadow_renderers", PROPERTY_HINT_FLAGS, "Rasterizer,Path Tracer"), "set_shadow_renderers", "get_shadow_renderers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "extra_cull_margin", PROPERTY_HINT_RANGE, "0,16384,0.01,suffix:m"), "set_extra_cull_margin", "get_extra_cull_margin");
 	ADD_PROPERTY(PropertyInfo(Variant::AABB, "custom_aabb", PROPERTY_HINT_NONE, "suffix:m"), "set_custom_aabb", "get_custom_aabb");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_bias", PROPERTY_HINT_RANGE, "0.001,128,0.001"), "set_lod_bias", "get_lod_bias");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ignore_occlusion_culling"), "set_ignore_occlusion_culling", "is_ignoring_occlusion_culling");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "rt_blas_update", PROPERTY_HINT_ENUM, "Auto,Refit Only,Rebuild Only"), "set_rt_blas_update", "get_rt_blas_update");
 
 	ADD_GROUP("Global Illumination", "gi_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, "Disabled,Static,Dynamic"), "set_gi_mode", "get_gi_mode");
@@ -622,6 +648,11 @@ void GeometryInstance3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_ON);
 	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_SELF_SHADOWING);
+
+	BIND_ENUM_CONSTANT(RT_BLAS_UPDATE_AUTO);
+	BIND_ENUM_CONSTANT(RT_BLAS_UPDATE_REFIT);
+	BIND_ENUM_CONSTANT(RT_BLAS_UPDATE_REBUILD);
 
 	BIND_ENUM_CONSTANT(GI_MODE_DISABLED);
 	BIND_ENUM_CONSTANT(GI_MODE_STATIC);

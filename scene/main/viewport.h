@@ -152,6 +152,19 @@ public:
 		RENDER_INFO_RT_BLAS_REFITS,
 		RENDER_INFO_RT_TRIANGLES_BUILT,
 		RENDER_INFO_RT_TRIANGLES_REFIT,
+		RENDER_INFO_RT_DYNAMIC_REBAKES,
+		RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES,
+		RENDER_INFO_RT_CAPTURED_MESHES,
+		RENDER_INFO_RT_CAPTURED_VERTICES,
+		RENDER_INFO_RT_DYNAMIC_UPDATED,
+		RENDER_INFO_RT_DYNAMIC_HELD,
+		RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED,
+		RENDER_INFO_RT_PENDING_SURFACES,
+		RENDER_INFO_RT_SCRATCH_USED_KB,
+		RENDER_INFO_RT_SCRATCH_SIZE_KB,
+		RENDER_INFO_RT_SCRATCH_ROLLOVERS,
+		RENDER_INFO_RT_CAPTURE_ARENA_USED_KB,
+		RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB,
 		RENDER_INFO_MAX
 	};
 
@@ -323,6 +336,7 @@ private:
 	MSAA msaa_3d = MSAA_DISABLED;
 	ScreenSpaceAA screen_space_aa = SCREEN_SPACE_AA_DISABLED;
 	bool use_taa = false;
+	bool use_pathtracing = true;
 
 	Scaling3DMode scaling_3d_mode = SCALING_3D_MODE_BILINEAR;
 	float scaling_3d_scale = 1.0;
@@ -338,6 +352,7 @@ private:
 	HashSet<ViewportTexture *> viewport_textures;
 
 	void _update_viewport_path();
+	void _update_debug_name();
 
 	bool _can_hide_focus_state();
 	void _on_settings_changed();
@@ -586,6 +601,9 @@ public:
 
 	void set_use_taa(bool p_use_taa);
 	bool is_using_taa() const;
+
+	void set_use_pathtracing(bool p_use_pathtracing);
+	bool is_using_pathtracing() const;
 
 	void set_use_oversampling(bool p_oversampling);
 	bool is_using_oversampling() const;

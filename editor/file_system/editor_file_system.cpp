@@ -244,6 +244,7 @@ void EditorFileSystem::_load_first_scan_root_dir() {
 	Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	first_scan_root_dir = memnew(ScannedDirectory);
 	first_scan_root_dir->full_path = "res://";
+	first_scan_root_dir->modified_time = FileAccess::get_modified_time("res://");
 
 	nb_files_total = _scan_new_dir(first_scan_root_dir, d);
 }
@@ -282,7 +283,7 @@ void EditorFileSystem::_scan_for_uid_directory(const ScannedDirectory *p_scan_di
 		const String path = p_scan_dir->full_path.path_join(scan_file);
 		ResourceUID::ID uid = ResourceUID::INVALID_ID;
 		if (p_import_extensions.has(ext)) {
-			if (FileAccess::exists(path + ".import")) {
+			if (p_scan_dir->file_modified_times.has(scan_file + ".import") || FileAccess::exists(path + ".import")) {
 				uid = ResourceFormatImporter::get_singleton()->get_resource_uid(path);
 			}
 		} else {
@@ -398,6 +399,7 @@ void EditorFileSystem::_scan_filesystem() {
 
 	sources_changed.clear();
 	file_cache.clear();
+	imported_dest_dir_snapshot_valid = false;
 
 	String project = ProjectSettings::get_singleton()->get_resource_path();
 
@@ -510,6 +512,7 @@ void EditorFileSystem::_scan_filesystem() {
 		Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 		sd = memnew(ScannedDirectory);
 		sd->full_path = "res://";
+		sd->modified_time = FileAccess::get_modified_time("res://");
 		nb_files_total = _scan_new_dir(sd, d);
 	}
 
@@ -562,12 +565,35 @@ bool EditorFileSystem::_is_test_for_reimport_needed(const String &p_path, uint64
 	}
 	if (reimport_on_missing_imported_files) {
 		for (const String &path : p_import_dest_paths) {
-			if (!FileAccess::exists(path)) {
+			if (!_import_dest_file_exists(path)) {
 				return true;
 			}
 		}
 	}
 	return false;
+}
+
+bool EditorFileSystem::_import_dest_file_exists(const String &p_path) {
+	const String imported_path = ProjectSettings::get_singleton()->get_imported_files_path();
+	if (p_path.get_base_dir() != imported_path) {
+		return FileAccess::exists(p_path);
+	}
+
+	if (!imported_dest_dir_snapshot_valid) {
+		imported_dest_dir_snapshot.clear();
+		Ref<DirAccess> da = DirAccess::open(imported_path);
+		if (da.is_valid()) {
+			da->list_dir_begin();
+			for (String f = da->get_next(); !f.is_empty(); f = da->get_next()) {
+				if (!da->current_is_dir()) {
+					imported_dest_dir_snapshot.insert(f);
+				}
+			}
+			da->list_dir_end();
+		}
+		imported_dest_dir_snapshot_valid = true;
+	}
+	return imported_dest_dir_snapshot.has(p_path.get_file());
 }
 
 bool EditorFileSystem::_test_for_reimport(const String &p_path, const String &p_expected_import_md5) {
@@ -1144,6 +1170,7 @@ void EditorFileSystem::ScanProgress::increment() {
 int EditorFileSystem::_scan_new_dir(ScannedDirectory *p_dir, Ref<DirAccess> &da) {
 	List<String> dirs;
 	List<String> files;
+	HashMap<String, uint64_t> dir_modified_times;
 
 	String cd = da->get_current_dir();
 
@@ -1168,9 +1195,11 @@ int EditorFileSystem::_scan_new_dir(ScannedDirectory *p_dir, Ref<DirAccess> &da)
 			}
 
 			dirs.push_back(f);
+			dir_modified_times[f] = da->current_modified_time();
 
 		} else {
 			files.push_back(f);
+			p_dir->file_modified_times[f] = da->current_modified_time();
 		}
 	}
 
@@ -1191,6 +1220,7 @@ int EditorFileSystem::_scan_new_dir(ScannedDirectory *p_dir, Ref<DirAccess> &da)
 				ScannedDirectory *sd = memnew(ScannedDirectory);
 				sd->name = dir;
 				sd->full_path = p_dir->full_path.path_join(sd->name);
+				sd->modified_time = dir_modified_times[dir];
 
 				nb_files_total_scan += _scan_new_dir(sd, da);
 
@@ -1210,7 +1240,7 @@ int EditorFileSystem::_scan_new_dir(ScannedDirectory *p_dir, Ref<DirAccess> &da)
 }
 
 void EditorFileSystem::_process_file_system(const ScannedDirectory *p_scan_dir, EditorFileSystemDirectory *p_dir, ScanProgress &p_progress, HashSet<String> *r_processed_files) {
-	p_dir->modified_time = FileAccess::get_modified_time(p_scan_dir->full_path);
+	p_dir->modified_time = p_scan_dir->modified_time;
 
 	for (ScannedDirectory *scan_sub_dir : p_scan_dir->subdirs) {
 		EditorFileSystemDirectory *sub_dir = memnew(EditorFileSystemDirectory);
@@ -1238,11 +1268,11 @@ void EditorFileSystem::_process_file_system(const ScannedDirectory *p_scan_dir, 
 		}
 
 		FileCache *fc = file_cache.getptr(path);
-		uint64_t mt = FileAccess::get_modified_time(path);
+		uint64_t mt = p_scan_dir->get_file_modified_time(scan_file);
 
 		if (_can_import_file(scan_file)) {
 			//is imported
-			uint64_t import_mt = FileAccess::get_modified_time(path + ".import");
+			uint64_t import_mt = p_scan_dir->get_file_modified_time(scan_file + ".import");
 
 			if (fc) {
 				fi->type = fc->type;
@@ -1419,6 +1449,14 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, ScanPr
 	String cd = p_dir->get_path();
 	int diff_nb_files = 0;
 
+	// Filled while re-enumerating the directory below; when the directory was not
+	// re-enumerated (mtime unchanged), fall back to statting the file.
+	HashMap<String, uint64_t> disk_file_mtimes;
+	auto get_disk_mtime = [&](const String &p_file) {
+		const uint64_t *mt = disk_file_mtimes.getptr(p_file);
+		return mt ? *mt : FileAccess::get_modified_time(cd.path_join(p_file));
+	};
+
 	if (current_mtime != p_dir->modified_time || using_fat32_or_exfat) {
 		updated_dir = true;
 		p_dir->modified_time = current_mtime;
@@ -1492,6 +1530,8 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, ScanPr
 				}
 
 			} else {
+				disk_file_mtimes[f] = da->current_modified_time();
+
 				String ext = f.get_extension().to_lower();
 				if (!valid_extensions.has(ext)) {
 					continue; //invalid
@@ -1505,7 +1545,7 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, ScanPr
 					fi->file = f;
 
 					String path = cd.path_join(fi->file);
-					fi->modified_time = FileAccess::get_modified_time(path);
+					fi->modified_time = disk_file_mtimes[f];
 					fi->import_modified_time = 0;
 					fi->import_md5 = "";
 					fi->import_dest_paths = Vector<String>();
@@ -1567,8 +1607,8 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, ScanPr
 			// Same logic as in _process_file_system, the last modifications dates
 			// needs to be trusted to prevent reading all the .import files and the md5
 			// each time the user switch back to Godot.
-			uint64_t mt = FileAccess::get_modified_time(path);
-			uint64_t import_mt = FileAccess::get_modified_time(path + ".import");
+			uint64_t mt = get_disk_mtime(p_dir->files[i]->file);
+			uint64_t import_mt = get_disk_mtime(p_dir->files[i]->file + ".import");
 			if (_is_test_for_reimport_needed(path, p_dir->files[i]->modified_time, mt, p_dir->files[i]->import_modified_time, import_mt, p_dir->files[i]->import_dest_paths)) {
 				ItemAction ia;
 				ia.action = ItemAction::ACTION_FILE_TEST_REIMPORT;
@@ -1577,7 +1617,7 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, ScanPr
 				scan_actions.push_back(ia);
 			}
 		} else {
-			uint64_t mt = FileAccess::get_modified_time(path);
+			uint64_t mt = get_disk_mtime(p_dir->files[i]->file);
 
 			if (mt != p_dir->files[i]->modified_time) {
 				p_dir->files[i]->modified_time = mt; //save new time, but test for reload
@@ -1700,6 +1740,7 @@ void EditorFileSystem::scan_changes() {
 
 	_update_extensions();
 	sources_changed.clear();
+	imported_dest_dir_snapshot_valid = false;
 	scanning_changes = true;
 	scanning_changes_done.clear();
 

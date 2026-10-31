@@ -7900,13 +7900,9 @@ String VisualShaderNodeBillboard::generate_code(Shader::Mode p_mode, VisualShade
 
 	switch (billboard_type) {
 		case BILLBOARD_TYPE_ENABLED:
-			code += "	{\n";
-			code += "		mat4 __mvm = VIEW_MATRIX * mat4(INV_VIEW_MATRIX[0], INV_VIEW_MATRIX[1], INV_VIEW_MATRIX[2], MODEL_MATRIX[3]);\n";
-			if (keep_scale) {
-				code += "		__mvm = __mvm * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));\n";
-			}
-			code += "		" + p_output_vars[0] + " = __mvm;\n";
-			code += "	}\n";
+		case BILLBOARD_TYPE_PARTICLES:
+			// Applied by the render mode reported in get_render_modes() before vertex() runs.
+			code += "	" + p_output_vars[0] + " = MODELVIEW_MATRIX;\n";
 			break;
 		case BILLBOARD_TYPE_FIXED_Y:
 			code += "	{\n";
@@ -7919,22 +7915,38 @@ String VisualShaderNodeBillboard::generate_code(Shader::Mode p_mode, VisualShade
 			code += "		" + p_output_vars[0] + " = __mvm;\n";
 			code += "	}\n";
 			break;
-		case BILLBOARD_TYPE_PARTICLES:
-			code += "	{\n";
-			code += "		mat4 __wm = mat4(normalize(INV_VIEW_MATRIX[0]), normalize(INV_VIEW_MATRIX[1]), normalize(INV_VIEW_MATRIX[2]), MODEL_MATRIX[3]);\n";
-			code += "		__wm = __wm * mat4(vec4(cos(INSTANCE_CUSTOM.x), -sin(INSTANCE_CUSTOM.x), 0.0, 0.0), vec4(sin(INSTANCE_CUSTOM.x), cos(INSTANCE_CUSTOM.x), 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 0.0, 0.0, 1.0));\n";
-			if (keep_scale) {
-				code += "		__wm = __wm * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));\n";
-			}
-			code += "		" + p_output_vars[0] + " = VIEW_MATRIX * __wm;\n";
-			code += "	}\n";
-			break;
 		default:
 			code += "	" + p_output_vars[0] + " = mat4(1.0);\n";
 			break;
 	}
 
 	return code;
+}
+
+Vector<StringName> VisualShaderNodeBillboard::get_render_modes(Shader::Mode p_mode, VisualShader::Type p_type) const {
+	Vector<StringName> render_modes;
+	if (p_mode != Shader::MODE_SPATIAL || p_type != VisualShader::TYPE_VERTEX) {
+		return render_modes;
+	}
+	switch (billboard_type) {
+		case BILLBOARD_TYPE_ENABLED:
+			render_modes.push_back("billboard");
+			break;
+		case BILLBOARD_TYPE_PARTICLES:
+			render_modes.push_back("billboard_particles");
+			break;
+		case BILLBOARD_TYPE_FIXED_Y:
+			// Locks to the model's own Y axis, which no fixed-function mode matches, so the hand-written
+			// MODELVIEW_MATRIX must be vertex-captured by the path tracer.
+			render_modes.push_back("rt_vertex_dynamic");
+			return render_modes;
+		default:
+			return render_modes;
+	}
+	if (keep_scale) {
+		render_modes.push_back("billboard_keep_scale");
+	}
+	return render_modes;
 }
 
 bool VisualShaderNodeBillboard::is_show_prop_names() const {

@@ -709,12 +709,16 @@ RS::EnvironmentSDFGIYScale RendererSceneRender::environment_get_sdfgi_y_scale(RI
 
 // Raytracing
 
-void RendererSceneRender::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) {
-	environment_storage.environment_set_pathtracing(p_env, p_enable, p_debug_mode, p_samples_per_pixel, p_max_bounces, p_denoiser);
+void RendererSceneRender::environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_sky_shader_enabled) {
+	environment_storage.environment_set_pathtracing(p_env, p_enable, p_debug_mode, p_samples_per_pixel, p_max_bounces, p_denoiser, p_sky_shader_enabled);
 }
 
 bool RendererSceneRender::environment_get_pathtracing_enabled(RID p_env) const {
 	return environment_storage.environment_get_pathtracing_enabled(p_env);
+}
+
+bool RendererSceneRender::environment_get_pathtracing_sky_shader_enabled(RID p_env) const {
+	return environment_storage.environment_get_pathtracing_sky_shader_enabled(p_env);
 }
 
 int RendererSceneRender::environment_get_pathtracing_debug_mode(RID p_env) const {

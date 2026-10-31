@@ -46,6 +46,11 @@ public:
 
 	void finalize(RID p_shader, uint32_t p_set_index);
 
+	// For consumers whose set layout differs from the finalized one (e.g. other shader stages).
+	// Recreate when get_version() changes.
+	RID create_uniform_set(RID p_shader, uint32_t p_set_index) const;
+	uint64_t get_version() const { return version; }
+
 	RID get_uniform_set() const { return uniform_set; }
 	uint32_t get_texture_count() const { return textures.size(); }
 	bool is_initialized() const { return rd != nullptr; }
@@ -63,4 +68,5 @@ private:
 	RID default_texture;
 	RID uniform_set;
 	bool needs_refinalize = false;
+	uint64_t version = 0;
 };

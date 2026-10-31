@@ -56,5 +56,7 @@ public:
 	const HashSet<String> &get_types() const;
 	const List<String> &get_types_list() const;
 
+	static void add_raster_ray_renames(HashMap<StringName, String> &r_renames);
+
 	ShaderTypes();
 };

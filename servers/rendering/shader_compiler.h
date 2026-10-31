@@ -54,11 +54,13 @@ public:
 		HashMap<StringName, Pair<int *, int>> render_mode_values;
 		HashMap<StringName, bool *> render_mode_flags;
 		HashMap<StringName, bool *> usage_flag_pointers;
+		HashMap<StringName, String> function_renames;
 		HashMap<StringName, bool *> write_flag_pointers;
 		HashMap<StringName, Pair<int *, int>> stencil_mode_values;
 		int *stencil_reference = nullptr;
 
 		HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> *uniforms = nullptr;
+		String discard_replacement;
 	};
 
 	struct GeneratedCode {

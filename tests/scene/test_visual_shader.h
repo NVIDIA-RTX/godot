@@ -31,10 +31,101 @@
 #pragma once
 
 #include "scene/resources/visual_shader.h"
+#include "scene/resources/visual_shader_nodes.h"
 
 #include "tests/test_macros.h"
 
 namespace TestVisualArray {
+
+static Vector<String> get_render_modes(const Ref<VisualShader> &p_shader) {
+	const String code = p_shader->get_code();
+	const int start = code.find("render_mode ");
+	if (start < 0) {
+		return Vector<String>();
+	}
+	const int begin = start + String("render_mode ").length();
+	return code.substr(begin, code.find(";", begin) - begin).split(", ");
+}
+
+static int find_output_port(const Ref<VisualShader> &p_shader, VisualShader::Type p_type, const String &p_name) {
+	const Ref<VisualShaderNode> output = p_shader->get_node(p_type, VisualShader::NODE_ID_OUTPUT);
+	for (int i = 0; i < output->get_input_port_count(); i++) {
+		if (output->get_input_port_name(i) == p_name) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+static Ref<VisualShaderNodeBillboard> add_billboard_node(const Ref<VisualShader> &p_shader, VisualShaderNodeBillboard::BillboardType p_type, bool p_connect) {
+	Ref<VisualShaderNodeBillboard> node;
+	node.instantiate();
+	node->set_billboard_type(p_type);
+	p_shader->add_node(VisualShader::TYPE_VERTEX, node, Vector2(), 2);
+	if (p_connect) {
+		const int port = find_output_port(p_shader, VisualShader::TYPE_VERTEX, "Model View Matrix");
+		REQUIRE(port >= 0);
+		REQUIRE(p_shader->connect_nodes(VisualShader::TYPE_VERTEX, 2, 0, VisualShader::NODE_ID_OUTPUT, port) == OK);
+	}
+	return node;
+}
+
+static int count_rt_vertex_modes(const Vector<String> &p_modes) {
+	return int(p_modes.has("rt_vertex_auto")) + int(p_modes.has("rt_vertex_dynamic")) + int(p_modes.has("rt_vertex_static")) + int(p_modes.has("rt_vertex_frozen"));
+}
+
+TEST_CASE("[SceneTree][VisualShader] RT Vertex render modes") {
+	SUBCASE("Auto is implicit and the dropdown emits the selected mode") {
+		Ref<VisualShader> vs;
+		vs.instantiate();
+		CHECK(count_rt_vertex_modes(get_render_modes(vs)) == 0);
+
+		vs->set("modes/rt_vertex", 1);
+		Vector<String> render_modes = get_render_modes(vs);
+		CHECK(count_rt_vertex_modes(render_modes) == 1);
+		CHECK(render_modes.has("rt_vertex_dynamic"));
+
+		vs->set("modes/rt_vertex", 2);
+		render_modes = get_render_modes(vs);
+		CHECK(count_rt_vertex_modes(render_modes) == 1);
+		CHECK(render_modes.has("rt_vertex_static"));
+
+		vs->set("modes/rt_vertex", 3);
+		render_modes = get_render_modes(vs);
+		CHECK(count_rt_vertex_modes(render_modes) == 1);
+		CHECK(render_modes.has("rt_vertex_frozen"));
+	}
+
+	SUBCASE("A Y-Billboard node's rt_vertex_dynamic wins over the dropdown") {
+		Ref<VisualShader> vs;
+		vs.instantiate();
+		vs->set("modes/rt_vertex", 2);
+		add_billboard_node(vs, VisualShaderNodeBillboard::BILLBOARD_TYPE_FIXED_Y, true);
+		ERR_PRINT_OFF;
+		const Vector<String> render_modes = get_render_modes(vs);
+		ERR_PRINT_ON;
+		CHECK(render_modes.has("rt_vertex_dynamic"));
+		CHECK(count_rt_vertex_modes(render_modes) == 1);
+	}
+}
+
+TEST_CASE("[SceneTree][VisualShader] RT BLAS render modes") {
+	Ref<VisualShader> vs;
+	vs.instantiate();
+	const auto count_rt_blas_modes = [&]() {
+		const Vector<String> modes = get_render_modes(vs);
+		return int(modes.has("rt_blas_auto")) + int(modes.has("rt_blas_refit")) + int(modes.has("rt_blas_rebuild"));
+	};
+	CHECK_MESSAGE(count_rt_blas_modes() == 0, "Auto is implicit.");
+
+	vs->set("modes/rt_blas", 1);
+	CHECK(count_rt_blas_modes() == 1);
+	CHECK(get_render_modes(vs).has("rt_blas_refit"));
+
+	vs->set("modes/rt_blas", 2);
+	CHECK(count_rt_blas_modes() == 1);
+	CHECK(get_render_modes(vs).has("rt_blas_rebuild"));
+}
 
 TEST_CASE("[SceneTree][VisualShader] Object creation and parameter") {
 	Ref<VisualShader> vs = memnew(VisualShader);

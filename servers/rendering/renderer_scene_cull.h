@@ -52,6 +52,14 @@ class RendererSceneCull : public RenderingMethod {
 public:
 	RendererSceneRender *scene_render = nullptr;
 
+	// Geometry counterpart of RendererLightStorage::is_shadow_drawn_by().
+	_FORCE_INLINE_ static bool is_shadow_cast_by(RS::ShadowCastingSetting p_setting, BitField<RS::ShadowRenderer> p_renderers, RS::ShadowRenderer p_renderer) {
+		if (p_setting == RS::SHADOW_CASTING_SETTING_OFF || (p_setting == RS::SHADOW_CASTING_SETTING_SELF_SHADOWING && p_renderer != RS::SHADOW_RENDERER_PATH_TRACER)) {
+			return false;
+		}
+		return p_renderers.has_flag(p_renderer);
+	}
+
 	enum {
 		SDFGI_MAX_CASCADES = 8,
 		SDFGI_MAX_REGIONS_PER_CASCADE = 3,
@@ -419,6 +427,10 @@ public:
 		Vector<RID> materials;
 
 		RS::ShadowCastingSetting cast_shadows;
+		BitField<RS::ShadowRenderer> shadow_renderers = RS::SHADOW_RENDERER_ALL;
+		RS::RTBlasUpdate rt_blas_update = RS::RT_BLAS_UPDATE_AUTO;
+
+		bool casts_shadow_in(RS::ShadowRenderer p_renderer) const { return is_shadow_cast_by(cast_shadows, shadow_renderers, p_renderer); }
 
 		uint32_t layer_mask;
 		// Fit in 32 bits.
@@ -890,10 +902,11 @@ public:
 		PagedArray<RID> mesh_instances;
 		PagedArray<RID> fog_volumes;
 
-		// RT-extra: instances/lights inside the camera AABB but outside the view frustum.
+		// RT-extra: instances/lights/decals inside the camera AABB but outside the view frustum.
 		// Used for path tracing TLAS and light gathering only (not rasterized).
 		PagedArray<RenderGeometryInstance *> rt_geometry_instances;
 		PagedArray<RID> rt_light_instances;
+		PagedArray<RID> rt_decal_instances;
 
 		struct DirectionalShadow {
 			PagedArray<RenderGeometryInstance *> cascade_geometry_instances[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
@@ -914,6 +927,7 @@ public:
 			fog_volumes.clear();
 			rt_geometry_instances.clear();
 			rt_light_instances.clear();
+			rt_decal_instances.clear();
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].clear();
@@ -941,6 +955,7 @@ public:
 			fog_volumes.reset();
 			rt_geometry_instances.reset();
 			rt_light_instances.reset();
+			rt_decal_instances.reset();
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].reset();
@@ -968,6 +983,7 @@ public:
 			fog_volumes.merge_unordered(p_cull_result.fog_volumes);
 			rt_geometry_instances.merge_unordered(p_cull_result.rt_geometry_instances);
 			rt_light_instances.merge_unordered(p_cull_result.rt_light_instances);
+			rt_decal_instances.merge_unordered(p_cull_result.rt_decal_instances);
 
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
@@ -996,6 +1012,7 @@ public:
 			fog_volumes.set_page_pool(p_rid_pool);
 			rt_geometry_instances.set_page_pool(p_geometry_instance_pool);
 			rt_light_instances.set_page_pool(p_rid_pool);
+			rt_decal_instances.set_page_pool(p_rid_pool);
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].set_page_pool(p_geometry_instance_pool);
@@ -1069,6 +1086,9 @@ public:
 
 	virtual void instance_geometry_set_flag(RID p_instance, RS::InstanceFlags p_flags, bool p_enabled);
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, RS::ShadowCastingSetting p_shadow_casting_setting);
+	virtual void instance_geometry_set_shadow_renderers(RID p_instance, BitField<RS::ShadowRenderer> p_renderers);
+	void _instance_update_shadow_casting(Instance *p_instance);
+	virtual void instance_geometry_set_rt_blas_update(RID p_instance, RS::RTBlasUpdate p_update);
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material);
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material);
 
@@ -1084,6 +1104,7 @@ public:
 
 	virtual void mesh_generate_pipelines(RID p_mesh, bool p_background_compilation);
 	virtual uint32_t get_pipeline_compilations(RS::PipelineSource p_source);
+	virtual BitField<RS::RenderingNotReadyReason> get_not_ready_reasons();
 
 	_FORCE_INLINE_ void _update_instance(Instance *p_instance) const;
 	_FORCE_INLINE_ void _update_instance_aabb(Instance *p_instance) const;
@@ -1169,6 +1190,8 @@ public:
 	void _scene_cull_threaded(uint32_t p_thread, CullData *cull_data);
 	void _scene_cull(CullData &cull_data, InstanceCullResult &cull_result, uint64_t p_from, uint64_t p_to);
 	static void _scene_particles_set_view_axis(RID p_particles, const Vector3 &p_axis, const Vector3 &p_up_axis);
+	// Requests simulation and view sorting for a visible particle system. Returns false when it is inactive.
+	bool _scene_particles_request_process(CullData &p_cull_data, RID p_particles);
 	_FORCE_INLINE_ bool _visibility_parent_check(const CullData &p_cull_data, const InstanceData &p_instance_data);
 
 	bool _render_reflection_probe_step(Instance *p_instance, int p_step);
@@ -1381,9 +1404,10 @@ public:
 	PASS1(environment_set_sdfgi_frames_to_update_light, RS::EnvironmentSDFGIFramesToUpdateLight)
 
 	// Pathtracing
-	PASS6(environment_set_pathtracing, RID, bool, int, int, int, RSE::PathtracingDenoiser)
+	PASS7(environment_set_pathtracing, RID, bool, int, int, int, RSE::PathtracingDenoiser, bool)
 
 	PASS1RC(bool, environment_get_pathtracing_enabled, RID)
+	PASS1RC(bool, environment_get_pathtracing_sky_shader_enabled, RID)
 	PASS1RC(int, environment_get_pathtracing_debug_mode, RID)
 	PASS1RC(int, environment_get_pathtracing_samples_per_pixel, RID)
 	PASS1RC(int, environment_get_pathtracing_max_bounces, RID)

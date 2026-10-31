@@ -51,13 +51,13 @@ protected:
 	virtual String fix_unicode_name(const char *p_name) const { return String::utf8(p_name); }
 	virtual bool is_hidden(const String &p_name);
 	virtual String fix_path(const String &p_path) const override;
+	virtual String _get_next_entry() override;
 
 public:
 	typedef void (*RemoveNotificationFunc)(const String &p_file);
 	static RemoveNotificationFunc remove_notification_func;
 
 	virtual Error list_dir_begin() override; ///< This starts dir listing
-	virtual String get_next() override;
 	virtual bool current_is_dir() const override;
 	virtual bool current_is_hidden() const override;
 

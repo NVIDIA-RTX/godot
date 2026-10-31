@@ -227,6 +227,7 @@ public:
 	}
 
 	bool version_is_valid(RID p_version);
+	bool version_is_group_compiled(RID p_version, int p_group);
 
 	bool version_free(RID p_version);
 

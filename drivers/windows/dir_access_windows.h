@@ -52,15 +52,17 @@ class DirAccessWindows : public DirAccess {
 
 	bool _cisdir = false;
 	bool _cishidden = false;
+	uint64_t _cmodtime = 0;
 
 protected:
 	virtual String fix_path(const String &p_path) const override;
+	virtual String _get_next_entry() override;
 
 public:
 	virtual Error list_dir_begin() override; ///< This starts dir listing
-	virtual String get_next() override;
 	virtual bool current_is_dir() const override;
 	virtual bool current_is_hidden() const override;
+	virtual uint64_t current_modified_time() const override;
 	virtual void list_dir_end() override; ///<
 
 	virtual int get_drive_count() override;

@@ -109,6 +109,8 @@ public:
 
 	virtual void instance_geometry_set_flag(RID p_instance, RS::InstanceFlags p_flags, bool p_enabled) = 0;
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, RS::ShadowCastingSetting p_shadow_casting_setting) = 0;
+	virtual void instance_geometry_set_shadow_renderers(RID p_instance, BitField<RS::ShadowRenderer> p_renderers) = 0;
+	virtual void instance_geometry_set_rt_blas_update(RID p_instance, RS::RTBlasUpdate p_update) = 0;
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material) = 0;
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material) = 0;
 
@@ -124,6 +126,7 @@ public:
 
 	virtual void mesh_generate_pipelines(RID p_mesh, bool p_background_compilation) = 0;
 	virtual uint32_t get_pipeline_compilations(RS::PipelineSource p_source) = 0;
+	virtual BitField<RS::RenderingNotReadyReason> get_not_ready_reasons() = 0;
 
 	/* SKY API */
 
@@ -313,9 +316,10 @@ public:
 	virtual void environment_set_sdfgi_frames_to_update_light(RS::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
 
 	// Pathtracing
-	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser) = 0;
+	virtual void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_sky_shader_enabled) = 0;
 
 	virtual bool environment_get_pathtracing_enabled(RID p_env) const = 0;
+	virtual bool environment_get_pathtracing_sky_shader_enabled(RID p_env) const = 0;
 	virtual int environment_get_pathtracing_debug_mode(RID p_env) const = 0;
 	virtual int environment_get_pathtracing_samples_per_pixel(RID p_env) const = 0;
 	virtual int environment_get_pathtracing_max_bounces(RID p_env) const = 0;

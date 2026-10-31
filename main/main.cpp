@@ -1335,6 +1335,9 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 			Engine::singleton->use_validation_layers = true;
 		} else if (arg == "--raytracing-validation") {
 			Engine::singleton->use_raytracing_validation = true;
+			// The NVIDIA driver only exposes VK_NV_ray_tracing_validation when this is set before its first load,
+			// which happens before the rendering context is created.
+			OS::get_singleton()->set_environment("NV_ALLOW_RAYTRACING_VALIDATION", "1");
 #ifdef DEBUG_ENABLED
 		} else if (arg == "--gpu-abort") {
 			Engine::singleton->abort_on_gpu_errors = true;

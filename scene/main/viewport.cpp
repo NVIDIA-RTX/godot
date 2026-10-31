@@ -551,6 +551,18 @@ void Viewport::_update_viewport_path() {
 	}
 }
 
+void Viewport::_update_debug_name() {
+	if (!is_inside_tree()) {
+		return;
+	}
+
+	// Most SubViewports keep their default (or auto-generated "@") name, so those borrow the parent's name instead.
+	const String node_name = get_name();
+	const bool generic_name = node_name == get_class() || node_name.begins_with("@");
+	const String debug_name = get_tree()->get_root() == this ? String("Main") : (generic_name ? String(get_parent()->get_name()) : node_name);
+	RS::get_singleton()->viewport_set_debug_name(viewport, debug_name);
+}
+
 bool Viewport::_can_hide_focus_state() {
 	return Engine::get_singleton()->is_editor_hint() || GLOBAL_GET_CACHED(int, "gui/common/show_focus_state_on_pointer_event") < 2;
 }
@@ -573,6 +585,7 @@ void Viewport::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			_update_viewport_path();
+			_update_debug_name();
 
 			if (get_parent()) {
 				parent = get_parent()->get_viewport();
@@ -676,6 +689,7 @@ void Viewport::_notification(int p_what) {
 
 		case NOTIFICATION_PATH_RENAMED: {
 			_update_viewport_path();
+			_update_debug_name();
 		} break;
 
 #if !defined(PHYSICS_2D_DISABLED) || !defined(PHYSICS_3D_DISABLED)
@@ -3802,6 +3816,20 @@ bool Viewport::is_using_taa() const {
 	return use_taa;
 }
 
+void Viewport::set_use_pathtracing(bool p_use_pathtracing) {
+	ERR_MAIN_THREAD_GUARD;
+	if (use_pathtracing == p_use_pathtracing) {
+		return;
+	}
+	use_pathtracing = p_use_pathtracing;
+	RS::get_singleton()->viewport_set_use_pathtracing(viewport, p_use_pathtracing);
+}
+
+bool Viewport::is_using_pathtracing() const {
+	ERR_READ_THREAD_GUARD_V(false);
+	return use_pathtracing;
+}
+
 void Viewport::set_use_debanding(bool p_use_debanding) {
 	ERR_MAIN_THREAD_GUARD;
 	if (use_debanding == p_use_debanding) {
@@ -4998,6 +5026,9 @@ void Viewport::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_use_taa", "enable"), &Viewport::set_use_taa);
 	ClassDB::bind_method(D_METHOD("is_using_taa"), &Viewport::is_using_taa);
 
+	ClassDB::bind_method(D_METHOD("set_use_pathtracing", "enable"), &Viewport::set_use_pathtracing);
+	ClassDB::bind_method(D_METHOD("is_using_pathtracing"), &Viewport::is_using_pathtracing);
+
 	ClassDB::bind_method(D_METHOD("set_use_debanding", "enable"), &Viewport::set_use_debanding);
 	ClassDB::bind_method(D_METHOD("is_using_debanding"), &Viewport::is_using_debanding);
 
@@ -5183,6 +5214,7 @@ void Viewport::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "msaa_3d", PROPERTY_HINT_ENUM, String::utf8("Disabled (Fastest),2× (Average),4× (Slow),8× (Slowest)")), "set_msaa_3d", "get_msaa_3d");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "screen_space_aa", PROPERTY_HINT_ENUM, "Disabled (Fastest),FXAA (Fast),SMAA (Average)"), "set_screen_space_aa", "get_screen_space_aa");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_taa"), "set_use_taa", "is_using_taa");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_pathtracing"), "set_use_pathtracing", "is_using_pathtracing");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_debanding"), "set_use_debanding", "is_using_debanding");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_occlusion_culling"), "set_use_occlusion_culling", "is_using_occlusion_culling");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_lod_threshold", PROPERTY_HINT_RANGE, "0,1024,0.1"), "set_mesh_lod_threshold", "get_mesh_lod_threshold");
@@ -5292,6 +5324,19 @@ void Viewport::_bind_methods() {
 	BIND_ENUM_CONSTANT(RENDER_INFO_RT_BLAS_REFITS);
 	BIND_ENUM_CONSTANT(RENDER_INFO_RT_TRIANGLES_BUILT);
 	BIND_ENUM_CONSTANT(RENDER_INFO_RT_TRIANGLES_REFIT);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_DYNAMIC_REBAKES);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_CAPTURED_MESHES);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_CAPTURED_VERTICES);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_DYNAMIC_UPDATED);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_DYNAMIC_HELD);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_PENDING_SURFACES);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_SCRATCH_USED_KB);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_SCRATCH_SIZE_KB);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_SCRATCH_ROLLOVERS);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_CAPTURE_ARENA_USED_KB);
+	BIND_ENUM_CONSTANT(RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB);
 	BIND_ENUM_CONSTANT(RENDER_INFO_MAX);
 
 	BIND_ENUM_CONSTANT(RENDER_INFO_TYPE_VISIBLE);

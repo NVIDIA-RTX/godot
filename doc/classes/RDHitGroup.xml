@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RDHitGroup" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="any_hit_shader" type="RDPipelineShader" setter="set_any_hit_shader" getter="get_any_hit_shader">
+		</member>
+		<member name="closest_hit_shader" type="RDPipelineShader" setter="set_closest_hit_shader" getter="get_closest_hit_shader">
+		</member>
+		<member name="intersection_shader" type="RDPipelineShader" setter="set_intersection_shader" getter="get_intersection_shader">
+		</member>
+	</members>
+</class>

@@ -181,6 +181,9 @@ private:
 
 	mutable RID_Owner<Mesh, true> mesh_owner;
 
+	uint64_t rt_invalidation_version = 0;
+	uint32_t _next_rt_invalidation_counter() { return uint32_t(++rt_invalidation_version); }
+
 	/* Mesh Instance API */
 
 	struct MeshInstance {
@@ -478,7 +481,7 @@ public:
 		return s->uv_scale;
 	}
 
-	/// Get the vertex buffer RID for raytracing device address access.
+	// Get the vertex buffer RID for raytracing device address access.
 	_FORCE_INLINE_ RID mesh_surface_get_vertex_buffer(void *p_surface) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		return s->vertex_buffer;
@@ -495,8 +498,8 @@ public:
 		}
 	}
 
-	/// Get the per-mesh-instance skinned/blend-shape vertex buffer for the current frame.
-	/// Returns RID() when this surface is not deformed (caller should fall back to mesh_surface_get_vertex_buffer).
+	// Get the per-mesh-instance skinned/blend-shape vertex buffer for the current frame.
+	// Returns RID() when this surface is not deformed (caller should fall back to mesh_surface_get_vertex_buffer).
 	_FORCE_INLINE_ RID mesh_instance_get_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
 		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 		if (!mi || p_surface_index >= mi->surfaces.size()) {
@@ -506,9 +509,9 @@ public:
 		return mis.vertex_buffer[mis.current_buffer];
 	}
 
-	/// Get the previous-frame skinned vertex buffer (for motion vector reconstruction).
-	/// Returns the current buffer when the surface was not updated this frame, or when
-	/// update_mesh_instances() did not double-buffer this surface.
+	// Get the previous-frame skinned vertex buffer (for motion vector reconstruction).
+	// Returns the current buffer when the surface was not updated this frame, or when
+	// update_mesh_instances() did not double-buffer this surface.
 	_FORCE_INLINE_ RID mesh_instance_get_prev_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
 		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 		if (!mi || p_surface_index >= mi->surfaces.size()) {
@@ -519,7 +522,7 @@ public:
 		return mis.vertex_buffer[previous_buffer];
 	}
 
-	/// Frame number on which this mesh-instance surface was last skinned (0 if never deformed).
+	// Frame number on which this mesh-instance surface was last skinned (0 if never deformed).
 	_FORCE_INLINE_ uint64_t mesh_instance_get_last_change(RID p_mesh_instance, uint32_t p_surface_index) {
 		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 		if (!mi || p_surface_index >= mi->surfaces.size()) {
@@ -528,14 +531,13 @@ public:
 		return mi->surfaces[p_surface_index].last_change;
 	}
 
-	/// Get the attribute buffer RID for raytracing device address access.
+	// Get the attribute buffer RID for raytracing device address access.
 	_FORCE_INLINE_ RID mesh_surface_get_attribute_buffer(void *p_surface) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		return s->attribute_buffer;
 	}
 
-	/// Get the index buffer RID for raytracing device address access.
-	/// @param p_lod LOD level (0 = base, 1+ = LOD index + 1)
+	// Index buffer for raytracing device address access. p_lod is 0 for the base mesh, else LOD index + 1.
 	_FORCE_INLINE_ RID mesh_surface_get_index_buffer(void *p_surface, uint32_t p_lod = 0) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		if (p_lod == 0) {
@@ -546,8 +548,7 @@ public:
 		}
 	}
 
-	/// Get the index count for raytracing.
-	/// @param p_lod LOD level (0 = base, 1+ = LOD index + 1)
+	// Index count for raytracing. p_lod is 0 for the base mesh, else LOD index + 1.
 	_FORCE_INLINE_ uint32_t mesh_surface_get_index_count(void *p_surface, uint32_t p_lod = 0) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		if (p_lod == 0) {
@@ -592,6 +593,9 @@ public:
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		return s->rt_invalidation_counter;
 	}
+
+	// Advances whenever any mesh surface's rt_invalidation_counter is assigned.
+	uint64_t mesh_get_rt_invalidation_version() const { return rt_invalidation_version; }
 
 	_FORCE_INLINE_ void mesh_surface_get_vertex_arrays_and_format(void *p_surface, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
@@ -833,6 +837,16 @@ public:
 	_FORCE_INLINE_ uint32_t multimesh_get_current_instance_offset(RID p_multimesh) const {
 		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
 		return mm ? mm->motion_vectors_current_offset : 0;
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_color_offset(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->color_offset_cache : 0;
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_custom_data_offset(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->custom_data_offset_cache : 0;
 	}
 
 	_FORCE_INLINE_ uint64_t multimesh_get_last_change(RID p_multimesh) const {

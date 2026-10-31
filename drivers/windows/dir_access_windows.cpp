@@ -103,13 +103,24 @@ Error DirAccessWindows::list_dir_begin() {
 	return OK;
 }
 
-String DirAccessWindows::get_next() {
+String DirAccessWindows::_get_next_entry() {
 	if (p->h == INVALID_HANDLE_VALUE) {
 		return "";
 	}
 
 	_cisdir = (p->fu.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
 	_cishidden = (p->fu.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN);
+
+	{
+		// Same conversion as FileAccessWindows::_get_modified_time, so values are interchangeable.
+		uint64_t ticks = (uint64_t(p->fu.ftLastWriteTime.dwHighDateTime) << 32) | p->fu.ftLastWriteTime.dwLowDateTime;
+		if (ticks == 0) {
+			ticks = (uint64_t(p->fu.ftCreationTime.dwHighDateTime) << 32) | p->fu.ftCreationTime.dwLowDateTime;
+		}
+		const uint64_t WINDOWS_TICKS_PER_SECOND = 10000000;
+		const uint64_t TICKS_TO_UNIX_EPOCH = 116444736000000000LL;
+		_cmodtime = ticks >= TICKS_TO_UNIX_EPOCH ? (ticks - TICKS_TO_UNIX_EPOCH) / WINDOWS_TICKS_PER_SECOND : 0;
+	}
 
 	String name = String::utf16((const char16_t *)(p->fu.cFileName));
 
@@ -127,6 +138,10 @@ bool DirAccessWindows::current_is_dir() const {
 
 bool DirAccessWindows::current_is_hidden() const {
 	return _cishidden;
+}
+
+uint64_t DirAccessWindows::current_modified_time() const {
+	return _cmodtime;
 }
 
 void DirAccessWindows::list_dir_end() {
