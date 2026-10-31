@@ -85,7 +85,7 @@ jobs:
         continue-on-error: true
 
       - name: Download pre-built ANGLE static libraries
-        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        uses: ./.github/actions/fetch-gh-release-asset
         with:
           repo: godotengine/godot-angle-static
           version: tags/chromium/6601.2
@@ -96,7 +96,7 @@ jobs:
         run: Expand-Archive -Force angle/angle.zip ${{ github.workspace }}/
 
       - name: Download pre-built AccessKit
-        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        uses: ./.github/actions/fetch-gh-release-asset
         with:
           repo: godotengine/godot-accesskit-c-static
           version: tags/0.21.2

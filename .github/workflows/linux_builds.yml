@@ -159,7 +159,7 @@ jobs:
           dotnet-version: 8.0.100
 
       - name: Download pre-built AccessKit
-        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        uses: ./.github/actions/fetch-gh-release-asset
         with:
           repo: godotengine/godot-accesskit-c-static
           version: tags/0.21.2
@@ -171,7 +171,7 @@ jobs:
 
       - name: Install mold linker
         if: matrix.proj-test
-        uses: rui314/setup-mold@v1
+        uses: ./.github/actions/setup-mold
 
       - name: Compilation
         uses: ./.github/actions/godot-build

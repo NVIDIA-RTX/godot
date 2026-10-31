@@ -1,0 +1,2 @@
+node_modules/* linguist-vendored
+*.js linguist-vendored

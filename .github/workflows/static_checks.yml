@@ -31,7 +31,12 @@ jobs:
           files=$(echo "$files" | xargs -I {} sh -c 'echo "\"./{}\""' | tr '\n' ' ')
           echo "CHANGED_FILES=$files" >> $GITHUB_ENV
 
-      - name: Style checks via prek
-        uses: j178/prek-action@v2
+      - name: Set up Python for prek
+        uses: actions/setup-python@v6
         with:
-          extra-args: --files ${{ env.CHANGED_FILES }}
+          python-version: "3.x"
+
+      - name: Style checks via prek
+        run: |
+          pip install prek==0.4.1
+          prek --files ${{ env.CHANGED_FILES }}
