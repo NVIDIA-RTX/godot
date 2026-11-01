@@ -3,16 +3,39 @@
 
 #include "raytracing_data_inc.glsl"
 
+// Reads the vec4 at bit `shift` of instance_data_layout from the hit instance's record.
+vec4 fetch_instance_field(GeometryData geom, uint primitive_id, uint shift, vec4 fallback) {
+	uint offset = (geom.instance_data_layout >> shift) & 0xffu;
+	if (geom.instance_data_address == 0ul || offset == 0xffu) {
+		return fallback;
+	}
+	uint divisor = geom.instance_data_primitive_divisor;
+	uint instance = divisor == 0u ? 0u : primitive_id / divisor;
+	uint stride = geom.instance_data_layout & 0xffu;
+	FloatBuffer data = FloatBuffer(geom.instance_data_address + uint64_t(instance * stride + offset) * 4ul);
+	return vec4(data.v[0], data.v[1], data.v[2], data.v[3]);
+}
+
+vec4 fetch_instance_color(GeometryData geom, uint primitive_id) {
+	return fetch_instance_field(geom, primitive_id, 8u, vec4(1.0));
+}
+
+vec4 fetch_instance_custom(GeometryData geom, uint primitive_id) {
+	return fetch_instance_field(geom, primitive_id, 16u, vec4(0.0));
+}
+
 // ============================================================================
 // VERTEX ATTRIBUTES
 // ============================================================================
 struct VertexAttributes {
 	vec2 uv;
+	vec2 uv2;
 	vec3 normal;
 	vec3 tangent;
 	float bitangent_sign;
 	vec4 color;
 	bool has_uv;
+	bool has_uv2;
 	bool has_normal;
 	bool has_tangent;
 	bool has_color;
@@ -29,7 +52,7 @@ struct TBNResult {
 // TRIANGLE INDEX FETCHING
 // ============================================================================
 
-/// Core implementation taking an explicit primitive ID (works in any shader stage).
+// Core implementation taking an explicit primitive ID (works in any shader stage).
 void get_triangle_indices_ex(in GeometryData geom, uint primitive_id, out uint i0, out uint i1, out uint i2) {
 	if (geom.index_format == 2u) {
 		i0 = primitive_id * 3u;
@@ -60,55 +83,66 @@ void get_triangle_indices_ex(in GeometryData geom, uint primitive_id, out uint i
 	}
 }
 
-/// Convenience wrapper using gl_PrimitiveID (hit shaders only).
+#if defined(RT_STAGE_CLOSEST_HIT) || defined(RT_STAGE_ANY_HIT) || defined(RT_STAGE_INTERSECTION)
+// Convenience wrapper using gl_PrimitiveID (hit shaders only).
 void get_triangle_indices(in GeometryData geom, out uint i0, out uint i1, out uint i2) {
 	get_triangle_indices_ex(geom, gl_PrimitiveID, i0, i1, i2);
+}
+#endif
+
+// ============================================================================
+// FACING
+// ============================================================================
+#if defined(RT_STAGE_CLOSEST_HIT) || defined(RT_STAGE_ANY_HIT)
+// Raster FRONT_FACING of a triangle hit: the winding of the triangle vertex() output, as seen from the ray origin.
+bool rt_triangle_front_facing(in GeometryData geom) {
+	return (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT) != ((geom.flags & FLAG_FACING_INVERTED) != 0u);
+}
+#endif
+
+// The shading normal p_normal, flipped on back faces of materials raster flips it for (DO_SIDE_CHECK).
+vec3 rt_side_checked_normal(in GeometryData geom, vec3 p_normal, bool p_front_facing) {
+	return (!p_front_facing && (geom.flags & FLAG_SIDE_CHECK) != 0u) ? -p_normal : p_normal;
 }
 
 // ============================================================================
 // UV FETCHING
 // ============================================================================
-vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
-	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul) {
+vec2 fetch_uv_vertex(in GeometryData geom, uint byte_offset, uint scale_packed, uint index) {
+	uint stride_words = geom.attribute_stride >> 2;
+	uint uv_word_offset = byte_offset >> 2;
+
+	if ((geom.flags & FLAG_COMPRESSED_UV) != 0u) {
+		Uint32Buffer attributes = Uint32Buffer(geom.attribute_address);
+		uint packed_uv = attributes.v[index * stride_words + uv_word_offset];
+		vec2 uv = vec2(float(packed_uv & 0xFFFFu), float(packed_uv >> 16)) / 65535.0;
+		vec2 scale = unpackHalf2x16(scale_packed);
+		return (scale.x != 0.0 || scale.y != 0.0) ? (uv - 0.5) * scale : uv;
+	}
+
+	FloatBuffer attributes = FloatBuffer(geom.attribute_address);
+	uint offset = index * stride_words + uv_word_offset;
+	return vec2(attributes.v[offset], attributes.v[offset + 1u]);
+}
+
+vec2 fetch_uv_at(in GeometryData geom, uint byte_offset, uint scale_packed, uint i0, uint i1, uint i2, vec3 bary) {
+	if (byte_offset == OFFSET_NONE || geom.attribute_address == 0ul) {
 		return vec2(0.0);
 	}
 
-	uint stride_words = geom.attribute_stride >> 2;
-	uint uv_word_off = geom.uv_byte_offset >> 2;
-	bool compressed = (geom.flags & FLAG_COMPRESSED) != 0u;
-
-	vec2 uv0, uv1, uv2;
-
-	if (compressed) {
-		Uint32Buffer attr = Uint32Buffer(geom.attribute_address);
-		uint p0 = attr.v[i0 * stride_words + uv_word_off];
-		uint p1 = attr.v[i1 * stride_words + uv_word_off];
-		uint p2 = attr.v[i2 * stride_words + uv_word_off];
-
-		uv0 = vec2(float(p0 & 0xFFFFu), float(p0 >> 16)) / 65535.0;
-		uv1 = vec2(float(p1 & 0xFFFFu), float(p1 >> 16)) / 65535.0;
-		uv2 = vec2(float(p2 & 0xFFFFu), float(p2 >> 16)) / 65535.0;
-
-		vec2 scale = unpackHalf2x16(geom.uv_scale_packed);
-		if (scale.x != 0.0 || scale.y != 0.0) {
-			uv0 = (uv0 - 0.5) * scale;
-			uv1 = (uv1 - 0.5) * scale;
-			uv2 = (uv2 - 0.5) * scale;
-		}
-	} else {
-		FloatBuffer attr_f = FloatBuffer(geom.attribute_address);
-		uint stride_floats = geom.attribute_stride >> 2;
-		uint uv_float_off = geom.uv_byte_offset >> 2;
-
-		uv0 = vec2(attr_f.v[i0 * stride_floats + uv_float_off],
-				attr_f.v[i0 * stride_floats + uv_float_off + 1u]);
-		uv1 = vec2(attr_f.v[i1 * stride_floats + uv_float_off],
-				attr_f.v[i1 * stride_floats + uv_float_off + 1u]);
-		uv2 = vec2(attr_f.v[i2 * stride_floats + uv_float_off],
-				attr_f.v[i2 * stride_floats + uv_float_off + 1u]);
-	}
+	vec2 uv0 = fetch_uv_vertex(geom, byte_offset, scale_packed, i0);
+	vec2 uv1 = fetch_uv_vertex(geom, byte_offset, scale_packed, i1);
+	vec2 uv2 = fetch_uv_vertex(geom, byte_offset, scale_packed, i2);
 
 	return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
+}
+
+vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
+	return fetch_uv_at(geom, geom.uv_byte_offset, geom.uv_scale_packed, i0, i1, i2, bary);
+}
+
+vec2 fetch_uv2(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
+	return fetch_uv_at(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, i0, i1, i2, bary);
 }
 
 // ============================================================================
@@ -231,17 +265,20 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 #define FETCH_UV (1u << 0)
 #define FETCH_TBN (1u << 1)
 #define FETCH_COLOR (1u << 2)
-#define FETCH_ALL (FETCH_UV | FETCH_TBN | FETCH_COLOR)
+#define FETCH_UV2 (1u << 3)
+#define FETCH_ALL (FETCH_UV | FETCH_UV2 | FETCH_TBN | FETCH_COLOR)
 
 #ifdef RT_HIT_ATTRIBS_DECLARED
 VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs, uint fetch_flags) {
 	VertexAttributes attrs;
 	attrs.uv = vec2(0.0);
+	attrs.uv2 = vec2(0.0);
 	attrs.normal = vec3(0.0, 1.0, 0.0);
 	attrs.tangent = vec3(1.0, 0.0, 0.0);
 	attrs.bitangent_sign = 1.0;
 	attrs.color = vec4(1.0);
 	attrs.has_uv = false;
+	attrs.has_uv2 = false;
 	attrs.has_normal = false;
 	attrs.has_tangent = false;
 	attrs.has_color = false;
@@ -254,6 +291,11 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 	if ((fetch_flags & FETCH_UV) != 0u && geom.uv_byte_offset != OFFSET_NONE) {
 		attrs.uv = fetch_uv(geom, i0, i1, i2, bary);
 		attrs.has_uv = true;
+	}
+
+	if ((fetch_flags & FETCH_UV2) != 0u && geom.uv2_byte_offset != OFFSET_NONE) {
+		attrs.uv2 = fetch_uv2(geom, i0, i1, i2, bary);
+		attrs.has_uv2 = true;
 	}
 
 	if ((fetch_flags & FETCH_COLOR) != 0u && geom.color_byte_offset != OFFSET_NONE) {

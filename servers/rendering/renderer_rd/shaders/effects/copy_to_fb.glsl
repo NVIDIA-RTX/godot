@@ -129,6 +129,16 @@ void main() {
 	return;
 #elif defined(MODE_SET_COLOR)
 	frag_color = params.color;
+#elif defined(MODE_TIMING_HEATMAP)
+	float ticks = textureLod(source_color, uv_interp, 0.0).r;
+	float heat = smoothstep(0.0, params.color.x, ticks);
+	// Green (fast) -> cyan -> purple (slow), with constant overlay opacity.
+	vec3 tint = heat < 0.5 ? mix(vec3(0.1, 0.9, 0.2), vec3(0.1, 0.7, 0.9), heat * 2.0)
+						   : mix(vec3(0.1, 0.7, 0.9), vec3(0.8, 0.1, 1.0), heat * 2.0 - 1.0);
+	if (bool(params.flags & FLAG_LINEAR)) {
+		tint = srgb_to_linear(tint);
+	}
+	frag_color = vec4(tint, params.color.y);
 #else
 
 #ifdef USE_MULTIVIEW

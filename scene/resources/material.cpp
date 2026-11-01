@@ -40,6 +40,7 @@
 #include "core/version.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
+#include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server.h"
 
 void Material::set_next_pass(const Ref<Material> &p_pass) {
@@ -566,6 +567,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->metallic = "metallic";
 	shader_names->emission = "emission";
 	shader_names->emission_energy = "emission_energy";
+	shader_names->emission_indirect_energy = "emission_indirect_energy";
 	shader_names->normal_scale = "normal_scale";
 	shader_names->rim = "rim";
 	shader_names->rim_tint = "rim_tint";
@@ -640,6 +642,8 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->albedo_texture_size = "albedo_texture_size";
 	shader_names->z_clip_scale = "z_clip_scale";
 	shader_names->fov_override = "fov_override";
+
+	shader_names->rt_base_material_state = RTBaseMaterialState::PARAM_NAME;
 }
 
 HashMap<uint64_t, Ref<StandardMaterial3D>> BaseMaterial3D::materials_for_2d;
@@ -661,6 +665,25 @@ void BaseMaterial3D::_update_shader() {
 	MaterialKey mk = _compute_key();
 	if (mk == current_key) {
 		return; //no update required in the end
+	}
+
+	{
+		// State compiled into the generated code below, which the path tracer's fixed-function hit group never runs.
+		RTBaseMaterialState rt;
+		rt.uv1_triplanar = flags[FLAG_UV1_USE_TRIPLANAR];
+		rt.uv1_world_triplanar = flags[FLAG_UV1_USE_WORLD_TRIPLANAR];
+		rt.uv2_triplanar = flags[FLAG_UV2_USE_TRIPLANAR];
+		rt.uv2_world_triplanar = flags[FLAG_UV2_USE_WORLD_TRIPLANAR];
+		rt.uv2_vertex_transform = detail_uv == DETAIL_UV_2 && !flags[FLAG_UV2_USE_TRIPLANAR];
+		rt.proximity_fade = proximity_fade_enabled;
+		rt.distance_fade_mode = distance_fade;
+		rt.emission = features[FEATURE_EMISSION];
+		rt.emission_add = emission_op == EMISSION_OP_ADD;
+		rt.emission_on_uv2 = flags[FLAG_EMISSION_ON_UV2];
+		rt.orm = orm;
+		rt.ambient_occlusion = features[FEATURE_AMBIENT_OCCLUSION];
+		rt.roughness_texture_channel = roughness_texture_channel;
+		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
 	{
@@ -759,6 +782,9 @@ void BaseMaterial3D::_update_shader() {
 		case BLEND_MODE_PREMULT_ALPHA:
 			code += "blend_premul_alpha";
 			break;
+		case BLEND_MODE_OIT:
+			code += "blend_oit";
+			break;
 		case BLEND_MODE_MAX:
 			break; // Internal value, skip.
 	}
@@ -830,6 +856,26 @@ void BaseMaterial3D::_update_shader() {
 
 	if (shading_mode == SHADING_MODE_UNSHADED) {
 		code += ", unshaded";
+	}
+	switch (billboard_mode) {
+		case BILLBOARD_ENABLED:
+			code += ", billboard";
+			break;
+		case BILLBOARD_FIXED_Y:
+			code += ", billboard_y";
+			break;
+		case BILLBOARD_PARTICLES:
+			code += ", billboard_particles";
+			break;
+		case BILLBOARD_DISABLED:
+		case BILLBOARD_MAX:
+			break;
+	}
+	if (billboard_mode != BILLBOARD_DISABLED && flags[FLAG_BILLBOARD_KEEP_SCALE]) {
+		code += ", billboard_keep_scale";
+	}
+	if (flags[FLAG_FIXED_SIZE]) {
+		code += ", fixed_size";
 	}
 	if (flags[FLAG_DISABLE_DEPTH_TEST]) {
 		code += ", depth_test_disabled";
@@ -1037,6 +1083,7 @@ uniform bool particles_anim_loop;
 uniform sampler2D texture_emission : source_color, hint_default_black, %s;
 uniform vec4 emission : source_color;
 uniform float emission_energy : hint_range(0.0, 100.0, 0.01);
+uniform float emission_indirect_energy : hint_range(0.0, 100.0, 0.01);
 )",
 				texfilter_str);
 	}
@@ -1054,7 +1101,7 @@ uniform vec4 refraction_texture_channel;
 		code += "uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;\n";
 	}
 
-	if (features[FEATURE_REFRACTION] || proximity_fade_enabled) {
+	if (features[FEATURE_REFRACTION]) {
 		code += "uniform sampler2D depth_texture : hint_depth_texture, repeat_disable, filter_nearest;\n";
 	}
 
@@ -1228,86 +1275,10 @@ void vertex() {)";
 )";
 	}
 
-	switch (billboard_mode) {
-		case BILLBOARD_DISABLED: {
-		} break;
-		case BILLBOARD_ENABLED: {
-			// `MAIN_CAM_INV_VIEW_MATRIX` is inverse of the camera, even on shadow passes.
-			// This ensures the billboard faces the camera when casting shadows.
-			code += R"(
-	// Billboard Mode: Enabled
-	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
-			MAIN_CAM_INV_VIEW_MATRIX[0],
-			MAIN_CAM_INV_VIEW_MATRIX[1],
-			MAIN_CAM_INV_VIEW_MATRIX[2],
-			MODEL_MATRIX[3]);
-)";
-			if (flags[FLAG_BILLBOARD_KEEP_SCALE]) {
-				code += R"(
-	// Billboard Keep Scale: Enabled
-	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
-			vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
-			vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
-			vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
-			vec4(0.0, 0.0, 0.0, 1.0));
-)";
-			}
-			code += "	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);\n";
-		} break;
-		case BILLBOARD_FIXED_Y: {
-			// `MAIN_CAM_INV_VIEW_MATRIX` is inverse of the camera, even on shadow passes.
-			// This ensures the billboard faces the camera when casting shadows.
-			code += R"(
-	// Billboard Mode: Y-Billboard
-	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
-			vec4(normalize(cross(vec3(0.0, 1.0, 0.0), MAIN_CAM_INV_VIEW_MATRIX[2].xyz)), 0.0),
-			vec4(0.0, 1.0, 0.0, 0.0),
-			vec4(normalize(cross(MAIN_CAM_INV_VIEW_MATRIX[0].xyz, vec3(0.0, 1.0, 0.0))), 0.0),
-			MODEL_MATRIX[3]);
-)";
-			if (flags[FLAG_BILLBOARD_KEEP_SCALE]) {
-				code += R"(
-	// Billboard Keep Scale: Enabled
-	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
-			vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
-			vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
-			vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
-			vec4(0.0, 0.0, 0.0, 1.0));
-)";
-			}
-			code += "	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);\n";
-		} break;
-		case BILLBOARD_PARTICLES: {
-			// Make billboard and rotated by rotation.
-			code += R"(
-	// Billboard Mode: Particles
-	mat4 mat_world = mat4(
-			normalize(INV_VIEW_MATRIX[0]),
-			normalize(INV_VIEW_MATRIX[1]),
-			normalize(INV_VIEW_MATRIX[2]),
-			MODEL_MATRIX[3]);
-	mat_world = mat_world * mat4(
-			vec4(cos(INSTANCE_CUSTOM.x), -sin(INSTANCE_CUSTOM.x), 0.0, 0.0),
-			vec4(sin(INSTANCE_CUSTOM.x), cos(INSTANCE_CUSTOM.x), 0.0, 0.0),
-			vec4(0.0, 0.0, 1.0, 0.0),
-			vec4(0.0, 0.0, 0.0, 1.0));
-)";
-			// Set modelview.
-			code += "	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;\n";
-			if (flags[FLAG_BILLBOARD_KEEP_SCALE]) {
-				code += R"(
-	// Billboard Keep Scale: Enabled
-	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
-			vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
-			vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
-			vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
-			vec4(0.0, 0.0, 0.0, 1.0));
-)";
-			}
-			// Set modelview normal and handle animation.
-			code += R"(
-	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
-
+	// The billboard and fixed_size transforms come from the render modes emitted above.
+	if (billboard_mode == BILLBOARD_PARTICLES) {
+		code += R"(
+	// Billboard Mode: Particles (flipbook animation)
 	float h_frames = float(particles_anim_h_frames);
 	float v_frames = float(particles_anim_v_frames);
 	float particle_total_frames = float(particles_anim_h_frames * particles_anim_v_frames);
@@ -1319,38 +1290,6 @@ void vertex() {)";
 	}
 	UV /= vec2(h_frames, v_frames);
 	UV += vec2(mod(particle_frame, h_frames) / h_frames, floor((particle_frame + 0.5) / h_frames) / v_frames);
-)";
-		} break;
-		case BILLBOARD_MAX:
-			break; // Internal value, skip.
-	}
-
-	if (flags[FLAG_FIXED_SIZE]) {
-		code += R"(
-	// Fixed Size: Enabled
-	if (PROJECTION_MATRIX[3][3] != 0.0) {
-		// Orthogonal matrix; try to do about the same with viewport size.
-		float h = abs(1.0 / (2.0 * PROJECTION_MATRIX[1][1]));
-		// Consistent with vertical FOV (Keep Height).
-		float sc = (h * 2.0);
-		MODELVIEW_MATRIX[0] *= sc;
-		MODELVIEW_MATRIX[1] *= sc;
-		MODELVIEW_MATRIX[2] *= sc;
-	} else {
-		// Scale by depth.
-		float sc;
-		if (IS_MULTIVIEW) {
-			// Assuming stereo rendering.
-			// Moving in the z-plane gives the illusion of the object growing/shrinking in size.
-			// We need to take the full distance to camera to compensate.
-			sc = length((MODELVIEW_MATRIX)[3].xyz);
-		} else {
-			sc = -(MODELVIEW_MATRIX)[3].z;
-		}
-		MODELVIEW_MATRIX[0] *= sc;
-		MODELVIEW_MATRIX[1] *= sc;
-		MODELVIEW_MATRIX[2] *= sc;
-	}
 )";
 	}
 
@@ -1763,6 +1702,7 @@ void fragment() {)";
 	EMISSION = (emission.rgb * emission_tex) * emission_energy;
 )";
 		}
+		code += "	EMISSION_INDIRECT = emission_indirect_energy;\n";
 	}
 
 	if (features[FEATURE_REFRACTION]) {
@@ -1820,7 +1760,7 @@ void fragment() {)";
 	if (proximity_fade_enabled) {
 		code += R"(
 	// Proximity Fade: Enabled
-	float proximity_depth_tex = textureLod(depth_texture, SCREEN_UV, 0.0).r;
+	float proximity_depth_tex = SCENE_DEPTH;
 	vec4 ndc = OUTPUT_IS_SRGB ? vec4(vec3(SCREEN_UV, proximity_depth_tex) * 2.0 - 1.0, 1.0) : vec4(SCREEN_UV * 2.0 - 1.0, proximity_depth_tex, 1.0);
 	vec4 proximity_view_pos = INV_PROJECTION_MATRIX * ndc;
 	proximity_view_pos.xyz /= proximity_view_pos.w;
@@ -2020,7 +1960,8 @@ void fragment() {)";
 	vec3 detail = mix(ALBEDO.rgb, ALBEDO.rgb * detail_tex.rgb, detail_tex.a);
 )";
 			} break;
-			case BLEND_MODE_PREMULT_ALPHA: {
+			case BLEND_MODE_PREMULT_ALPHA:
+			case BLEND_MODE_OIT: {
 				// This is unlikely to ever be used for detail textures, and in order for it to function in the editor, another bit must be used in MaterialKey,
 				// but there are only 5 bits left, so I'm going to leave this disabled unless it's actually requested.
 				//code += "\tvec3 detail = (1.0-detail_tex.a)*ALBEDO.rgb+detail_tex.rgb;\n";
@@ -2041,6 +1982,7 @@ void fragment() {)";
 	// other tasks in the WorkerThreadPool simultaneously creating materials, which
 	// may also hold the shared shader_map_mutex lock.
 	RID new_shader = RS::get_singleton()->shader_create_from_code(code);
+	RS::get_singleton()->shader_set_builtin_standard_3d(new_shader, true);
 
 	MutexLock lock(shader_map_mutex);
 
@@ -2186,6 +2128,15 @@ void BaseMaterial3D::set_emission_intensity(float p_emission_intensity) {
 
 float BaseMaterial3D::get_emission_intensity() const {
 	return emission_intensity;
+}
+
+void BaseMaterial3D::set_emission_indirect_energy(float p_emission_indirect_energy) {
+	emission_indirect_energy = p_emission_indirect_energy;
+	_material_set_param(shader_names->emission_indirect_energy, p_emission_indirect_energy);
+}
+
+float BaseMaterial3D::get_emission_indirect_energy() const {
+	return emission_indirect_energy;
 }
 
 void BaseMaterial3D::set_normal_scale(float p_normal_scale) {
@@ -3357,6 +3308,9 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_emission_intensity", "emission_energy_multiplier"), &BaseMaterial3D::set_emission_intensity);
 	ClassDB::bind_method(D_METHOD("get_emission_intensity"), &BaseMaterial3D::get_emission_intensity);
 
+	ClassDB::bind_method(D_METHOD("set_emission_indirect_energy", "emission_indirect_energy"), &BaseMaterial3D::set_emission_indirect_energy);
+	ClassDB::bind_method(D_METHOD("get_emission_indirect_energy"), &BaseMaterial3D::get_emission_indirect_energy);
+
 	ClassDB::bind_method(D_METHOD("set_normal_scale", "normal_scale"), &BaseMaterial3D::set_normal_scale);
 	ClassDB::bind_method(D_METHOD("get_normal_scale"), &BaseMaterial3D::get_normal_scale);
 
@@ -3561,7 +3515,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "alpha_hash_scale", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_alpha_hash_scale", "get_alpha_hash_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "alpha_antialiasing_mode", PROPERTY_HINT_ENUM, "Disabled,Alpha Edge Blend,Alpha Edge Clip"), "set_alpha_antialiasing", "get_alpha_antialiasing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "alpha_antialiasing_edge", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_alpha_antialiasing_edge", "get_alpha_antialiasing_edge");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "blend_mode", PROPERTY_HINT_ENUM, "Mix,Add,Subtract,Multiply,Premultiplied Alpha"), "set_blend_mode", "get_blend_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "blend_mode", PROPERTY_HINT_ENUM, "Mix,Add,Subtract,Multiply,Premultiplied Alpha,Weighted OIT"), "set_blend_mode", "get_blend_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cull_mode", PROPERTY_HINT_ENUM, "Back,Front,Disabled"), "set_cull_mode", "get_cull_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "depth_draw_mode", PROPERTY_HINT_ENUM, "Opaque Only,Always,Never"), "set_depth_draw_mode", "get_depth_draw_mode");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "no_depth_test"), "set_flag", "get_flag", FLAG_DISABLE_DEPTH_TEST);
@@ -3604,6 +3558,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "emission", PROPERTY_HINT_COLOR_NO_ALPHA), "set_emission", "get_emission");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_energy_multiplier", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), "set_emission_energy_multiplier", "get_emission_energy_multiplier");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_intensity", PROPERTY_HINT_RANGE, "0,100000.0,0.01,or_greater,suffix:nt"), "set_emission_intensity", "get_emission_intensity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_indirect_energy", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), "set_emission_indirect_energy", "get_emission_indirect_energy");
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "emission_operator", PROPERTY_HINT_ENUM, "Add,Multiply"), "set_emission_operator", "get_emission_operator");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "emission_on_uv2"), "set_flag", "get_flag", FLAG_EMISSION_ON_UV2);
@@ -3816,6 +3771,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(BLEND_MODE_SUB);
 	BIND_ENUM_CONSTANT(BLEND_MODE_MUL);
 	BIND_ENUM_CONSTANT(BLEND_MODE_PREMULT_ALPHA);
+	BIND_ENUM_CONSTANT(BLEND_MODE_OIT);
 
 	BIND_ENUM_CONSTANT(ALPHA_ANTIALIASING_OFF);
 	BIND_ENUM_CONSTANT(ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
@@ -3915,6 +3871,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_metallic(0.0);
 	set_emission(Color(0, 0, 0));
 	set_emission_energy_multiplier(1.0);
+	set_emission_indirect_energy(1.0);
 	set_normal_scale(1);
 	set_rim(1.0);
 	set_rim_tint(0.5);

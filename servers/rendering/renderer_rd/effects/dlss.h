@@ -66,7 +66,7 @@ public:
 		RID dlss_rr_diffuse_albedo; // Diffuse albedo buffer (RGB)
 		RID dlss_rr_specular_albedo; // Specular albedo buffer (RGB)
 		RID dlss_rr_normal_roughness; // World-space normal (XYZ) + roughness (W)
-		RID dlss_rr_specular_hit_dist; // Specular hit distance (R16F, -1 = sky)
+		RID dlss_rr_specular_motion_vectors; // Specular motion vectors (RG16F, same convention as velocity)
 	} last_parameters;
 	DLSSEffect *last_effect = nullptr;
 	bool is_d3d12 = false;

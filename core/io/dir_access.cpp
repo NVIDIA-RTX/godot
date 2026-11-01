@@ -569,6 +569,15 @@ bool DirAccess::exists(const String &p_dir) {
 	return da->change_dir(p_dir) == OK;
 }
 
+String DirAccess::get_next() {
+	_last_entry = _get_next_entry();
+	return _last_entry;
+}
+
+uint64_t DirAccess::current_modified_time() const {
+	return FileAccess::get_modified_time(get_current_dir().path_join(_last_entry));
+}
+
 PackedStringArray DirAccess::get_files() {
 	return _get_contents(false);
 }

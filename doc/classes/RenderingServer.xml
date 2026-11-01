@@ -1407,6 +1407,7 @@
 			<param index="3" name="samples_per_pixel" type="int" />
 			<param index="4" name="max_bounces" type="int" />
 			<param index="5" name="denoiser" type="int" enum="RenderingServer.PathtracingDenoiser" />
+			<param index="6" name="sky_shader_enabled" type="bool" />
 			<description>
 			</description>
 		</method>
@@ -1582,6 +1583,13 @@
 				Enables filtering of the volumetric fog scattering buffer. This results in much smoother volumes with very few under-sampling artifacts.
 			</description>
 		</method>
+		<method name="environment_set_volumetric_fog_sampling">
+			<return type="void" />
+			<param index="0" name="sampling" type="int" enum="RenderingServer.EnvironmentVolumetricFogSampling" />
+			<description>
+				Sets the filter used to read the volumetric fog froxel buffer. Changing it recompiles the scene shaders, which can cause a brief stutter. See also [member ProjectSettings.rendering/environment/volumetric_fog/sampling].
+			</description>
+		</method>
 		<method name="environment_set_volumetric_fog_volume_size">
 			<return type="void" />
 			<param index="0" name="size" type="int" />
@@ -1691,6 +1699,16 @@
 						await get_tree().process_frame
 
 					print(RenderingServer.get_rendering_info(RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
+				[/codeblock]
+			</description>
+		</method>
+		<method name="get_rendering_not_ready_reasons">
+			<return type="int" enum="RenderingServer.RenderingNotReadyReason" is_bitfield="true" />
+			<description>
+				Returns why rendered frames may still change without any scene change, such as shaders or pipelines compiling in the background. Combines the background work in progress now with what the last drawn frame skipped or traced at an older state. Returns [code]0[/code] once frames are final, which is useful before capturing frames for comparisons:
+				[codeblock]
+				while RenderingServer.get_rendering_not_ready_reasons() != 0:
+					await RenderingServer.frame_post_draw
 				[/codeblock]
 			</description>
 		</method>
@@ -1952,6 +1970,14 @@
 				Sets a material that will override the material for all surfaces on the mesh associated with this instance. Equivalent to [member GeometryInstance3D.material_override].
 			</description>
 		</method>
+		<method name="instance_geometry_set_rt_blas_update">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="update" type="int" enum="RenderingServer.RTBlasUpdate" />
+			<description>
+				Sets how the path tracer updates the bottom-level acceleration structure of the instance's dynamic geometry. Equivalent to [member GeometryInstance3D.rt_blas_update].
+			</description>
+		</method>
 		<method name="instance_geometry_set_shader_parameter">
 			<return type="void" />
 			<param index="0" name="instance" type="RID" />
@@ -1959,6 +1985,14 @@
 			<param index="2" name="value" type="Variant" />
 			<description>
 				Sets the per-instance shader uniform on the specified 3D geometry instance. Equivalent to [method GeometryInstance3D.set_instance_shader_parameter].
+			</description>
+		</method>
+		<method name="instance_geometry_set_shadow_renderers">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="renderers" type="int" enum="RenderingServer.ShadowRenderer" is_bitfield="true" />
+			<description>
+				Sets the renderers that draw this geometry instance's shadow while its cast shadows setting is not [constant SHADOW_CASTING_SETTING_OFF]. Equivalent to [member GeometryInstance3D.shadow_renderers].
 			</description>
 		</method>
 		<method name="instance_geometry_set_transparency">
@@ -2290,6 +2324,14 @@
 			<param index="1" name="mask" type="int" />
 			<description>
 				Sets the shadow caster mask for this 3D light. Shadows will only be cast using objects in the selected layers. Equivalent to [member Light3D.shadow_caster_mask].
+			</description>
+		</method>
+		<method name="light_set_shadow_renderers">
+			<return type="void" />
+			<param index="0" name="light" type="RID" />
+			<param index="1" name="renderers" type="int" enum="RenderingServer.ShadowRenderer" is_bitfield="true" />
+			<description>
+				Sets the renderers that draw this light's shadow while [method light_set_shadow] is enabled. Equivalent to [member Light3D.shadow_renderers].
 			</description>
 		</method>
 		<method name="lightmap_create">
@@ -4555,6 +4597,14 @@
 				If [code]true[/code], enables occlusion culling on the specified viewport. Equivalent to [member ProjectSettings.rendering/occlusion_culling/use_occlusion_culling].
 			</description>
 		</method>
+		<method name="viewport_set_use_pathtracing">
+			<return type="void" />
+			<param index="0" name="viewport" type="RID" />
+			<param index="1" name="enable" type="bool" />
+			<description>
+				If [code]false[/code], the viewport always rasterizes regardless of its environment's path-tracing setting. Equivalent to [member Viewport.use_pathtracing].
+			</description>
+		</method>
 		<method name="viewport_set_use_taa">
 			<return type="void" />
 			<param index="0" name="viewport" type="RID" />
@@ -5186,6 +5236,15 @@
 		<constant name="LIGHT_PARAM_MAX" value="21" enum="LightParam">
 			Represents the size of the [enum LightParam] enum.
 		</constant>
+		<constant name="SHADOW_RENDERER_RASTERIZER" value="1" enum="ShadowRenderer" is_bitfield="true">
+			The rasterizer draws the shadow (shadow maps or ray query shadows).
+		</constant>
+		<constant name="SHADOW_RENDERER_PATH_TRACER" value="2" enum="ShadowRenderer" is_bitfield="true">
+			The path tracer traces shadow rays for the light, or against the geometry.
+		</constant>
+		<constant name="SHADOW_RENDERER_ALL" value="3" enum="ShadowRenderer" is_bitfield="true">
+			Both renderers draw the shadow.
+		</constant>
 		<constant name="LIGHT_BAKE_DISABLED" value="0" enum="LightBakeMode">
 			Light is ignored when baking. This is the fastest mode, but the light will be taken into account when baking global illumination. This mode should generally be used for dynamic lights that change quickly, as the effect of global illumination is less noticeable on those lights.
 		</constant>
@@ -5592,7 +5651,46 @@
 		<constant name="VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="ViewportRenderInfo">
 			Total triangles processed by BLAS refits this frame (ray tracing only).
 		</constant>
-		<constant name="VIEWPORT_RENDER_INFO_MAX" value="8" enum="ViewportRenderInfo">
+		<constant name="VIEWPORT_RENDER_INFO_RT_DYNAMIC_REBAKES" value="8" enum="ViewportRenderInfo">
+			Number of camera-dependent or animated entries (billboards, particles) whose ray tracing vertices were regenerated this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES" value="9" enum="ViewportRenderInfo">
+			Total vertices written by [constant VIEWPORT_RENDER_INFO_RT_DYNAMIC_REBAKES] this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_CAPTURED_MESHES" value="10" enum="ViewportRenderInfo">
+			Number of meshes whose vertex shader output was captured for ray tracing this frame (ray tracing only). Meshes keeping an earlier capture aren't counted.
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_CAPTURED_VERTICES" value="11" enum="ViewportRenderInfo">
+			Total vertices written by [constant VIEWPORT_RENDER_INFO_RT_CAPTURED_MESHES] this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_DYNAMIC_UPDATED" value="12" enum="ViewportRenderInfo">
+			Number of dynamic ray tracing entries whose BLAS was built or refit this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_DYNAMIC_HELD" value="13" enum="ViewportRenderInfo">
+			Number of dynamic ray tracing entries that kept last frame's BLAS because they are barely visible (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED" value="14" enum="ViewportRenderInfo">
+			Number of dynamic ray tracing entries whose BLAS update was deferred by the per-frame budgets (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_PENDING_SURFACES" value="15" enum="ViewportRenderInfo">
+			Number of surfaces left out of the ray tracing scene this frame because their hit shaders are still compiling (ray tracing only). Zero once every visible material is ready.
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_SCRATCH_USED_KB" value="16" enum="ViewportRenderInfo">
+			Most scratch memory, in kilobytes, that this frame's acceleration structure builds used at once (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_SCRATCH_SIZE_KB" value="17" enum="ViewportRenderInfo">
+			Size, in kilobytes, of the scratch buffer shared by acceleration structure builds (ray tracing only). It grows up to [member ProjectSettings.rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb].
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_SCRATCH_ROLLOVERS" value="18" enum="ViewportRenderInfo">
+			Number of barriers this frame's acceleration structure builds needed because the scratch buffer was full at its maximum size (ray tracing only). Raise [member ProjectSettings.rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb] if this is often above zero.
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_CAPTURE_ARENA_USED_KB" value="19" enum="ViewportRenderInfo">
+			Memory, in kilobytes, taken by this frame's vertex captures in the capture arena (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB" value="20" enum="ViewportRenderInfo">
+			Size, in kilobytes, of the vertex capture arena (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_MAX" value="21" enum="ViewportRenderInfo">
 			Represents the size of the [enum ViewportRenderInfo] enum.
 		</constant>
 		<constant name="VIEWPORT_RENDER_INFO_TYPE_VISIBLE" value="0" enum="ViewportRenderInfoType">
@@ -5723,8 +5821,8 @@
 		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS" value="31" enum="ViewportDebugDraw">
 			Displays the packed normal and roughness input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
-		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST" value="32" enum="ViewportDebugDraw">
-			Displays the specular ray hit distance input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
+		<constant name="VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_MOTION_VECTORS" value="32" enum="ViewportDebugDraw">
+			Displays the specular motion vectors input buffer provided to NVIDIA DLSS Ray Reconstruction. Only has an effect when DLSS Ray Reconstruction is active.
 		</constant>
 		<constant name="VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH" value="33" enum="ViewportDebugDraw">
 			Displays the depth buffer reconstructed by NVIDIA DLSS Ray Reconstruction after denoising. Only has an effect when DLSS Ray Reconstruction is active.
@@ -5861,6 +5959,21 @@
 		</constant>
 		<constant name="ENV_FOG_MODE_DEPTH" value="1" enum="EnvironmentFogMode">
 			Use a simple fog model defined by start and end positions and a custom curve. While not physically accurate, this model can be useful when you need more artistic control.
+		</constant>
+		<constant name="ENV_VOLUMETRIC_FOG_SAMPLING_TRILINEAR" value="0" enum="EnvironmentVolumetricFogSampling">
+			Read the froxel buffer with hardware trilinear filtering. Fastest, but bright low-resolution fog can show blocky creases at froxel borders.
+		</constant>
+		<constant name="ENV_VOLUMETRIC_FOG_SAMPLING_BICUBIC" value="1" enum="EnvironmentVolumetricFogSampling">
+			Read the froxel buffer with a cubic B-spline across the screen and linear filtering in depth. Smoothest, at the cost of 4 texture reads per lookup.
+		</constant>
+		<constant name="ENV_VOLUMETRIC_FOG_SAMPLING_DITHER" value="2" enum="EnvironmentVolumetricFogSampling">
+			Average 2 froxel lookups mirrored around each pixel, offset by up to half a froxel across the screen and in depth with a 4x4 Bayer ordered dither, shifted every frame along a low-discrepancy sequence that never repeats with the camera jitter. Requires TAA, FSR2, DLSS or another temporal resolve to average the pattern out.
+		</constant>
+		<constant name="ENV_VOLUMETRIC_FOG_SAMPLING_FAST_NOISE" value="3" enum="EnvironmentVolumetricFogSampling">
+			Average 2 froxel lookups mirrored around each pixel, offset by up to half a froxel across the screen and in depth with filter-adapted spatiotemporal (FAST) noise, optimized for the 3x3 neighborhood and exponential history blend of a temporal resolve. Converges with less residual noise than [constant ENV_VOLUMETRIC_FOG_SAMPLING_DITHER]. Requires TAA, FSR2, DLSS or another temporal resolve to average the noise out.
+		</constant>
+		<constant name="ENV_VOLUMETRIC_FOG_SAMPLING_MAX" value="4" enum="EnvironmentVolumetricFogSampling">
+			Represents the size of the [enum EnvironmentVolumetricFogSampling] enum.
 		</constant>
 		<constant name="ENV_TONE_MAPPER_LINEAR" value="0" enum="EnvironmentToneMapper">
 			Does not modify color data, resulting in a linear tonemapping curve which unnaturally clips bright values, causing bright lighting to look blown out. The simplest and fastest tonemapper.
@@ -6105,6 +6218,18 @@
 		</constant>
 		<constant name="SHADOW_CASTING_SETTING_SHADOWS_ONLY" value="3" enum="ShadowCastingSetting">
 			Only render the shadows from the object. The object itself will not be drawn.
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_SELF_SHADOWING" value="4" enum="ShadowCastingSetting">
+			The path tracer casts the object's shadows only onto objects that also use [constant SHADOW_CASTING_SETTING_SELF_SHADOWING]. The object still receives shadows from everything, and still appears in reflections and indirect lighting. The rasterizer casts no shadows from it, like [constant SHADOW_CASTING_SETTING_OFF].
+		</constant>
+		<constant name="RT_BLAS_UPDATE_AUTO" value="0" enum="RTBlasUpdate">
+			For instances, follows the shader's [code]rt_blas[/code] render mode. For shaders, refits with a periodic rebuild.
+		</constant>
+		<constant name="RT_BLAS_UPDATE_REFIT" value="1" enum="RTBlasUpdate">
+			Only refits after the first build, never rebuilds periodically.
+		</constant>
+		<constant name="RT_BLAS_UPDATE_REBUILD" value="2" enum="RTBlasUpdate">
+			Only rebuilds, never refits.
 		</constant>
 		<constant name="VISIBILITY_RANGE_FADE_DISABLED" value="0" enum="VisibilityRangeFadeMode" keywords="LOD_FADE_DISABLED">
 			Disable visibility range fading for the given instance.
@@ -6357,6 +6482,18 @@
 		</constant>
 		<constant name="RENDERING_INFO_PIPELINE_COMPILATIONS_SPECIALIZATION" value="10" enum="RenderingInfo">
 			Number of pipeline compilations that were triggered to optimize the current scene. These compilations are done in the background and should not cause any stutters whatsoever.
+		</constant>
+		<constant name="RENDERING_NOT_READY_PIPELINE_COMPILATION" value="1" enum="RenderingNotReadyReason" is_bitfield="true">
+			Rendering pipelines are compiling in the background. Until they finish, surfaces may be drawn with slower fallback pipelines.
+		</constant>
+		<constant name="RENDERING_NOT_READY_RT_SHADER_COMPILATION" value="2" enum="RenderingNotReadyReason" is_bitfield="true">
+			Path tracing hit shaders or pipelines are compiling in the background.
+		</constant>
+		<constant name="RENDERING_NOT_READY_RT_PENDING_SURFACES" value="4" enum="RenderingNotReadyReason" is_bitfield="true">
+			The last frame did not path trace some surfaces because their hit shaders were not compiled yet.
+		</constant>
+		<constant name="RENDERING_NOT_READY_RT_STALE_GEOMETRY" value="8" enum="RenderingNotReadyReason" is_bitfield="true">
+			The last frame path traced some dynamic geometry (particles, billboards) at an older state because of the dynamic update budgets.
 		</constant>
 		<constant name="PIPELINE_SOURCE_CANVAS" value="0" enum="PipelineSource">
 			Pipeline compilation that was triggered by the 2D canvas renderer.

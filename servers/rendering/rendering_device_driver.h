@@ -768,6 +768,8 @@ public:
 			uint32_t index_offset;
 			uint32_t index_count;
 			IndexBufferFormat index_format;
+			BufferID transform_buffer;
+			uint32_t transform_offset;
 		};
 
 		// Procedural geometry: each AABB is two float3 (min, max), packed
@@ -805,6 +807,7 @@ public:
 	virtual void acceleration_structure_instance_write(uint8_t *r_driver_instance, const AccelerationStructureInstance &p_instance) = 0;
 	virtual void acceleration_structure_free(AccelerationStructureID p_acceleration_structure) = 0;
 	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) = 0;
+	virtual void acceleration_structure_debug_record_build(AccelerationStructureID p_acceleration_structure, bool p_update, uint64_t p_frame) {}
 
 	// ----- PIPELINE -----
 
@@ -827,11 +830,11 @@ public:
 
 	// ----- COMMANDS -----
 
-	virtual void command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
+	virtual void command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) = 0;
 	// In-place refit of a BLAS previously built with ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT.
 	// Geometry topology / counts must be unchanged; only vertex positions may differ.
-	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) = 0;
-	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) = 0;
+	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) = 0;
+	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) = 0;
 	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) = 0;
 	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) = 0;
 
@@ -878,7 +881,7 @@ public:
 	/****************/
 	virtual void command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) = 0;
 
-	/// Returns the underlying native command buffer handle (e.g. ID3D12GraphicsCommandList* or VkCommandBuffer).
+	// Returns the underlying native command buffer handle (e.g. ID3D12GraphicsCommandList* or VkCommandBuffer).
 	virtual void *command_buffer_get_native_handle(CommandBufferID p_cmd_buffer) { return nullptr; }
 
 	/********************/

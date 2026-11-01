@@ -9,6 +9,12 @@
 
 #include "scene_forward_clustered_inc.glsl"
 
+#include "../billboard_inc.glsl"
+
+#ifdef MODE_RT_CAPTURE
+#include "rt_capture_inc.glsl"
+#endif
+
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
 
@@ -447,6 +453,10 @@ void vertex_shader(vec3 vertex_input,
 	float point_size = 1.0;
 #endif
 
+#ifdef BILLBOARD_RENDER_MODE_USED
+	billboard_apply_render_modes(modelview, modelview_normal, read_view_matrix, scene_data.main_cam_inv_view_matrix, inv_view_matrix, projection_matrix, instance_custom, OUTPUT_IS_MULTIVIEW);
+#endif
+
 	{
 #CODE : VERTEX
 	}
@@ -484,6 +494,10 @@ void vertex_shader(vec3 vertex_input,
 	binormal = (read_view_matrix * vec4(binormal, 0.0)).xyz;
 	tangent = (read_view_matrix * vec4(tangent, 0.0)).xyz;
 #endif
+#endif
+
+#ifdef MODE_RT_CAPTURE
+	rt_capture_store(vertex, normal, tangent, binormal, sc_multimesh() && rt_capture_is_non_finite(matrix[3].xyz));
 #endif
 
 	vertex_interp = vertex;
@@ -1022,6 +1036,15 @@ layout(location = 14) in vec2 point_coord_interp;
 #define global_time scene_data_block.data.time
 #define global_prev_time scene_data_block.prev_data.time
 
+// SCENE_DEPTH: opaque scene depth at this fragment (pre-transparent depth copy).
+float scene_depth_fetch() {
+#if defined(USE_MULTIVIEW) && !defined(MODE_RENDER_DEPTH)
+	return texelFetch(multiviewSampler(depth_buffer, SAMPLER_NEAREST_CLAMP), ivec3(ivec2(gl_FragCoord.xy), ViewIndex), 0).r;
+#else
+	return texelFetch(sampler2D(depth_buffer, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
+#endif
+}
+
 #if defined(ENABLE_SSS) && defined(ENABLE_TRANSMITTANCE)
 //both required for transmittance to be enabled
 #define LIGHT_TRANSMITTANCE_USED
@@ -1063,6 +1086,10 @@ layout(location = 1) out uvec2 voxel_gi_buffer;
 
 layout(location = 0) out vec4 diffuse_buffer; //diffuse (rgb) and roughness
 layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface scatter)
+#elif defined(MODE_OIT)
+
+layout(location = 0) out vec4 oit_accum_buffer; // weighted premultiplied color (rgb), weight sum (a)
+layout(location = 1) out float oit_reveal_buffer; // alpha, blended into the revealage product
 #else
 
 layout(location = 0) out vec4 frag_color;
@@ -1087,9 +1114,13 @@ layout(location = 2) out vec2 motion_vector;
 
 #include "../scene_forward_gi_inc.glsl"
 
+#include "../material_inputs_inc.glsl"
+
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
 #ifndef MODE_RENDER_DEPTH
+
+#include "../volumetric_fog_sampling_inc.glsl"
 
 vec4 volumetric_fog_process(vec2 screen_uv, float z) {
 	vec3 fog_pos = vec3(screen_uv, z * implementation_data.volumetric_fog_inv_length);
@@ -1099,7 +1130,7 @@ vec4 volumetric_fog_process(vec2 screen_uv, float z) {
 		fog_pos.z = pow(fog_pos.z, implementation_data.volumetric_fog_detail_spread);
 	}
 
-	return texture(sampler3D(volumetric_fog_texture, SAMPLER_LINEAR_CLAMP), fog_pos);
+	return volumetric_fog_sample(volumetric_fog_texture, volumetric_fog_noise, SAMPLER_LINEAR_CLAMP, fog_pos, sc_volumetric_fog_sampling(), uvec2(gl_FragCoord.xy), scene_data_block.data.frame_number);
 }
 
 vec3 fog_get_directional_color(uint index) {
@@ -1198,6 +1229,7 @@ void fragment_shader(in SceneData scene_data) {
 	float metallic_highp = 0.0;
 	float specular = 0.5;
 	vec3 emission = vec3(0.0);
+	float emission_indirect = 1.0;
 	float roughness_highp = 1.0;
 	float rim = 0.0;
 	float rim_tint = 0.0;
@@ -1453,6 +1485,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifndef MODE_RENDER_DEPTH
 
 #ifndef FOG_DISABLED
+	vec4 volumetric_fog = vec4(0.0, 0.0, 0.0, 1.0);
 #ifndef CUSTOM_FOG_USED
 	// fog must be processed as early as possible and then packed.
 	// to maximize VGPR usage
@@ -1467,9 +1500,9 @@ void fragment_shader(in SceneData scene_data) {
 
 	if (implementation_data.volumetric_fog_enabled) {
 #ifdef USE_MULTIVIEW
-		vec4 volumetric_fog = volumetric_fog_process(combined_uv, -vertex.z);
+		volumetric_fog = volumetric_fog_process(combined_uv, -vertex.z);
 #else
-		vec4 volumetric_fog = volumetric_fog_process(screen_uv, -vertex.z);
+		volumetric_fog = volumetric_fog_process(screen_uv, -vertex.z);
 #endif
 		vec4 res = vec4(0.0);
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_USE_FOG)) {
@@ -1494,6 +1527,14 @@ void fragment_shader(in SceneData scene_data) {
 	fog.rgb *= fog.a;
 	fog.a = 1.0 - fog.a;
 #endif //!CUSTOM_FOG_USED
+
+	if (bool(scene_data.flags & (SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG | SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE))) {
+		vec3 debug_color = vec3(1.0, 0.0, 1.0);
+		if (implementation_data.volumetric_fog_enabled) {
+			debug_color = bool(scene_data.flags & SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG) ? volumetric_fog.rgb : vec3(volumetric_fog.a);
+		}
+		fog = vec4(debug_color, 0.0);
+	}
 
 	uint fog_rg = packHalf2x16(fog.rg);
 	uint fog_ba = packHalf2x16(fog.ba);
@@ -1532,7 +1573,9 @@ void fragment_shader(in SceneData scene_data) {
 		item_from = subgroupBroadcastFirst(subgroupMin(item_from));
 		item_to = subgroupBroadcastFirst(subgroupMax(item_to));
 
-		for (uint i = item_from; i < item_to; i++) {
+		// Decals are sorted nearest first (index 0 on top), so blend from the highest index down.
+		for (uint word = item_to; word > item_from; word--) {
+			uint i = word - 1;
 			uint mask = cluster_buffer.data[cluster_decal_offset + i];
 			mask &= cluster_get_range_clip_mask(i, item_min, item_max);
 
@@ -1650,6 +1693,8 @@ void fragment_shader(in SceneData scene_data) {
 	// Used in regular draw pass and when drawing SDFs for SDFGI and materials for VoxelGI.
 	emission *= scene_data.emissive_exposure_normalization;
 #endif
+
+#include "material_debug_capture_inc.glsl"
 
 #if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
@@ -2912,6 +2957,7 @@ void fragment_shader(in SceneData scene_data) {
 		imageAtomicOr(geom_facing_grid, grid_pos, facing_bits); //store facing bits
 #endif
 
+		emission *= emission_indirect;
 		if (length(emission) > 0.001) {
 			float lumas[6];
 			vec3 light_total = vec3(0);
@@ -3029,6 +3075,8 @@ void fragment_shader(in SceneData scene_data) {
 	fog = vec4(unpackHalf2x16(fog_rg), unpackHalf2x16(fog_ba));
 #endif //!FOG_DISABLED
 
+#include "material_debug_apply_inc.glsl"
+
 #ifdef MODE_SEPARATE_SPECULAR
 
 #ifdef MODE_UNSHADED
@@ -3051,6 +3099,10 @@ void fragment_shader(in SceneData scene_data) {
 
 #else //MODE_SEPARATE_SPECULAR
 
+#ifdef MODE_OIT
+	vec4 frag_color; // Local; converted to the weighted OIT outputs below.
+#endif
+
 	alpha *= scene_data.pass_alpha_multiplier;
 
 #ifdef MODE_UNSHADED
@@ -3067,6 +3119,15 @@ void fragment_shader(in SceneData scene_data) {
 #if defined(PREMUL_ALPHA_USED) && !defined(MODE_RENDER_DEPTH)
 	frag_color.rgb *= premul_alpha;
 #endif //PREMUL_ALPHA_USED
+
+#ifdef MODE_OIT
+	// Weighted-blended OIT, McGuire/Bavoil eq. 10: post-projection depth,
+	// scene-scale independent. Reverse-Z, so the near-weight is d^3 directly.
+	// Path-traced transparency uses bounded peeling instead of this weight.
+	float oit_weighted_alpha = alpha * max(0.01, 3000.0 * pow(gl_FragCoord.z, 3.0));
+	oit_accum_buffer = vec4(frag_color.rgb * oit_weighted_alpha, oit_weighted_alpha);
+	oit_reveal_buffer = alpha;
+#endif //MODE_OIT
 
 #endif //MODE_SEPARATE_SPECULAR
 

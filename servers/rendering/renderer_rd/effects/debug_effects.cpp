@@ -341,7 +341,7 @@ void DebugEffects::draw_shadow_frustum(RID p_light, const Projection &p_cam_proj
 	}
 }
 
-void DebugEffects::draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_fb, const Projection &p_current_projection, const Transform3D &p_current_transform, const Projection &p_previous_projection, const Transform3D &p_previous_transform, Size2i p_resolution) {
+void DebugEffects::draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_fb, const Projection &p_current_projection, const Transform3D &p_current_transform, const Projection &p_previous_projection, const Transform3D &p_previous_transform, Size2i p_resolution, RID p_reference_velocity) {
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
 	ERR_FAIL_NULL(material_storage);
 
@@ -351,6 +351,8 @@ void DebugEffects::draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_f
 	RID default_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 	RD::Uniform u_source_velocity(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, p_velocity }));
 	RD::Uniform u_source_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, p_depth }));
+	const bool has_reference = p_reference_velocity.is_valid();
+	RD::Uniform u_reference_velocity(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, has_reference ? p_reference_velocity : p_velocity }));
 
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_dest_fb);
 	RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, motion_vectors.pipeline.get_render_pipeline(RD::INVALID_ID, RD::get_singleton()->framebuffer_get_format(p_dest_fb), false, RD::get_singleton()->draw_list_get_current_pass()));
@@ -363,9 +365,10 @@ void DebugEffects::draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_f
 	motion_vectors.push_constant.resolution[0] = p_resolution.width;
 	motion_vectors.push_constant.resolution[1] = p_resolution.height;
 	motion_vectors.push_constant.force_derive_from_depth = false;
+	motion_vectors.push_constant.reference_length = has_reference ? 0.5f : 0.0f;
 
 	RID shader = motion_vectors.shader.version_get_shader(motion_vectors.shader_version, 0);
-	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_velocity, u_source_depth), 0);
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_velocity, u_source_depth, u_reference_velocity), 0);
 	RD::get_singleton()->draw_list_set_push_constant(draw_list, &motion_vectors.push_constant, sizeof(MotionVectorsPushConstant));
 	RD::get_singleton()->draw_list_draw(draw_list, false, 1u, 3u);
 

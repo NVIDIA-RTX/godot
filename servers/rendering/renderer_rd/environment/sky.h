@@ -159,7 +159,10 @@ public:
 			float z_far; // 4 - 340
 			uint32_t directional_light_count; // 4 - 344
 			uint32_t fog_use_legacy_blending; // 4 - 348
-			uint32_t pad1; // 4 - 352
+			uint32_t volumetric_fog_sampling; // 4 - 352
+
+			uint32_t frame_number; // 4 - 356
+			uint32_t pad1[3]; // 12 - 368
 		};
 
 		UBO ubo;

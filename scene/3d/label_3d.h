@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "core/os/mutex.h"
+#include "scene/3d/glyph_hull.h"
 #include "scene/3d/visual_instance_3d.h"
 #include "scene/resources/font.h"
 #include "scene/resources/material.h"
@@ -75,10 +77,33 @@ private:
 		PackedColorArray mesh_colors;
 		PackedVector2Array mesh_uvs;
 		PackedInt32Array indices;
-		int offset = 0;
 		float z_shift = 0.0;
 		RID material;
 	};
+
+	// Tight glyph geometry, so neighboring glyphs rarely overlap on one plane (the path tracer peels those once).
+	struct GlyphHullKey {
+		uint64_t texture_id = 0;
+		Rect2i rect;
+		uint32_t channel = 0;
+		float threshold = 0.0f;
+
+		bool operator==(const GlyphHullKey &p_b) const {
+			return texture_id == p_b.texture_id && rect == p_b.rect && channel == p_b.channel && threshold == p_b.threshold;
+		}
+	};
+
+	struct GlyphHullKeyHasher {
+		_FORCE_INLINE_ static uint32_t hash(const GlyphHullKey &p_a) {
+			return hash_murmur3_buffer(&p_a, sizeof(GlyphHullKey));
+		}
+	};
+
+	static HashMap<GlyphHullKey, GlyphHull, GlyphHullKeyHasher> glyph_hull_cache;
+	static BinaryMutex glyph_hull_cache_mutex; // Held once per _shape().
+
+	// Caller must hold glyph_hull_cache_mutex. The result stays valid until the next call.
+	static const GlyphHull *_get_glyph_hull(const Glyph &p_glyph, int p_outline_size, const RID &p_texture, const Rect2 &p_uv_rect);
 
 	struct SurfaceKey {
 		uint64_t texture_id;

@@ -2307,15 +2307,15 @@ bool RenderingDeviceDriverMetal::raytracing_pipeline_get_shader_group_handles(Ra
 
 // ----- COMMANDS -----
 
-void RenderingDeviceDriverMetal::command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) {
+void RenderingDeviceDriverMetal::command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) {
 	ERR_FAIL_MSG("Ray tracing is not currently supported by the Metal driver.");
 }
 
-void RenderingDeviceDriverMetal::command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) {
+void RenderingDeviceDriverMetal::command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) {
 	ERR_FAIL_MSG("Ray tracing is not currently supported by the Metal driver.");
 }
 
-void RenderingDeviceDriverMetal::command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) {
+void RenderingDeviceDriverMetal::command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) {
 	ERR_FAIL_MSG("Ray tracing is not currently supported by the Metal driver.");
 }
 

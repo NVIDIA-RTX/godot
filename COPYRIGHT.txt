@@ -272,6 +272,11 @@ Comment: etcpak
 Copyright: 2013-2022, Bartosz Taudul
 License: BSD-3-clause
 
+Files: thirdparty/fast_noise/*
+Comment: Filter-adapted Spatiotemporal Sampling (FAST) noise
+Copyright: 2023, Electronic Arts Inc.
+License: BSD-3-clause
+
 Files: thirdparty/fonts/DroidSans*.woff2
 Comment: DroidSans font
 Copyright: 2008, The Android Open Source Project

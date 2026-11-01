@@ -98,6 +98,7 @@ public:
 		SHADOW_CASTING_SETTING_ON = RSE::SHADOW_CASTING_SETTING_ON,
 		SHADOW_CASTING_SETTING_DOUBLE_SIDED = RSE::SHADOW_CASTING_SETTING_DOUBLE_SIDED,
 		SHADOW_CASTING_SETTING_SHADOWS_ONLY = RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY,
+		SHADOW_CASTING_SETTING_SELF_SHADOWING = RSE::SHADOW_CASTING_SETTING_SELF_SHADOWING,
 	};
 
 	enum GIMode {
@@ -120,8 +121,16 @@ public:
 		VISIBILITY_RANGE_FADE_DEPENDENCIES = RSE::VISIBILITY_RANGE_FADE_DEPENDENCIES,
 	};
 
+	enum RTBlasUpdate {
+		RT_BLAS_UPDATE_AUTO = RSE::RT_BLAS_UPDATE_AUTO,
+		RT_BLAS_UPDATE_REFIT = RSE::RT_BLAS_UPDATE_REFIT,
+		RT_BLAS_UPDATE_REBUILD = RSE::RT_BLAS_UPDATE_REBUILD,
+	};
+
 private:
 	ShadowCastingSetting shadow_casting_setting = SHADOW_CASTING_SETTING_ON;
+	BitField<RSE::ShadowRenderer> shadow_renderers = RSE::SHADOW_RENDERER_ALL;
+	RTBlasUpdate rt_blas_update = RT_BLAS_UPDATE_AUTO;
 	Ref<Material> material_override;
 	Ref<Material> material_overlay;
 
@@ -157,6 +166,12 @@ protected:
 public:
 	void set_cast_shadows_setting(ShadowCastingSetting p_shadow_casting_setting);
 	ShadowCastingSetting get_cast_shadows_setting() const;
+
+	void set_shadow_renderers(BitField<RSE::ShadowRenderer> p_renderers);
+	BitField<RSE::ShadowRenderer> get_shadow_renderers() const;
+
+	void set_rt_blas_update(RTBlasUpdate p_update);
+	RTBlasUpdate get_rt_blas_update() const;
 
 	void set_transparency(float p_transparency);
 	float get_transparency() const;
@@ -216,6 +231,7 @@ public:
 };
 
 VARIANT_ENUM_CAST(GeometryInstance3D::ShadowCastingSetting);
+VARIANT_ENUM_CAST(GeometryInstance3D::RTBlasUpdate);
 VARIANT_ENUM_CAST(GeometryInstance3D::GIMode);
 VARIANT_ENUM_CAST(GeometryInstance3D::LightmapScale);
 VARIANT_ENUM_CAST(GeometryInstance3D::VisibilityRangeFadeMode);

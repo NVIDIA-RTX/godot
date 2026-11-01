@@ -34,9 +34,9 @@
 
 namespace RendererRD {
 
-/// Reconstructs a full-resolution depth buffer from low-res depth using
-/// joint bilateral upsampling guided by the upscaled color buffer, with
-/// temporal accumulation via motion-vector reprojection (8-frame history).
+// Reconstructs a full-resolution depth buffer from low-res depth using
+// joint bilateral upsampling guided by the upscaled color buffer, with
+// temporal accumulation via motion-vector reprojection (8-frame history).
 class DepthReconstruct {
 private:
 	struct PushConstant {
@@ -63,15 +63,8 @@ public:
 	DepthReconstruct();
 	~DepthReconstruct();
 
-	/// Reconstruct full-resolution depth with temporal accumulation.
-	/// @param p_lowres_depth    Low-resolution depth texture (reverse-Z).
-	/// @param p_upscaled_color  Upscaled color texture for edge guidance.
-	/// @param p_velocity        Motion vector texture (RG16F, prev_uv - current_uv).
-	/// @param p_dest_depth      Output R32F image at target resolution.
-	/// @param p_target_size     Target (output) resolution.
-	/// @param p_lowres_size     Low-resolution input size.
-	/// @param p_z_near          Camera near plane.
-	/// @param p_z_far           Camera far plane.
+	// Reconstructs p_dest_depth (R32F, p_target_size) from reverse-Z p_lowres_depth, guided by p_upscaled_color edges.
+	// p_velocity is RG16F prev_uv - current_uv.
 	void process(RID p_lowres_depth, RID p_upscaled_color, RID p_velocity,
 			RID p_dest_depth,
 			const Size2i &p_target_size, const Size2i &p_lowres_size,

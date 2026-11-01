@@ -42,6 +42,7 @@ DepthReconstruct::DepthReconstruct() {
 	shader.initialize(shader_modes);
 	shader_version = shader.version_create();
 	pipeline = RD::get_singleton()->compute_pipeline_create(shader.version_get_shader(shader_version, 0));
+	RD::get_singleton()->set_resource_name(pipeline, "Depth Reconstruct Pipeline");
 }
 
 DepthReconstruct::~DepthReconstruct() {
@@ -68,6 +69,7 @@ void DepthReconstruct::_ensure_history_texture(const Size2i &p_size) {
 	fmt.texture_type = RD::TEXTURE_TYPE_2D;
 
 	history_texture = RD::get_singleton()->texture_create(fmt, RD::TextureView());
+	RD::get_singleton()->set_resource_name(history_texture, "Depth Reconstruct History");
 	RD::get_singleton()->texture_clear(history_texture, Color(0, 0, 0, 0), 0, 1, 0, 1);
 	history_size = p_size;
 	frame_count = 0;

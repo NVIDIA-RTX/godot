@@ -31,6 +31,7 @@
 #include "texture_storage.h"
 
 #include "core/config/engine.h"
+#include "core/os/os.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
@@ -3703,6 +3704,7 @@ void TextureStorage::decal_free(RID p_rid) {
 void TextureStorage::decal_set_size(RID p_decal, const Vector3 &p_size) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->size = p_size;
 	decal->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
 }
@@ -3711,6 +3713,7 @@ void TextureStorage::decal_set_texture(RID p_decal, RSE::DecalTexture p_type, RI
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
 	ERR_FAIL_INDEX(p_type, RSE::DECAL_TEXTURE_MAX);
+	decal->version++;
 
 	if (decal->textures[p_type] == p_texture) {
 		return;
@@ -3734,24 +3737,28 @@ void TextureStorage::decal_set_texture(RID p_decal, RSE::DecalTexture p_type, RI
 void TextureStorage::decal_set_emission_energy(RID p_decal, float p_energy) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->emission_energy = p_energy;
 }
 
 void TextureStorage::decal_set_albedo_mix(RID p_decal, float p_mix) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->albedo_mix = p_mix;
 }
 
 void TextureStorage::decal_set_modulate(RID p_decal, const Color &p_modulate) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->modulate = p_modulate;
 }
 
 void TextureStorage::decal_set_cull_mask(RID p_decal, uint32_t p_layers) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->cull_mask = p_layers;
 	decal->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_CULL_MASK);
 }
@@ -3759,6 +3766,7 @@ void TextureStorage::decal_set_cull_mask(RID p_decal, uint32_t p_layers) {
 void TextureStorage::decal_set_distance_fade(RID p_decal, bool p_enabled, float p_begin, float p_length) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->distance_fade = p_enabled;
 	decal->distance_fade_begin = p_begin;
 	decal->distance_fade_length = p_length;
@@ -3767,6 +3775,7 @@ void TextureStorage::decal_set_distance_fade(RID p_decal, bool p_enabled, float 
 void TextureStorage::decal_set_fade(RID p_decal, float p_above, float p_below) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->upper_fade = p_above;
 	decal->lower_fade = p_below;
 }
@@ -3774,6 +3783,7 @@ void TextureStorage::decal_set_fade(RID p_decal, float p_above, float p_below) {
 void TextureStorage::decal_set_normal_fade(RID p_decal, float p_fade) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
+	decal->version++;
 	decal->normal_fade = p_fade;
 }
 
@@ -3817,11 +3827,25 @@ void TextureStorage::update_decal_atlas() {
 	CopyEffects *copy_effects = CopyEffects::get_singleton();
 	ERR_FAIL_NULL(copy_effects);
 
+	// Shrink the atlas after it goes unused (e.g. pathtracing only), rebuild once used again.
+	constexpr uint64_t DECAL_ATLAS_RELEASE_USEC = 2000000;
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	if (decal_atlas.used) {
+		decal_atlas.used = false;
+		decal_atlas.last_used_usec = now;
+	}
+	const bool resident = now - decal_atlas.last_used_usec < DECAL_ATLAS_RELEASE_USEC;
+	if (resident != decal_atlas.resident) {
+		decal_atlas.resident = resident;
+		decal_atlas.dirty = true;
+	}
+
 	if (!decal_atlas.dirty) {
 		return; //nothing to do
 	}
 
 	decal_atlas.dirty = false;
+	const bool has_textures = resident && decal_atlas.textures.size();
 
 	if (decal_atlas.texture.is_valid()) {
 		RD::get_singleton()->free_rid(decal_atlas.texture);
@@ -3832,7 +3856,7 @@ void TextureStorage::update_decal_atlas() {
 
 	int border = 1 << decal_atlas.mipmaps;
 
-	if (decal_atlas.textures.size()) {
+	if (has_textures) {
 		//generate atlas
 		Vector<DecalAtlas::SortItem> itemsv;
 		itemsv.resize(decal_atlas.textures.size());
@@ -3982,7 +4006,7 @@ void TextureStorage::update_decal_atlas() {
 
 		Color clear_color(0, 0, 0, 0);
 
-		if (decal_atlas.textures.size()) {
+		if (has_textures) {
 			if (i == 0) {
 				Vector<Color> cc;
 				cc.push_back(clear_color);
@@ -4058,6 +4082,7 @@ void TextureStorage::decal_instance_set_transform(RID p_decal_instance, const Tr
 	DecalInstance *di = decal_instance_owner.get_or_null(p_decal_instance);
 	ERR_FAIL_NULL(di);
 	di->transform = p_transform;
+	di->version++;
 }
 
 void TextureStorage::decal_instance_set_sorting_offset(RID p_decal_instance, float p_sorting_offset) {
@@ -4079,190 +4104,182 @@ void TextureStorage::free_decal_data() {
 		decals = nullptr;
 	}
 
-	if (decal_sort != nullptr) {
-		memdelete_arr(decal_sort);
-		decal_sort = nullptr;
-	}
+	decal_sort.reset();
 }
 
 void TextureStorage::set_max_decals(const uint32_t p_max_decals) {
 	max_decals = p_max_decals;
 	uint32_t decal_buffer_size = max_decals * sizeof(DecalData);
 	decals = memnew_arr(DecalData, max_decals);
-	decal_sort = memnew_arr(DecalInstanceSort, max_decals);
 	decal_buffer = RD::get_singleton()->storage_buffer_create(decal_buffer_size);
 }
 
-void TextureStorage::update_decal_buffer(const PagedArray<RID> &p_decals, const Transform3D &p_camera_xform) {
-	ForwardIDStorage *forward_id_storage = ForwardIDStorage::get_singleton();
+// Maps the decal's uv_local box (x/z in [0, 1], y in [-1, 1]) to world space.
+static Transform3D _decal_box_transform(const Transform3D &p_decal_xform, const Vector3 &p_size) {
+	Transform3D scale_xform;
+	scale_xform.basis.scale(p_size * 0.5);
 
 	Transform3D uv_xform;
 	uv_xform.basis.scale(Vector3(2.0, 1.0, 2.0));
 	uv_xform.origin = Vector3(-1.0, 0.0, -1.0);
 
-	uint32_t decals_size = p_decals.size();
+	return p_decal_xform * scale_xform * uv_xform;
+}
 
-	decal_count = 0;
+static float _decal_distance_fade(bool p_enabled, float p_distance, float p_begin, float p_length) {
+	if (!p_enabled || p_distance <= p_begin) {
+		return 1.0f;
+	}
+	if (p_distance >= p_begin + p_length) {
+		return 0.0f;
+	}
+	// Use `smoothstep()` to make opacity changes more gradual and less noticeable to the player.
+	return Math::smoothstep(0.0f, 1.0f, 1.0f - (p_distance - p_begin) / p_length);
+}
 
-	for (uint32_t i = 0; i < decals_size; i++) {
-		if (decal_count == max_decals) {
-			break;
-		}
-
-		DecalInstance *decal_instance = decal_instance_owner.get_or_null(p_decals[i]);
-		if (!decal_instance) {
-			continue;
-		}
-		Decal *decal = decal_owner.get_or_null(decal_instance->decal);
-
-		Transform3D xform = decal_instance->transform;
-
-		real_t distance = p_camera_xform.origin.distance_to(xform.origin);
-
-		if (decal->distance_fade) {
-			float fade_begin = decal->distance_fade_begin;
-			float fade_length = decal->distance_fade_length;
-
-			if (distance > fade_begin) {
-				if (distance > fade_begin + fade_length) {
-					continue; // do not use this decal, its invisible
-				}
-			}
-		}
-
-		decal_sort[decal_count].decal_instance = decal_instance;
-		decal_sort[decal_count].decal = decal;
-		decal_sort[decal_count].depth = distance - decal_instance->sorting_offset;
-		decal_count++;
+bool TextureStorage::decal_instance_get_sort_info(RID p_decal_instance, const Vector3 &p_camera_pos, DecalSortInfo &r_info) const {
+	const DecalInstance *decal_instance = decal_instance_owner.get_or_null(p_decal_instance);
+	if (!decal_instance) {
+		return false;
+	}
+	const Decal *decal = decal_owner.get_or_null(decal_instance->decal);
+	if (!decal) {
+		return false;
+	}
+	// Albedo alpha also gates normal/ORM; emission ignores alpha.
+	const bool albedo_visible = decal->textures[RSE::DECAL_TEXTURE_ALBEDO].is_valid() && decal->modulate.a > 0.0f;
+	const bool emission_visible = decal->textures[RSE::DECAL_TEXTURE_EMISSION].is_valid() && decal->emission_energy > 0.0f;
+	if (!albedo_visible && !emission_visible) {
+		return false;
 	}
 
+	const Vector3 position = decal_instance->transform.origin;
+	const float distance = p_camera_pos.distance_to(position);
+	const float fade = _decal_distance_fade(decal->distance_fade, distance, decal->distance_fade_begin, decal->distance_fade_length);
+	if (fade <= 0.0f) {
+		return false;
+	}
+
+	r_info.instance = p_decal_instance;
+	r_info.position = position;
+	r_info.radius = (decal_instance->transform.basis.xform(decal->size * 0.5)).length();
+	r_info.distance = distance;
+	r_info.sort_key = distance - decal_instance->sorting_offset;
+	r_info.fade = fade;
+	r_info.version = (uint64_t(decal->version) << 32) | decal_instance->version;
+	return true;
+}
+
+void TextureStorage::_decal_instance_fill_data(const DecalSortInfo &p_info, const Transform3D &p_space_inverse, DecalData &r_data) {
+	DecalInstance *decal_instance = decal_instance_owner.get_or_null(p_info.instance);
+	ERR_FAIL_NULL(decal_instance);
+	const Decal *decal = decal_owner.get_or_null(decal_instance->decal);
+	ERR_FAIL_NULL(decal);
+
+	decal_instance->cull_mask = decal->cull_mask;
+
+	const Transform3D &xform = decal_instance->transform;
+	const Transform3D to_decal_xform = (p_space_inverse * _decal_box_transform(xform, decal->size)).affine_inverse();
+	MaterialStorage::store_transform(to_decal_xform, r_data.xform);
+
+	const Vector3 normal = p_space_inverse.basis.xform(xform.basis.get_column(Vector3::AXIS_Y).normalized());
+	r_data.normal[0] = normal.x;
+	r_data.normal[1] = normal.y;
+	r_data.normal[2] = normal.z;
+	r_data.normal_fade = decal->normal_fade;
+
+	const Vector3 extents = decal->size * 0.5;
+	for (int i = 0; i < 3; i++) {
+		r_data.inv_extents[i] = extents[i] > 0.0f ? 1.0f / extents[i] : 0.0f;
+	}
+
+	auto store_rect = [this](RID p_texture, float *r_rect) {
+		const Rect2 rect = p_texture.is_valid() ? decal_atlas_get_texture_rect(p_texture) : Rect2();
+		r_rect[0] = rect.position.x;
+		r_rect[1] = rect.position.y;
+		r_rect[2] = rect.size.x;
+		r_rect[3] = rect.size.y;
+	};
+	store_rect(decal->textures[RSE::DECAL_TEXTURE_ALBEDO], r_data.albedo_rect);
+	store_rect(decal->textures[RSE::DECAL_TEXTURE_NORMAL], r_data.normal_rect);
+	store_rect(decal->textures[RSE::DECAL_TEXTURE_ORM], r_data.orm_rect);
+	store_rect(decal->textures[RSE::DECAL_TEXTURE_EMISSION], r_data.emission_rect);
+
+	const Basis normal_xform = p_space_inverse.basis * xform.basis.orthonormalized();
+	MaterialStorage::store_basis_3x4(normal_xform, r_data.normal_xform);
+
+	const Color modulate = decal->modulate.srgb_to_linear();
+	r_data.modulate[0] = modulate.r;
+	r_data.modulate[1] = modulate.g;
+	r_data.modulate[2] = modulate.b;
+	r_data.modulate[3] = modulate.a * p_info.fade;
+	r_data.emission_energy = decal->emission_energy * p_info.fade;
+	r_data.albedo_mix = decal->albedo_mix;
+	r_data.mask = decal->cull_mask;
+	r_data.upper_fade = decal->upper_fade;
+	r_data.lower_fade = decal->lower_fade;
+}
+
+bool TextureStorage::decal_instance_get_world_info(RID p_decal_instance, DecalWorldInfo &r_info) const {
+	const DecalInstance *decal_instance = decal_instance_owner.get_or_null(p_decal_instance);
+	ERR_FAIL_NULL_V(decal_instance, false);
+	const Decal *decal = decal_owner.get_or_null(decal_instance->decal);
+	ERR_FAIL_NULL_V(decal, false);
+
+	const Transform3D &xform = decal_instance->transform;
+	r_info.box_transform = _decal_box_transform(xform, decal->size);
+	r_info.world_to_box = r_info.box_transform.affine_inverse();
+	r_info.normal_basis = xform.basis.orthonormalized();
+	r_info.normal = xform.basis.get_column(Vector3::AXIS_Y).normalized();
+	r_info.modulate = decal->modulate.srgb_to_linear();
+	r_info.emission_energy = decal->emission_energy;
+	r_info.albedo_mix = decal->albedo_mix;
+	r_info.upper_fade = decal->upper_fade;
+	r_info.lower_fade = decal->lower_fade;
+	r_info.normal_fade = decal->normal_fade;
+	r_info.cull_mask = decal->cull_mask;
+	for (int i = 0; i < RSE::DECAL_TEXTURE_MAX; i++) {
+		r_info.textures[i] = decal->textures[i];
+	}
+	return true;
+}
+
+void TextureStorage::update_decal_buffer(const PagedArray<RID> &p_decals, const Transform3D &p_camera_xform) {
+	ForwardIDStorage *forward_id_storage = ForwardIDStorage::get_singleton();
+
+	decal_sort.clear();
+	DecalSortInfo info;
+	for (uint32_t i = 0; i < p_decals.size(); i++) {
+		if (decal_instance_get_sort_info(p_decals[i], p_camera_xform.origin, info)) {
+			decal_sort.push_back(info);
+		}
+	}
+
+	// Sort before capping so the budget keeps the decals that end up on top.
+	SortArray<DecalSortInfo> sort_array;
+	decal_count = MIN(decal_sort.size(), max_decals);
+	if (decal_sort.size() > max_decals) {
+		sort_array.nth_element(0, decal_sort.size(), decal_count, decal_sort.ptr());
+	}
 	if (decal_count > 0) {
-		SortArray<DecalInstanceSort> sort_array;
-		sort_array.sort(decal_sort, decal_count);
+		sort_array.sort(decal_sort.ptr(), decal_count);
 	}
 
-	bool using_forward_ids = forward_id_storage->uses_forward_ids();
+	const Transform3D camera_inverse_xform = p_camera_xform.affine_inverse();
+	const bool using_forward_ids = forward_id_storage->uses_forward_ids();
 	for (uint32_t i = 0; i < decal_count; i++) {
-		DecalInstance *decal_instance = decal_sort[i].decal_instance;
-		Decal *decal = decal_sort[i].decal;
+		const DecalSortInfo &sort_info = decal_sort[i];
+		const DecalInstance *decal_instance = decal_instance_owner.get_or_null(sort_info.instance);
 
 		if (using_forward_ids) {
 			forward_id_storage->map_forward_id(FORWARD_ID_TYPE_DECAL, decal_instance->forward_id, i, RSG::rasterizer->get_frame_number());
 		}
 
-		decal_instance->cull_mask = decal->cull_mask;
-
-		float fade = 1.0;
-
-		if (decal->distance_fade) {
-			const real_t distance = decal_sort[i].depth + decal_instance->sorting_offset;
-			const float fade_begin = decal->distance_fade_begin;
-			const float fade_length = decal->distance_fade_length;
-
-			if (distance > fade_begin) {
-				// Use `smoothstep()` to make opacity changes more gradual and less noticeable to the player.
-				fade = Math::smoothstep(0.0f, 1.0f, 1.0f - float(distance - fade_begin) / fade_length);
-			}
-		}
-
-		DecalData &dd = decals[i];
-
-		Vector3 decal_extents = decal->size / 2;
-
-		Transform3D scale_xform;
-		scale_xform.basis.scale(decal_extents);
-
-		Transform3D xform = decal_instance->transform;
-
-		Transform3D camera_inverse_xform = p_camera_xform.affine_inverse();
-
-		Transform3D to_decal_xform = (camera_inverse_xform * xform * scale_xform * uv_xform).affine_inverse();
-		MaterialStorage::store_transform(to_decal_xform, dd.xform);
-
-		Vector3 normal = xform.basis.get_column(Vector3::AXIS_Y).normalized();
-		normal = camera_inverse_xform.basis.xform(normal); //camera is normalized, so fine
-
-		dd.normal[0] = normal.x;
-		dd.normal[1] = normal.y;
-		dd.normal[2] = normal.z;
-		dd.normal_fade = decal->normal_fade;
-
-		RID albedo_tex = decal->textures[RSE::DECAL_TEXTURE_ALBEDO];
-		RID emission_tex = decal->textures[RSE::DECAL_TEXTURE_EMISSION];
-		if (albedo_tex.is_valid()) {
-			Rect2 rect = decal_atlas_get_texture_rect(albedo_tex);
-			dd.albedo_rect[0] = rect.position.x;
-			dd.albedo_rect[1] = rect.position.y;
-			dd.albedo_rect[2] = rect.size.x;
-			dd.albedo_rect[3] = rect.size.y;
-		} else {
-			if (!emission_tex.is_valid()) {
-				continue; //no albedo, no emission, no decal.
-			}
-			dd.albedo_rect[0] = 0;
-			dd.albedo_rect[1] = 0;
-			dd.albedo_rect[2] = 0;
-			dd.albedo_rect[3] = 0;
-		}
-
-		RID normal_tex = decal->textures[RSE::DECAL_TEXTURE_NORMAL];
-
-		if (normal_tex.is_valid()) {
-			Rect2 rect = decal_atlas_get_texture_rect(normal_tex);
-			dd.normal_rect[0] = rect.position.x;
-			dd.normal_rect[1] = rect.position.y;
-			dd.normal_rect[2] = rect.size.x;
-			dd.normal_rect[3] = rect.size.y;
-
-			Basis normal_xform = camera_inverse_xform.basis * xform.basis.orthonormalized();
-			MaterialStorage::store_basis_3x4(normal_xform, dd.normal_xform);
-		} else {
-			dd.normal_rect[0] = 0;
-			dd.normal_rect[1] = 0;
-			dd.normal_rect[2] = 0;
-			dd.normal_rect[3] = 0;
-		}
-
-		RID orm_tex = decal->textures[RSE::DECAL_TEXTURE_ORM];
-		if (orm_tex.is_valid()) {
-			Rect2 rect = decal_atlas_get_texture_rect(orm_tex);
-			dd.orm_rect[0] = rect.position.x;
-			dd.orm_rect[1] = rect.position.y;
-			dd.orm_rect[2] = rect.size.x;
-			dd.orm_rect[3] = rect.size.y;
-		} else {
-			dd.orm_rect[0] = 0;
-			dd.orm_rect[1] = 0;
-			dd.orm_rect[2] = 0;
-			dd.orm_rect[3] = 0;
-		}
-
-		if (emission_tex.is_valid()) {
-			Rect2 rect = decal_atlas_get_texture_rect(emission_tex);
-			dd.emission_rect[0] = rect.position.x;
-			dd.emission_rect[1] = rect.position.y;
-			dd.emission_rect[2] = rect.size.x;
-			dd.emission_rect[3] = rect.size.y;
-		} else {
-			dd.emission_rect[0] = 0;
-			dd.emission_rect[1] = 0;
-			dd.emission_rect[2] = 0;
-			dd.emission_rect[3] = 0;
-		}
-
-		Color modulate = decal->modulate.srgb_to_linear();
-		dd.modulate[0] = modulate.r;
-		dd.modulate[1] = modulate.g;
-		dd.modulate[2] = modulate.b;
-		dd.modulate[3] = modulate.a * fade;
-		dd.emission_energy = decal->emission_energy * fade;
-		dd.albedo_mix = decal->albedo_mix;
-		dd.mask = decal->cull_mask;
-		dd.upper_fade = decal->upper_fade;
-		dd.lower_fade = decal->lower_fade;
+		_decal_instance_fill_data(sort_info, camera_inverse_xform, decals[i]);
 
 		// hook for subclass to do further processing.
-		RendererSceneRenderRD::get_singleton()->setup_added_decal(xform, decal_extents);
+		const Decal *decal = decal_owner.get_or_null(decal_instance->decal);
+		RendererSceneRenderRD::get_singleton()->setup_added_decal(decal_instance->transform, decal->size / 2);
 	}
 
 	if (decal_count > 0) {

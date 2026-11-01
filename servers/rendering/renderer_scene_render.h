@@ -64,6 +64,7 @@ public:
 
 	virtual void mesh_generate_pipelines(RID p_mesh, bool p_background_compilation) = 0;
 	virtual uint32_t get_pipeline_compilations(RSE::PipelineSource p_source) = 0;
+	virtual BitField<RSE::RenderingNotReadyReason> get_not_ready_reasons() { return 0; }
 
 	/* SDFGI UPDATE */
 
@@ -183,6 +184,7 @@ public:
 
 	virtual void environment_set_volumetric_fog_volume_size(int p_size, int p_depth) = 0;
 	virtual void environment_set_volumetric_fog_filter_active(bool p_enable) = 0;
+	virtual void environment_set_volumetric_fog_sampling(RSE::EnvironmentVolumetricFogSampling p_sampling) = 0;
 
 	// GLOW
 	void environment_set_glow(RID p_env, bool p_enable, Vector<float> p_levels, float p_intensity, float p_strength, float p_mix, float p_bloom_threshold, RSE::EnvironmentGlowBlendMode p_blend_mode, float p_hdr_bleed_threshold, float p_hdr_bleed_scale, float p_hdr_luminance_cap, float p_glow_map_strength, RID p_glow_map);
@@ -254,12 +256,14 @@ public:
 	virtual void environment_set_sdfgi_frames_to_update_light(RSE::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
 
 	// Pathtracing
-	void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser);
+	void environment_set_pathtracing(RID p_env, bool p_enable, int p_debug_mode, int p_samples_per_pixel, int p_max_bounces, RSE::PathtracingDenoiser p_denoiser, bool p_sky_shader_enabled);
 	bool environment_get_pathtracing_enabled(RID p_env) const;
+	bool environment_get_pathtracing_sky_shader_enabled(RID p_env) const;
 	int environment_get_pathtracing_debug_mode(RID p_env) const;
 	int environment_get_pathtracing_samples_per_pixel(RID p_env) const;
 	int environment_get_pathtracing_max_bounces(RID p_env) const;
 	RSE::PathtracingDenoiser environment_get_pathtracing_denoiser(RID p_env) const;
+	virtual bool pathtracing_is_used(RID p_env, RID p_viewport) const { return false; }
 
 	// Adjustment
 	void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction);
@@ -310,6 +314,12 @@ public:
 		uint32_t positional_light_count;
 	};
 
+	struct RTCullData {
+		const PagedArray<RenderGeometryInstance *> *instances = nullptr;
+		const PagedArray<RID> *lights = nullptr;
+		const PagedArray<RID> *decals = nullptr;
+	};
+
 	struct CameraData {
 		// flags
 		uint32_t view_count;
@@ -330,7 +340,7 @@ public:
 		void set_multiview_camera(uint32_t p_view_count, const Transform3D *p_transforms, const Projection *p_projections, bool p_is_orthogonal, bool p_vaspect, uint32_t p_visible_layers = 0xFFFFFFFF);
 	};
 
-	virtual void render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data = nullptr, RenderingServerTypes::RenderInfo *r_render_info = nullptr, const PagedArray<RenderGeometryInstance *> *p_rt_instances = nullptr, const PagedArray<RID> *p_rt_lights = nullptr) = 0;
+	virtual void render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data = nullptr, RenderingServerTypes::RenderInfo *r_render_info = nullptr, const RTCullData *p_rt_cull = nullptr, RID p_viewport = RID()) = 0;
 
 	virtual void render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) = 0;
 	virtual void render_particle_collider_heightfield(RID p_collider, const Transform3D &p_transform, const PagedArray<RenderGeometryInstance *> &p_instances) = 0;

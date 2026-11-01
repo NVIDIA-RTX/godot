@@ -70,6 +70,9 @@ bool MeshLibrary::_set(const StringName &p_name, const Variant &p_value) {
 				case 3: {
 					set_item_mesh_cast_shadow(idx, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
 				} break;
+				case 4: {
+					set_item_mesh_cast_shadow(idx, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_SELF_SHADOWING);
+				} break;
 				default: {
 					set_item_mesh_cast_shadow(idx, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_ON);
 				} break;
@@ -161,7 +164,7 @@ void MeshLibrary::_get_property_list(List<PropertyInfo> *p_list) const {
 		p_list->push_back(PropertyInfo(Variant::STRING_NAME, prop_name + PNAME("category"), PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR));
 		p_list->push_back(PropertyInfo(Variant::OBJECT, prop_name + PNAME("mesh"), PROPERTY_HINT_RESOURCE_TYPE, Mesh::get_class_static(), PROPERTY_USAGE_NO_EDITOR));
 		p_list->push_back(PropertyInfo(Variant::TRANSFORM3D, prop_name + PNAME("mesh_transform"), PROPERTY_HINT_NONE, "suffix:m", PROPERTY_USAGE_NO_EDITOR));
-		p_list->push_back(PropertyInfo(Variant::INT, prop_name + PNAME("mesh_cast_shadow"), PROPERTY_HINT_ENUM, "Off,On,Double-Sided,Shadows Only", PROPERTY_USAGE_NO_EDITOR));
+		p_list->push_back(PropertyInfo(Variant::INT, prop_name + PNAME("mesh_cast_shadow"), PROPERTY_HINT_ENUM, "Off,On,Double-Sided,Shadows Only,Self Shadowing", PROPERTY_USAGE_NO_EDITOR));
 		p_list->push_back(PropertyInfo(Variant::ARRAY, prop_name + PNAME("shapes"), PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR));
 		p_list->push_back(PropertyInfo(Variant::OBJECT, prop_name + PNAME("navigation_mesh"), PROPERTY_HINT_RESOURCE_TYPE, NavigationMesh::get_class_static(), PROPERTY_USAGE_NO_EDITOR));
 		p_list->push_back(PropertyInfo(Variant::TRANSFORM3D, prop_name + PNAME("navigation_mesh_transform"), PROPERTY_HINT_NONE, "suffix:m", PROPERTY_USAGE_NO_EDITOR));

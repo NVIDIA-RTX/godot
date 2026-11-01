@@ -662,29 +662,7 @@ RID RenderForwardMobile::_setup_render_pass_uniform_set(RenderListType p_render_
 		RD::Uniform u;
 		u.binding = 11;
 		u.uniform_type = RD::UNIFORM_TYPE_SAMPLER;
-		RID sampler;
-		switch (decals_get_filter()) {
-			case RSE::DECAL_FILTER_NEAREST: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-			case RSE::DECAL_FILTER_LINEAR: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-			case RSE::DECAL_FILTER_NEAREST_MIPMAPS: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-			case RSE::DECAL_FILTER_LINEAR_MIPMAPS: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-			case RSE::DECAL_FILTER_NEAREST_MIPMAPS_ANISOTROPIC: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-			case RSE::DECAL_FILTER_LINEAR_MIPMAPS_ANISOTROPIC: {
-				sampler = p_samplers.get_sampler(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-			} break;
-		}
-
-		u.append_id(sampler);
+		u.append_id(decals_get_sampler(p_samplers));
 		uniforms.push_back(u);
 	}
 

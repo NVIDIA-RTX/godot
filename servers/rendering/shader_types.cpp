@@ -54,6 +54,16 @@ const List<String> &ShaderTypes::get_types_list() const {
 	return shader_types_list;
 }
 
+void ShaderTypes::add_raster_ray_renames(HashMap<StringName, String> &r_renames) {
+	r_renames["RAY_IS_PRIMARY"] = "true";
+	r_renames["RAY_IS_SHADOW"] = "false";
+	r_renames["RAY_IS_DIFFUSE"] = "false";
+	r_renames["RAY_IS_SPECULAR"] = "false";
+	r_renames["RAY_IS_SINGULAR"] = "true";
+	r_renames["RAY_BOUNCES"] = "0";
+	r_renames["RAY_DIFFUSE_BOUNCES"] = "0";
+}
+
 ShaderTypes *ShaderTypes::singleton = nullptr;
 
 static ShaderLanguage::BuiltInInfo constt(ShaderLanguage::DataType p_type) {
@@ -169,7 +179,9 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["AO"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["AO_LIGHT_AFFECT"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["EMISSION"] = ShaderLanguage::TYPE_VEC3;
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["EMISSION_INDIRECT"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["DEPTH"] = ShaderLanguage::TYPE_FLOAT;
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SCENE_DEPTH"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SCREEN_UV"] = constt(ShaderLanguage::TYPE_VEC2);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["POINT_COORD"] = constt(ShaderLanguage::TYPE_VEC2);
 
@@ -201,6 +213,15 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_HASH_SCALE"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_ANTIALIASING_EDGE"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_TEXTURE_COORDINATE"] = ShaderLanguage::TYPE_VEC2;
+
+	// Path tracer ray that reached this surface. Raster always shades a primary camera ray.
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_PRIMARY"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SHADOW"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_DIFFUSE"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SPECULAR"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SINGULAR"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_DIFFUSE_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["MODEL_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["VIEW_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
@@ -270,9 +291,11 @@ ShaderTypes::ShaderTypes() {
 
 	// spatial render modes
 	{
-		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("blend"), "mix", "add", "sub", "mul", "premul_alpha" });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("blend"), "mix", "add", "sub", "mul", "premul_alpha", "oit" });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_draw"), "opaque", "always", "never" });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_prepass_alpha") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_force_opaque") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_force_transparent") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_test"), { "default", "disabled", "inverted" } });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("sss_mode_skin") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("cull"), "back", "front", "disabled" });
@@ -293,6 +316,14 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("debug_shadow_splits") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("fog_disabled") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("specular_occlusion_disabled") });
+		// At most one of billboard / billboard_y / billboard_particles (enforced by ShaderLanguage).
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("billboard") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("billboard_y") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("billboard_particles") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("billboard_keep_scale") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("fixed_size") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_vertex"), { "auto", "dynamic", "static", "frozen" } });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_blas"), { "auto", "refit", "rebuild" } });
 		shader_modes[RSE::SHADER_SPATIAL].stencil_modes.push_back({ PNAME("read") });
 		shader_modes[RSE::SHADER_SPATIAL].stencil_modes.push_back({ PNAME("write") });
 		shader_modes[RSE::SHADER_SPATIAL].stencil_modes.push_back({ PNAME("write_depth_fail") });

@@ -602,9 +602,12 @@ void Node3DEditorViewport::cancel_transform() {
 }
 
 void Node3DEditorViewport::_update_shrink() {
-	const float scaling_3d_scale = GLOBAL_GET("rendering/scaling_3d/scale");
-	const float shrink_factor = view_display_menu->get_popup()->is_item_checked(view_display_menu->get_popup()->get_item_index(VIEW_HALF_RESOLUTION)) ? 0.5 : 1.0;
-	viewport->set_scaling_3d_scale(MAX(0.25, scaling_3d_scale * shrink_factor));
+	const bool shrink = view_display_menu->get_popup()->is_item_checked(view_display_menu->get_popup()->get_item_index(VIEW_HALF_RESOLUTION));
+
+	subviewport_container->set_stretch_shrink(shrink ? 2 : 1);
+	subviewport_container->set_texture_filter(shrink ? TEXTURE_FILTER_NEAREST : TEXTURE_FILTER_PARENT_NODE);
+
+	viewport->set_scaling_3d_scale(GLOBAL_GET("rendering/scaling_3d/scale"));
 }
 
 float Node3DEditorViewport::get_znear() const {
@@ -3710,16 +3713,35 @@ void Node3DEditorViewport::_notification(int p_what) {
 				text += vformat(TTR("Primitives: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_PRIMITIVES_IN_FRAME)) + "\n";
 				text += vformat(TTR("Draw Calls: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_DRAW_CALLS_IN_FRAME));
 
-				int rt_tlas = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TLAS_INSTANCES);
+				auto rt_info = [&](Viewport::RenderInfo p_info) {
+					return viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, p_info);
+				};
+				const int rt_tlas = rt_info(Viewport::RENDER_INFO_RT_TLAS_INSTANCES);
 				if (rt_tlas > 0) {
-					int rt_blas_builds = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_BUILDS);
-					int rt_blas_refits = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_REFITS);
-					int rt_tris_built = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_BUILT);
-					int rt_tris_refit = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_REFIT);
 					text += "\n";
 					text += "\n" + vformat(TTR("RT TLAS Instances: %d"), rt_tlas) + "\n";
-					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_blas_builds, rt_tris_built) + "\n";
-					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_blas_refits, rt_tris_refit);
+					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_BUILDS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_BUILT)) + "\n";
+					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_REFITS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_REFIT));
+
+					const int rt_updated = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_UPDATED);
+					const int rt_held = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_HELD);
+					const int rt_limited = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED);
+					if (rt_updated + rt_held + rt_limited > 0) {
+						text += "\n" + vformat(TTR("RT Dynamic: %d updated, %d held, %d budget-limited"), rt_updated, rt_held, rt_limited);
+					}
+					const int rt_rebakes = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_REBAKES);
+					if (rt_rebakes > 0) {
+						text += "\n" + vformat(TTR("RT Rebakes: %d (%d verts)"), rt_rebakes, rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES));
+					}
+					const int rt_captured = rt_info(Viewport::RENDER_INFO_RT_CAPTURED_MESHES);
+					if (rt_captured > 0) {
+						text += "\n" + vformat(TTR("RT Captures: %d (%d verts)"), rt_captured, rt_info(Viewport::RENDER_INFO_RT_CAPTURED_VERTICES));
+					}
+					auto rt_mb = [&](Viewport::RenderInfo p_kb_info) {
+						return (int64_t(rt_info(p_kb_info)) + 999) / 1000;
+					};
+					text += "\n" + vformat(TTR("RT AS Scratch: %04d / %04d MB (%03d rollovers)"), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_SIZE_KB), rt_info(Viewport::RENDER_INFO_RT_SCRATCH_ROLLOVERS));
+					text += "\n" + vformat(TTR("RT Capture Arena: %04d / %04d MB"), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB));
 				}
 
 				info_label->set_text(text);
@@ -4660,7 +4682,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO:
 		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO:
 		case VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS:
-		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS:
 		case VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH: {
 			static const int display_options[] = {
 				VIEW_DISPLAY_NORMAL,
@@ -4695,7 +4717,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO,
 				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO,
 				VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS,
-				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS,
 				VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH,
 				VIEW_MAX
 			};
@@ -4732,7 +4754,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO,
 				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO,
 				Viewport::DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS,
-				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST,
+				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_MOTION_VECTORS,
 				Viewport::DEBUG_DRAW_RECONSTRUCTED_DEPTH,
 			};
 
@@ -6888,7 +6910,7 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Displays the DLSS Ray Reconstruction specular albedo output buffer. Requires raytracing with DLSS RR enabled."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Normal/Roughness"), VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the DLSS Ray Reconstruction normal and roughness output buffer. Requires raytracing with DLSS RR enabled."));
-	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Hit Dist"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_HIT_DIST, SupportedRenderingMethods::FORWARD_PLUS,
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Motion Vectors"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the DLSS Ray Reconstruction specular hit distance output buffer. Requires raytracing with DLSS RR enabled."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Reconstructed Depth"), VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the reconstructed full-resolution depth buffer. Requires DLSS RR path tracing with upscaling."));

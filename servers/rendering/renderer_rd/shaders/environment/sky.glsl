@@ -53,6 +53,8 @@ params;
 
 #include "../samplers_inc.glsl"
 
+layout(set = 0, binding = 0) uniform texture2DArray volumetric_fog_noise;
+
 layout(set = 0, binding = 1, std430) restrict readonly buffer GlobalShaderUniformData {
 	vec4 data[];
 }
@@ -79,7 +81,12 @@ layout(set = 0, binding = 2, std140) uniform SkySceneData {
 	float z_far; // 4 - 52
 	uint directional_light_count; // 4 - 56
 	bool fog_use_legacy_blending; // 4 - 60
-	uint pad1; // 4 - 64
+	uint volumetric_fog_sampling; // 4 - 64
+
+	uint frame_number; // 4 - 68
+	uint pad2; // 4 - 72
+	uint pad3; // 4 - 76
+	uint pad4; // 4 - 80
 }
 sky_scene_data;
 
@@ -147,6 +154,8 @@ vec3 interleaved_gradient_noise(vec2 pos) {
 }
 #endif
 
+#include "../volumetric_fog_sampling_inc.glsl"
+
 vec4 volumetric_fog_process(vec2 screen_uv) {
 #ifdef USE_MULTIVIEW
 	vec4 reprojected = sky_scene_data.combined_reprojection[ViewIndex] * vec4(screen_uv * 2.0 - 1.0, 0.0, 1.0); // Unproject at the far plane
@@ -155,7 +164,7 @@ vec4 volumetric_fog_process(vec2 screen_uv) {
 	vec3 fog_pos = vec3(screen_uv, 1.0);
 #endif
 
-	return texture(sampler3D(volumetric_fog_texture, SAMPLER_LINEAR_CLAMP), fog_pos);
+	return volumetric_fog_sample(volumetric_fog_texture, volumetric_fog_noise, SAMPLER_LINEAR_CLAMP, fog_pos, sky_scene_data.volumetric_fog_sampling, uvec2(gl_FragCoord.xy), sky_scene_data.frame_number);
 }
 
 vec4 fog_process(vec3 view, vec3 sky_color) {

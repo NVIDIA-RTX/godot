@@ -260,7 +260,6 @@ void MeshStorage::mesh_set_blend_shape_count(RID p_mesh, int p_blend_shape_count
 	mesh->blend_shape_count = p_blend_shape_count;
 }
 
-/// Returns stride
 void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::SurfaceData &p_surface) {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL(mesh);
@@ -370,9 +369,8 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	}
 #endif
 
-	static uint32_t s_next_rt_invalidation_counter = 1; // Monotonic counter is required so that new surfaces are also invalidated.
 	Mesh::Surface *s = memnew(Mesh::Surface);
-	s->rt_invalidation_counter = s_next_rt_invalidation_counter++;
+	s->rt_invalidation_counter = _next_rt_invalidation_counter();
 
 	s->format = new_surface.format;
 	s->primitive = new_surface.primitive;
@@ -596,7 +594,7 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->vertex_buffer, p_offset, data_size, r);
 
 	// Invalidate RT cache for this surface.
-	mesh->surfaces[p_surface]->rt_invalidation_counter++;
+	mesh->surfaces[p_surface]->rt_invalidation_counter = _next_rt_invalidation_counter();
 }
 
 void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -612,7 +610,7 @@ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->attribute_buffer, p_offset, data_size, r);
 
 	// Invalidate RT cache for this surface (attributes include UVs).
-	mesh->surfaces[p_surface]->rt_invalidation_counter++;
+	mesh->surfaces[p_surface]->rt_invalidation_counter = _next_rt_invalidation_counter();
 }
 
 void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -628,7 +626,7 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->skin_buffer, p_offset, data_size, r);
 
 	// Invalidate RT cache for this surface (skinned meshes need BLAS rebuild).
-	mesh->surfaces[p_surface]->rt_invalidation_counter++;
+	mesh->surfaces[p_surface]->rt_invalidation_counter = _next_rt_invalidation_counter();
 }
 
 void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -644,7 +642,7 @@ void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->index_buffer, p_offset, data_size, r);
 
 	// Invalidate RT cache for this surface.
-	mesh->surfaces[p_surface]->rt_invalidation_counter++;
+	mesh->surfaces[p_surface]->rt_invalidation_counter = _next_rt_invalidation_counter();
 }
 
 RID MeshStorage::mesh_surface_get_vertex_buffer_rd_rid(RID p_mesh, int p_surface) const {
@@ -1716,10 +1714,8 @@ void MeshStorage::_multimesh_get_motion_vectors_offsets(RID p_multimesh, uint32_
 	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
 	ERR_FAIL_NULL(multimesh);
 	r_current_offset = multimesh->motion_vectors_current_offset;
-	if (!_multimesh_uses_motion_vectors(multimesh)) {
-		multimesh->motion_vectors_previous_offset = multimesh->motion_vectors_current_offset;
-	}
-	r_prev_offset = multimesh->motion_vectors_previous_offset;
+	// Read-only, so render planning can call it from worker threads; the stored offset is reassigned before its next use.
+	r_prev_offset = _multimesh_uses_motion_vectors(multimesh) ? multimesh->motion_vectors_previous_offset : multimesh->motion_vectors_current_offset;
 }
 
 bool MeshStorage::_multimesh_uses_motion_vectors_offsets(RID p_multimesh) {
@@ -2217,7 +2213,11 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			cache_size *= 2;
 		}
 		multimesh->data_cache.resize(cache_size);
-		memset(multimesh->data_cache.ptrw(), 0, cache_size * sizeof(float));
+		// Both motion vector halves start as p_buffer, so the first frame reads as no motion.
+		float *w = multimesh->data_cache.ptrw();
+		for (uint32_t ofs = 0; ofs < cache_size; ofs += p_buffer.size()) {
+			memcpy(w + ofs, p_buffer.ptr(), p_buffer.size() * sizeof(float));
+		}
 		uint32_t region_count = Math::division_round_up((uint32_t)multimesh->instances, (uint32_t)MULTIMESH_DIRTY_REGION_SIZE);
 		multimesh->data_cache_dirty_regions = memnew_arr(bool, region_count);
 		memset(multimesh->data_cache_dirty_regions, 0, region_count * sizeof(bool));

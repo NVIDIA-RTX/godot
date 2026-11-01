@@ -40,6 +40,7 @@
 #include "drivers/gles3/storage/config.h"
 #include "drivers/gles3/storage/texture_storage.h"
 #include "servers/rendering/rendering_server_types.h"
+#include "servers/rendering/shader_types.h"
 #include "servers/rendering/storage/variant_converters.h"
 
 using namespace GLES3;
@@ -1322,9 +1323,11 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["AO"] = "ao";
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
 		actions.renames["EMISSION"] = "emission";
+		actions.renames["EMISSION_INDIRECT"] = "emission_indirect";
 		actions.renames["POINT_COORD"] = "gl_PointCoord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "screen_uv";
+		actions.renames["SCENE_DEPTH"] = "scene_depth_fetch()";
 		actions.renames["DEPTH"] = "gl_FragDepth";
 		actions.renames["FOG"] = "fog";
 		actions.renames["RADIANCE"] = "custom_radiance";
@@ -1361,6 +1364,8 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["ATTENUATION"] = "attenuation";
 		actions.renames["DIFFUSE_LIGHT"] = "diffuse_light";
 		actions.renames["SPECULAR_LIGHT"] = "specular_light";
+
+		ShaderTypes::add_raster_ray_renames(actions.renames);
 
 		actions.usage_defines["NORMAL"] = "#define NORMAL_USED\n";
 		actions.usage_defines["TANGENT"] = "#define TANGENT_USED\n";
@@ -1415,6 +1420,11 @@ MaterialStorage::MaterialStorage() {
 		actions.render_mode_defines["cull_disabled"] = "#define DO_SIDE_CHECK\n";
 		actions.render_mode_defines["particle_trails"] = "#define USE_PARTICLE_TRAILS\n";
 		actions.render_mode_defines["depth_prepass_alpha"] = "#define USE_OPAQUE_PREPASS\n";
+		actions.render_mode_defines["billboard"] = "#define BILLBOARD_ENABLED\n";
+		actions.render_mode_defines["billboard_y"] = "#define BILLBOARD_FIXED_Y\n";
+		actions.render_mode_defines["billboard_particles"] = "#define BILLBOARD_PARTICLES\n";
+		actions.render_mode_defines["billboard_keep_scale"] = "#define BILLBOARD_KEEP_SCALE\n";
+		actions.render_mode_defines["fixed_size"] = "#define FIXED_SIZE_USED\n";
 
 		bool force_lambert = GLOBAL_GET("rendering/shading/overrides/force_lambert_over_burley");
 
@@ -2996,6 +3006,7 @@ void SceneShaderData::set_code(const String &p_code) {
 	uses_fragment_time = false;
 	writes_modelview_or_projection = false;
 	uses_world_coordinates = false;
+	uses_billboard_transform = false;
 	uses_tangent = false;
 	writes_tangent = false;
 	uses_color = false;
@@ -3057,6 +3068,9 @@ void SceneShaderData::set_code(const String &p_code) {
 	actions.render_mode_flags["wireframe"] = &wireframe;
 	actions.render_mode_flags["particle_trails"] = &uses_particle_trails;
 	actions.render_mode_flags["world_vertex_coords"] = &uses_world_coordinates;
+	for (const char *mode : { "billboard", "billboard_y", "billboard_particles", "fixed_size" }) {
+		actions.render_mode_flags[mode] = &uses_billboard_transform;
+	}
 
 	actions.usage_flag_pointers["ALPHA"] = &uses_alpha;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &uses_alpha_clip;
@@ -3069,6 +3083,8 @@ void SceneShaderData::set_code(const String &p_code) {
 	actions.usage_flag_pointers["SSS_TRANSMITTANCE_DEPTH"] = &uses_transmittance;
 
 	actions.usage_flag_pointers["DISCARD"] = &uses_discard;
+	bool uses_scene_depth = false;
+	actions.usage_flag_pointers["SCENE_DEPTH"] = &uses_scene_depth;
 	actions.usage_flag_pointers["TIME"] = &uses_time;
 	actions.usage_flag_pointers["ROUGHNESS"] = &uses_roughness;
 	actions.usage_flag_pointers["NORMAL"] = &uses_normal;
@@ -3148,7 +3164,7 @@ void SceneShaderData::set_code(const String &p_code) {
 
 	uses_screen_texture = gen_code.uses_screen_texture;
 	uses_screen_texture_mipmaps = gen_code.uses_screen_texture_mipmaps;
-	uses_depth_texture = gen_code.uses_depth_texture;
+	uses_depth_texture = gen_code.uses_depth_texture || uses_scene_depth;
 	uses_normal_texture = gen_code.uses_normal_roughness_texture;
 	uses_vertex_time = gen_code.uses_vertex_time;
 	uses_fragment_time = gen_code.uses_fragment_time;

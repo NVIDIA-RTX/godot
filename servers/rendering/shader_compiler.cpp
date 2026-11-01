@@ -911,7 +911,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 			SL::VariableNode *vnode = (SL::VariableNode *)p_node;
 			bool use_fragment_varying = false;
 
-			if (!vnode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
+			if (!p_default_actions.suppress_varying_io && !vnode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
 				if (p_assigning) {
 					if (shader->varyings.has(vnode->name)) {
 						use_fragment_varying = true;
@@ -1041,7 +1041,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 			SL::ArrayNode *anode = (SL::ArrayNode *)p_node;
 			bool use_fragment_varying = false;
 
-			if (!anode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
+			if (!p_default_actions.suppress_varying_io && !anode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
 				if (anode->assign_expression != nullptr && shader->varyings.has(anode->name)) {
 					use_fragment_varying = true;
 				} else {
@@ -1234,7 +1234,8 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 
 						if (is_internal_func) {
-							code += vnode->name;
+							const String *renamed_function = p_actions.function_renames.getptr(vnode->name);
+							code += renamed_function ? *renamed_function : String(vnode->name);
 							is_texture_func = texture_functions.has(vnode->name);
 							texture_func_no_uv = (vnode->name == "textureSize" || vnode->name == "textureQueryLevels");
 							texture_func_returns_data = texture_func_no_uv || vnode->name == "textureQueryLod";
@@ -1517,7 +1518,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					used_flag_pointers.insert("DISCARD");
 				}
 
-				code = "discard;";
+				code = p_actions.discard_replacement.is_empty() ? "discard;" : p_actions.discard_replacement;
 			} else if (cfnode->flow_op == SL::FLOW_OP_CONTINUE) {
 				code = "continue;";
 			} else if (cfnode->flow_op == SL::FLOW_OP_BREAK) {

@@ -34,3 +34,10 @@
 
 // Capture current native C++ stack as text. Empty string if disabled or unavailable.
 String backtrace_dump();
+
+// Records up to p_max_frames return addresses of the current native C++ stack into r_frames, skipping the
+// p_skip_frames innermost callers. Cheap: no symbols are resolved. Returns 0 if disabled or unavailable.
+uint32_t backtrace_capture(void **r_frames, uint32_t p_max_frames, uint32_t p_skip_frames = 0);
+
+// Formats frames recorded by backtrace_capture() the same way backtrace_dump() does. Resolves symbols, which is slow.
+String backtrace_format(void *const *p_frames, uint32_t p_frame_count);

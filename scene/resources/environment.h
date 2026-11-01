@@ -101,6 +101,13 @@ public:
 		RT_DEBUG_DEPTH,
 		RT_DEBUG_EMISSIVE,
 		RT_DEBUG_BRDF_REJECTION,
+		RT_DEBUG_TRANSPARENCY_LAYERS,
+		RT_DEBUG_TIMING_HEATMAP,
+		RT_DEBUG_VOLUMETRIC_FOG,
+		RT_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE,
+		RT_DEBUG_DIRECTIONAL_SHADOW_BLOCKER,
+		RT_DEBUG_DECAL_OVERLAP,
+		RT_DEBUG_DYNAMIC_GEOMETRY,
 		RT_DEBUG_MAX
 	};
 
@@ -196,6 +203,7 @@ private:
 	int pathtracing_samples_per_pixel = 1;
 	int pathtracing_max_bounces = 3;
 	RSE::PathtracingDenoiser pathtracing_denoiser = RSE::PT_DENOISER_DLSS_RAY_RECONSTRUCTION;
+	bool pathtracing_sky_shader_enabled = false;
 	void _update_pathtracing();
 
 	// Glow
@@ -396,6 +404,8 @@ public:
 	int get_pathtracing_max_bounces() const;
 	void set_pathtracing_denoiser(RSE::PathtracingDenoiser p_denoiser);
 	RSE::PathtracingDenoiser get_pathtracing_denoiser() const;
+	void set_pathtracing_sky_shader_enabled(bool p_enabled);
+	bool is_pathtracing_sky_shader_enabled() const;
 
 	// Glow
 	void set_glow_enabled(bool p_enabled);
