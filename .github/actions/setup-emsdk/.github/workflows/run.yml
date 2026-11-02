@@ -1,0 +1,50 @@
+name: "Run"
+on:
+  push:
+    branches:
+      - "master"
+
+jobs:
+  defaults:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    steps:
+    - uses: mymindstorm/setup-emsdk@master
+
+    - name: Verify
+      run: emcc -v
+  actions-use-cache-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup emsdk (use cache if found, create otherwise)
+        uses: mymindstorm/setup-emsdk@master
+        with:
+          version: 2.0.20
+          actions-cache-folder: 'emsdk-cache-folder'
+          no-cache: true
+
+      - name: Verify
+        run: emcc -v
+  no-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mymindstorm/setup-emsdk@master
+        with:
+          no-install: true
+
+      - name: Verify
+        run: emsdk list
+  tot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup emsdk (use cache if found, create otherwise)
+        uses: mymindstorm/setup-emsdk@master
+        with:
+          version: tot
+          no-cache: true
+          update-tags: true
+
+      - name: Verify
+        run: emcc -v

@@ -32,16 +32,21 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v47
+        uses: ./.github/actions/changed-files
         with:
           safe_output: false # Output passed to environment variable to avoid command injection.
           separator: '" "' # To account for paths with spaces, ensure our items are split by quotes internally.
           skip_initial_fetch: true
           files_yaml_from_source_file: .github/changed_files.yml
 
+      - name: Set up Python for prek
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Style checks via prek
-        uses: j178/prek-action@v2
         env:
           CHANGED_FILES: '"${{ steps.changed-files.outputs.everything_all_changed_files }}"' # Wrap with quotes to bookend internal quote separators.
-        with:
-          extra-args: --files ${{ env.CHANGED_FILES }}
+        run: |
+          pip install prek==0.4.1
+          prek --files ${{ env.CHANGED_FILES }}

@@ -99,13 +99,28 @@ jobs:
         continue-on-error: true
 
       - name: Download pre-built AccessKit
-        shell: sh
+        id: accesskit-download
+        uses: ./.github/actions/fetch-gh-release-asset
+        with:
+          repo: godotengine/godot-accesskit-c-static
+          version: tags/0.21.1
+          file: accesskit-c-0.21.1.zip
+          target: accesskit-c-0.21.1/accesskit_c.zip
+        continue-on-error: true
+
+      - name: Extract pre-built AccessKit
+        if: steps.accesskit-download.outcome == 'success'
+        shell: bash
+        run: unzip -o accesskit-c-0.21.1/accesskit_c.zip
+
+      - name: Set AccessKit enabled
         id: accesskit-sdk
+        shell: bash
         run: |
-          if python ./misc/scripts/install_accesskit.py; then
+          if [ "${{ steps.accesskit-download.outcome }}" = "success" ]; then
             echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "::warning::AccessKit SDK download failed, building without AccessKit support."
             echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
           fi
 

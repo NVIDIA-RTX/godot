@@ -1,0 +1,31 @@
+name: 'Setup Emscripten toolchain'
+description: 'Download emsdk and optionally install a version of Emscripten'
+author: 'mymindstorm'
+inputs:
+  version:
+    description: 'Version to install'
+    default: 'latest'
+  no-install:
+    description: "If true will not download any version of Emscripten. emsdk will still be added to PATH."
+    default: false
+  no-cache:
+    description: "If true will not cache any downloads with tc.cacheDir."
+    default: false
+  actions-cache-folder:
+    description: "Directory to cache emsdk in. This folder will go under $GITHUB_HOME (I.e. build dir) and be cached using @actions/cache."
+    default: ''
+  cache-key:
+    description: "Override the cache key. By default, it is `{Github workflow name}-{Emscripten version}-{OS type}-${CPU architecture}`."
+    default: ''
+  update:
+    description: "Fetch package information for all the new tools and SDK versions"
+    default: false
+  update-tags:
+    description: "Deprecated in favor of `update`."
+    default: false
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+branding:
+  icon: 'download'
+  color: 'green'

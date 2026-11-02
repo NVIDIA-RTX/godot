@@ -1,0 +1,47 @@
+name: Update Default Mold Version
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  push:
+    branches:
+      - main
+
+jobs:
+  check-update-mold-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Update action.yml if needed
+        run: |
+          set -x
+
+          CURRENT_TAG=$(grep default: action.yml | head -1 | cut -d "'" -f 2)
+
+          curl -s https://api.github.com/repos/rui314/mold/releases/latest > info
+          RELEASE_TAG=$(jq -r .tag_name info | sed 's/^v//')
+          echo "$RELEASE_TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          # Update the default version and tag that commit as `staging`
+          if [ $CURRENT_TAG != $RELEASE_TAG ]; then
+            sed -i "s/default: '.*'/default: '$RELEASE_TAG'/" action.yml
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git commit -am "Update default version to $RELEASE_TAG"
+            git push
+            git tag -f staging
+            git push -f --tags
+          fi
+
+          # If `staging` is 7 days old, tag it as `v1` as well
+          if [ $(git rev-parse v1) != $(git rev-parse staging) -a \
+               $(git show -s --format=%ct staging) -lt $(date -d '7 days ago' +%s) ]; then
+            git tag -f v1 $(git rev-parse staging)
+            git push -f --tags
+          fi
