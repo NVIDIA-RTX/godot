@@ -88,7 +88,7 @@ class RenderingServerDefault : public RenderingServer {
 	void _thread_exit();
 	void _thread_loop();
 
-	void _draw(bool p_swap_buffers, double frame_step);
+	void _draw(bool p_swap_buffers, double frame_step, void *p_frame_token);
 	void _run_post_draw_steps();
 	void _init();
 	void _finish();
@@ -306,6 +306,8 @@ public:
 	}
 
 	FUNC2(shader_set_code, RID, const String &)
+	FUNC2(shader_set_code_rt, RID, const String &)
+	FUNC2(shader_set_builtin_standard_3d, RID, bool)
 	FUNC2(shader_set_path_hint, RID, const String &)
 	FUNC1RC(String, shader_get_code, RID)
 
@@ -497,6 +499,7 @@ public:
 	FUNC5(light_set_distance_fade, RID, bool, float, float, float)
 	FUNC2(light_set_reverse_cull_face_mode, RID, bool)
 	FUNC2(light_set_shadow_caster_mask, RID, uint32_t)
+	FUNC2(light_set_shadow_renderers, RID, BitField<RSE::ShadowRenderer>)
 	FUNC2(light_set_bake_mode, RID, RSE::LightBakeMode)
 	FUNC2(light_set_max_sdfgi_cascade, RID, uint32_t)
 
@@ -753,6 +756,7 @@ public:
 
 	FUNC2(viewport_set_scaling_3d_mode, RID, RSE::ViewportScaling3DMode)
 	FUNC2(viewport_set_scaling_3d_scale, RID, float)
+	FUNC2(viewport_set_frame_generation, RID, bool)
 	FUNC2(viewport_set_fsr_sharpness, RID, float)
 	FUNC2(viewport_set_texture_mipmap_bias, RID, float)
 	FUNC2(viewport_set_anisotropic_filtering_level, RID, RSE::ViewportAnisotropicFiltering)
@@ -793,8 +797,10 @@ public:
 	FUNC2(viewport_set_msaa_3d, RID, RSE::ViewportMSAA)
 	FUNC2(viewport_set_screen_space_aa, RID, RSE::ViewportScreenSpaceAA)
 	FUNC2(viewport_set_use_taa, RID, bool)
+	FUNC2(viewport_set_use_pathtracing, RID, bool)
 	FUNC2(viewport_set_use_debanding, RID, bool)
 	FUNC2(viewport_set_force_motion_vectors, RID, bool)
+	FUNC2(viewport_set_debug_name, RID, const String &)
 	FUNC2(viewport_set_use_occlusion_culling, RID, bool)
 	FUNC1(viewport_set_occlusion_rays_per_thread, int)
 	FUNC1(viewport_set_occlusion_culling_build_quality, RSE::ViewportOcclusionCullingBuildQuality)
@@ -885,11 +891,13 @@ public:
 
 	FUNC2(environment_set_volumetric_fog_volume_size, int, int)
 	FUNC1(environment_set_volumetric_fog_filter_active, bool)
+	FUNC1(environment_set_volumetric_fog_sampling, RSE::EnvironmentVolumetricFogSampling)
 
 	FUNC11(environment_set_sdfgi, RID, bool, int, float, RSE::EnvironmentSDFGIYScale, bool, float, bool, float, float, float)
 	FUNC1(environment_set_sdfgi_ray_count, RSE::EnvironmentSDFGIRayCount)
 	FUNC1(environment_set_sdfgi_frames_to_converge, RSE::EnvironmentSDFGIFramesToConverge)
 	FUNC1(environment_set_sdfgi_frames_to_update_light, RSE::EnvironmentSDFGIFramesToUpdateLight)
+	FUNC7(environment_set_pathtracing, RID, bool, int, int, int, RSE::PathtracingDenoiser, bool)
 
 	FUNC3R(Ref<Image>, environment_bake_panorama, RID, bool, const Size2i &)
 
@@ -953,6 +961,9 @@ public:
 
 	FUNC2(instance_set_custom_aabb, RID, AABB)
 
+	FUNC3(instance_set_rt_procedural, RID, bool, AABB)
+	FUNC3(instance_set_rt_procedural_bounds, RID, const PackedFloat32Array &, bool)
+
 	FUNC2(instance_attach_skeleton, RID, RID)
 
 	FUNC2(instance_set_extra_visibility_margin, RID, real_t)
@@ -967,6 +978,8 @@ public:
 
 	FUNC3(instance_geometry_set_flag, RID, RSE::InstanceFlags, bool)
 	FUNC2(instance_geometry_set_cast_shadows_setting, RID, RSE::ShadowCastingSetting)
+	FUNC2(instance_geometry_set_shadow_renderers, RID, BitField<RSE::ShadowRenderer>)
+	FUNC2(instance_geometry_set_rt_blas_update, RID, RSE::RTBlasUpdate)
 	FUNC2(instance_geometry_set_material_override, RID, RID)
 	FUNC2(instance_geometry_set_material_overlay, RID, RID)
 
@@ -1179,6 +1192,7 @@ public:
 #endif
 
 	virtual uint64_t get_rendering_info(RSE::RenderingInfo p_info) override;
+	virtual BitField<RSE::RenderingNotReadyReason> get_rendering_not_ready_reasons() override;
 	virtual RenderingDeviceEnums::DeviceType get_video_adapter_type() const override;
 
 	virtual void set_frame_profiling_enabled(bool p_enable) override;

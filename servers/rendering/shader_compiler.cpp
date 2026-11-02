@@ -698,7 +698,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 				const StringName &varying_name = varying_names[k];
 				const SL::ShaderNode::Varying &varying = pnode->varyings[varying_name];
 
-				if (varying.stage == SL::ShaderNode::Varying::STAGE_FRAGMENT) {
+				if (varying.stage == SL::ShaderNode::Varying::STAGE_FRAGMENT && !p_default_actions.suppress_varying_io) {
 					var_frag_to_light.push_back(Pair<StringName, SL::ShaderNode::Varying>(varying_name, varying));
 					fragment_varyings.insert(varying_name);
 					continue;
@@ -707,32 +707,46 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					continue; // Ignore boolean types to prevent crashing (if varying is just declared).
 				}
 
-				String vcode;
-				String interp_mode = _interpstr(varying.interpolation);
-				vcode += _prestr(varying.precision, ShaderLanguage::is_float_type(varying.type));
-				vcode += _typestr(varying.type);
-				vcode += " " + _mkid(varying_name);
+				String type_str = _prestr(varying.precision, ShaderLanguage::is_float_type(varying.type)) + _typestr(varying.type);
+				String name_str = _mkid(varying_name);
 				uint32_t inc = varying.get_size();
 
-				if (varying.array_size > 0) {
-					vcode += "[";
-					vcode += itos(varying.array_size);
-					vcode += "]";
-				}
+				if (p_default_actions.suppress_varying_io) {
+					// No vertex stage (e.g. RT shaders): emit zero-initialized
+					// globals instead of in/out IO declarations.
+					String decl = type_str + " " + name_str;
+					if (varying.array_size > 0) {
+						decl += "[" + itos(varying.array_size) + "];\n";
+					} else {
+						decl += " = " + _typestr(varying.type) + "(0);\n";
+					}
+					r_gen_code.stage_globals[STAGE_FRAGMENT] += decl;
+				} else {
+					String vcode;
+					String interp_mode = _interpstr(varying.interpolation);
+					vcode += type_str;
+					vcode += " " + name_str;
 
-				vcode += ";\n";
-				// GLSL ES 3.0 does not allow layout qualifiers for varyings
-				if (!RS::get_singleton()->is_low_end()) {
-					r_gen_code.stage_globals[STAGE_VERTEX] += "layout(location=" + itos(index) + ") ";
-					r_gen_code.stage_globals[STAGE_FRAGMENT] += "layout(location=" + itos(index) + ") ";
+					if (varying.array_size > 0) {
+						vcode += "[";
+						vcode += itos(varying.array_size);
+						vcode += "]";
+					}
+
+					vcode += ";\n";
+					// GLSL ES 3.0 does not allow layout qualifiers for varyings
+					if (!RS::get_singleton()->is_low_end()) {
+						r_gen_code.stage_globals[STAGE_VERTEX] += "layout(location=" + itos(index) + ") ";
+						r_gen_code.stage_globals[STAGE_FRAGMENT] += "layout(location=" + itos(index) + ") ";
+					}
+					r_gen_code.stage_globals[STAGE_VERTEX] += interp_mode + "out " + vcode;
+					r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode;
 				}
-				r_gen_code.stage_globals[STAGE_VERTEX] += interp_mode + "out " + vcode;
-				r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode;
 
 				index += inc;
 			}
 
-			if (var_frag_to_light.size() > 0) {
+			if (!p_default_actions.suppress_varying_io && var_frag_to_light.size() > 0) {
 				String gcode = "\n\nstruct {\n";
 				for (const Pair<StringName, SL::ShaderNode::Varying> &E : var_frag_to_light) {
 					gcode += "\t" + _prestr(E.second.precision) + _typestr(E.second.type) + " " + _mkid(E.first);
@@ -795,7 +809,8 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 
 				if (p_actions.entry_point_stages.has(fnode->name)) {
 					Stage stage = p_actions.entry_point_stages[fnode->name];
-					_dump_function_deps(pnode, fnode->name, function_code, r_gen_code.stage_globals[stage], added_funcs_per_stage[stage]);
+					Stage dep_stage = (p_default_actions.suppress_varying_io && stage == STAGE_VERTEX) ? STAGE_FRAGMENT : stage;
+					_dump_function_deps(pnode, fnode->name, function_code, r_gen_code.stage_globals[dep_stage], added_funcs_per_stage[dep_stage]);
 					r_gen_code.code[fnode->name] = function_code[fnode->name];
 				}
 
@@ -896,7 +911,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 			SL::VariableNode *vnode = (SL::VariableNode *)p_node;
 			bool use_fragment_varying = false;
 
-			if (!vnode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
+			if (!p_default_actions.suppress_varying_io && !vnode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
 				if (p_assigning) {
 					if (shader->varyings.has(vnode->name)) {
 						use_fragment_varying = true;
@@ -1026,7 +1041,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 			SL::ArrayNode *anode = (SL::ArrayNode *)p_node;
 			bool use_fragment_varying = false;
 
-			if (!anode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
+			if (!p_default_actions.suppress_varying_io && !anode->is_local && !(p_actions.entry_point_stages.has(current_func_name) && p_actions.entry_point_stages[current_func_name] == STAGE_VERTEX)) {
 				if (anode->assign_expression != nullptr && shader->varyings.has(anode->name)) {
 					use_fragment_varying = true;
 				} else {
@@ -1219,7 +1234,8 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 
 						if (is_internal_func) {
-							code += vnode->name;
+							const String *renamed_function = p_actions.function_renames.getptr(vnode->name);
+							code += renamed_function ? *renamed_function : String(vnode->name);
 							is_texture_func = texture_functions.has(vnode->name);
 							texture_func_no_uv = (vnode->name == "textureSize" || vnode->name == "textureQueryLevels");
 							texture_func_returns_data = texture_func_no_uv || vnode->name == "textureQueryLod";
@@ -1502,7 +1518,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					used_flag_pointers.insert("DISCARD");
 				}
 
-				code = "discard;";
+				code = p_actions.discard_replacement.is_empty() ? "discard;" : p_actions.discard_replacement;
 			} else if (cfnode->flow_op == SL::FLOW_OP_CONTINUE) {
 				code = "continue;";
 			} else if (cfnode->flow_op == SL::FLOW_OP_BREAK) {

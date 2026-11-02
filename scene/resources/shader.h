@@ -55,6 +55,8 @@ public:
 private:
 	mutable RID shader_rid;
 	mutable String preprocessed_code;
+	// Same source preprocessed with `RT=1`; consumed by ray-tracing pipelines.
+	mutable String preprocessed_code_rt;
 	mutable Mutex shader_rid_mutex;
 
 	Mode mode = MODE_SPATIAL;

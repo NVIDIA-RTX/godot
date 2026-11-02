@@ -351,35 +351,35 @@ Vector<String> ShaderRD::_build_variant_stage_sources(uint32_t p_variant, Compil
 		_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_COMPUTE]);
 		stage_sources.write[RD::SHADER_STAGE_COMPUTE] = builder.as_string();
 	} else if (pipeline_type == RD::PIPELINE_TYPE_RAYTRACING) {
-		{
+		if (!stage_templates[STAGE_TYPE_RAYGEN].chunks.is_empty()) {
 			// Raygen stage.
 			StringBuilder builder;
 			_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_RAYGEN]);
 			stage_sources.write[RD::SHADER_STAGE_RAYGEN] = builder.as_string();
 		}
 
-		{
+		if (!stage_templates[STAGE_TYPE_ANY_HIT].chunks.is_empty()) {
 			// Any hit stage.
 			StringBuilder builder;
 			_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_ANY_HIT]);
 			stage_sources.write[RD::SHADER_STAGE_ANY_HIT] = builder.as_string();
 		}
 
-		{
+		if (!stage_templates[STAGE_TYPE_CLOSEST_HIT].chunks.is_empty()) {
 			// Closest hit stage.
 			StringBuilder builder;
 			_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_CLOSEST_HIT]);
 			stage_sources.write[RD::SHADER_STAGE_CLOSEST_HIT] = builder.as_string();
 		}
 
-		{
+		if (!stage_templates[STAGE_TYPE_MISS].chunks.is_empty()) {
 			// Miss stage.
 			StringBuilder builder;
 			_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_MISS]);
 			stage_sources.write[RD::SHADER_STAGE_MISS] = builder.as_string();
 		}
 
-		{
+		if (!stage_templates[STAGE_TYPE_INTERSECTION].chunks.is_empty()) {
 			// Intersection stage.
 			StringBuilder builder;
 			_build_variant_code(builder, p_variant, p_data.version, stage_templates[STAGE_TYPE_INTERSECTION]);
@@ -420,6 +420,9 @@ void ShaderRD::_compile_variant(uint32_t p_variant, CompileData p_data) {
 	{
 		p_data.version->variants.write[variant] = RD::get_singleton()->shader_create_from_bytecode_with_samplers(shader_data, p_data.version->variants[variant], immutable_samplers);
 		p_data.version->variant_data.write[variant] = shader_data;
+		if (p_data.version->variants[variant].is_valid()) {
+			RD::get_singleton()->set_resource_name(p_data.version->variants[variant], name + ":" + itos(variant));
+		}
 	}
 }
 
@@ -620,6 +623,9 @@ void ShaderRD::_load_variant_from_cache(uint32_t p_variant, CompileData p_data) 
 	}
 
 	p_data.version->variants.write[variant] = RD::get_singleton()->shader_create_from_bytecode_with_samplers(p_data.version->variant_data[variant], p_data.version->variants[variant], immutable_samplers);
+	if (p_data.version->variants[variant].is_valid()) {
+		RD::get_singleton()->set_resource_name(p_data.version->variants[variant], name + ":" + itos(variant));
+	}
 }
 
 bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
@@ -879,6 +885,37 @@ bool ShaderRD::version_is_valid(RID p_version) {
 
 	_compile_ensure_finished(version);
 
+	return version->valid;
+}
+
+bool ShaderRD::version_is_group_compiled(RID p_version, int p_group) {
+	ERR_FAIL_INDEX_V(p_group, group_enabled.size(), false);
+	if (!group_enabled[p_group]) {
+		return false;
+	}
+	Version *version = version_owner.get_or_null(p_version);
+	ERR_FAIL_NULL_V(version, false);
+
+	MutexLock lock(*version->mutex);
+
+	if (version->dirty) {
+		_initialize_version(version);
+		for (int i = 0; i < group_enabled.size(); i++) {
+			if (!group_enabled[i]) {
+				_allocate_placeholders(version, i);
+				continue;
+			}
+			_compile_version_start(version, i);
+		}
+	}
+
+	const WorkerThreadPool::GroupID task = version->group_compilation_tasks[p_group];
+	if (task != 0) {
+		if (!WorkerThreadPool::get_singleton()->is_group_task_completed(task)) {
+			return false;
+		}
+		_compile_version_end(version, p_group);
+	}
 	return version->valid;
 }
 
@@ -1158,7 +1195,7 @@ Vector<RD::ShaderStageSPIRVData> ShaderRD::compile_stages(const Vector<String> &
 	RD::ShaderStage compilation_failed_stage = RD::SHADER_STAGE_MAX;
 	bool compilation_failed = false;
 	for (int64_t i = 0; i < p_stage_sources.size() && !compilation_failed; i++) {
-		if (p_stage_sources[i].is_empty()) {
+		if (p_stage_sources[i].is_empty() || p_stage_sources[i].strip_edges().is_empty()) {
 			continue;
 		}
 
@@ -1175,7 +1212,7 @@ Vector<RD::ShaderStageSPIRVData> ShaderRD::compile_stages(const Vector<String> &
 	}
 
 	if (compilation_failed) {
-		ERR_PRINT("Error compiling " + String(compilation_failed_stage == RD::SHADER_STAGE_COMPUTE ? "Compute " : (compilation_failed_stage == RD::SHADER_STAGE_VERTEX ? "Vertex" : "Fragment")) + " shader.");
+		ERR_PRINT("Error compiling " + String(RD::SHADER_STAGE_NAMES[compilation_failed_stage]) + " shader.");
 		ERR_PRINT(error);
 
 #ifdef DEBUG_ENABLED

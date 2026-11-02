@@ -71,7 +71,7 @@ private:
 		float reprojection_matrix[16];
 		float resolution[2];
 		uint32_t force_derive_from_depth;
-		uint32_t pad;
+		float reference_length; // Scale of the reference vector line, 0 = no reference.
 	};
 
 	struct {
@@ -89,7 +89,8 @@ public:
 	~DebugEffects();
 
 	void draw_shadow_frustum(RID p_light, const Projection &p_cam_projection, const Transform3D &p_cam_transform, RID p_dest_fb, const Rect2 p_rect);
-	void draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_fb, const Projection &p_current_projection, const Transform3D &p_current_transform, const Projection &p_previous_projection, const Transform3D &p_previous_transform, Size2i p_resolution);
+	/// Draws p_velocity per cell; a valid p_reference_velocity is overlaid as a shorter, thinner line.
+	void draw_motion_vectors(RID p_velocity, RID p_depth, RID p_dest_fb, const Projection &p_current_projection, const Transform3D &p_current_transform, const Projection &p_previous_projection, const Transform3D &p_previous_transform, Size2i p_resolution, RID p_reference_velocity = RID());
 };
 
 } // namespace RendererRD

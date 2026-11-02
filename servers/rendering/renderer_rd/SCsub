@@ -5,6 +5,12 @@ Import("env")
 
 env.add_source_files(env.servers_sources, "*.cpp")
 
+# Thirdparty source files
+
+env_thirdparty = env.Clone()
+env_thirdparty.disable_warnings()
+env_thirdparty.add_source_files(env.servers_sources, "#thirdparty/fast_noise/fast_noise_vec2_64x64x32.cpp")
+
 SConscript("effects/SCsub")
 SConscript("environment/SCsub")
 SConscript("forward_clustered/SCsub")

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="Streamline" inherits="Object" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Streamline interface.
+	</brief_description>
+	<description>
+		Global streamline interface, facilitates advanced graphics features.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_capability">
+			<return type="bool" />
+			<param index="0" name="capability_type" type="int" enum="StreamlineCapabilityType" />
+			<description>
+				Enumerate various capabilities related to Streamline. See [enum StreamlineCapabilityType] for types.
+			</description>
+		</method>
+		<method name="set_parameter">
+			<return type="void" />
+			<param index="0" name="parameter_type" type="int" enum="StreamlineParameterType" />
+			<param index="1" name="value" type="Variant" />
+			<description>
+				Set various parameters related to Streamline. See [enum StreamlineParameterType] for types.
+			</description>
+		</method>
+	</methods>
+	<constants>
+		<constant name="STREAMLINE_PARAM_REFLEX_MODE" value="0" enum="StreamlineParameterType">
+			Enable/Disable reflex. Set parameter to 0.0 to disable, 1.0 to enable, 2.0 to enable with low latency boost.
+		</constant>
+		<constant name="STREAMLINE_PARAM_REFLEX_FRAME_LIMIT_US" value="1" enum="StreamlineParameterType">
+			Do frame limiting using Streamline Reflex, improving latency. Example: Set to 16666.7 for 60 FPS. (1000000/60 = 16666.7 us = 16.67 ms)
+		</constant>
+		<constant name="STREAMLINE_PARAM_DLSS_PRESET" value="2" enum="StreamlineParameterType">
+			The default DLSS preset to use.
+			Valid values: ?,F,G,H,I,J,K,L,M,N,O
+		</constant>
+		<constant name="STREAMLINE_PARAM_DLSS_RR_PRESET" value="3" enum="StreamlineParameterType">
+			The default DLSS Ray Reconstruction preset to use.
+			Valid values: ?,D,E,F,G,H,I,J,K,L,M,N,O
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_DLSS" value="0" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA DLSS upscaling is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_DLSS_G" value="1" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA DLSS Frame Generation is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_DLSS_RR" value="2" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA DLSS Ray Reconstruction is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_NIS" value="5" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA Image Scaling is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_REFLEX" value="3" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA Reflex is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_PCL" value="4" enum="StreamlineCapabilityType">
+			Whether Streamline reports that PCL metrics are supported.
+		</constant>
+	</constants>
+</class>

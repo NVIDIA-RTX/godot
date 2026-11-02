@@ -933,6 +933,8 @@ void Window::_event_callback(DisplayServerEnums::WindowEvent p_event) {
 		case DisplayServerEnums::WINDOW_EVENT_FORCE_CLOSE: {
 			hide();
 		} break;
+		case DisplayServerEnums::WINDOW_EVENT_PCL_PING: {
+		} break;
 		case DisplayServerEnums::WINDOW_EVENT_OUTPUT_MAX_LINEAR_VALUE_CHANGED: {
 			_propagate_window_notification(this, NOTIFICATION_WM_OUTPUT_MAX_LINEAR_VALUE_CHANGED);
 			emit_signal(SNAME("output_max_linear_value_changed"), get_output_max_linear_value());

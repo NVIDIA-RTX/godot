@@ -331,29 +331,69 @@ Ref<TriangleMesh> Label3D::generate_triangle_mesh() const {
 	return triangle_mesh;
 }
 
+static constexpr float BLEND_PRIORITY_Z_STEP = 0.1f;
+
+HashMap<Label3D::GlyphHullKey, GlyphHull, Label3D::GlyphHullKeyHasher> Label3D::glyph_hull_cache;
+BinaryMutex Label3D::glyph_hull_cache_mutex;
+
+// Atlas texels of slack a hull may add to save vertices.
+static constexpr real_t GLYPH_HULL_TOLERANCE_TEXELS = 1.0;
+
+const GlyphHull *Label3D::_get_glyph_hull(const Glyph &p_glyph, int p_outline_size, const RID &p_texture, const Rect2 &p_uv_rect) {
+	const bool msdf = TS->font_is_multichannel_signed_distance_field(p_glyph.font_rid);
+	const GlyphHull::AlphaTest test = GlyphHull::make_alpha_test(msdf, msdf ? TS->font_get_msdf_pixel_range(p_glyph.font_rid) : 0.0f, p_outline_size);
+	const Point2i rect_pos = Point2i(p_uv_rect.position.floor());
+
+	GlyphHullKey key;
+	key.texture_id = p_texture.get_id();
+	key.rect = Rect2i(rect_pos, Point2i(p_uv_rect.get_end().ceil()) - rect_pos);
+	key.channel = test.channel;
+	key.threshold = test.threshold;
+
+	const GlyphHull *hull = glyph_hull_cache.getptr(key);
+	if (!hull) {
+		const Vector2i size(p_glyph.font_size, p_outline_size);
+		const int64_t texture_idx = TS->font_get_glyph_texture_idx(p_glyph.font_rid, size, p_glyph.index);
+		GlyphHull built;
+		if (texture_idx >= 0) {
+			GlyphHull::build(TS->font_get_texture_image(p_glyph.font_rid, size, texture_idx), key.rect, test, GLYPH_HULL_TOLERANCE_TEXELS, built);
+		}
+		if (glyph_hull_cache.size() > 8192) {
+			glyph_hull_cache.clear();
+		}
+		hull = &glyph_hull_cache.insert(key, built)->value;
+	}
+	return hull->indices.is_empty() ? nullptr : hull;
+}
+
 void Label3D::_generate_glyph_surfaces(const Glyph &p_glyph, Vector2 &r_offset, const Color &p_modulate, int p_priority, int p_outline_size) {
 	if (p_glyph.index == 0) {
 		r_offset.x += p_glyph.advance * pixel_size * p_glyph.repeat; // Non visual character, skip.
 		return;
 	}
 
-	Vector2 gl_of;
-	Vector2 gl_sz;
+	// Glyph rect in font pixels (y-down, relative to the glyph origin).
+	Vector2 gl_pos;
+	Vector2 gl_size;
 	Rect2 gl_uv;
 	Size2 texs;
 	RID tex;
+	const GlyphHull *hull = nullptr;
 
 	if (p_glyph.font_rid.is_valid()) {
 		tex = TS->font_get_glyph_texture_rid(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index);
 		if (tex.is_valid()) {
-			gl_of = (TS->font_get_glyph_offset(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index) + Vector2(p_glyph.x_off, p_glyph.y_off)) * pixel_size;
-			gl_sz = TS->font_get_glyph_size(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index) * pixel_size;
+			gl_pos = TS->font_get_glyph_offset(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index);
+			gl_size = TS->font_get_glyph_size(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index);
 			gl_uv = TS->font_get_glyph_uv_rect(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index);
 			texs = TS->font_get_glyph_texture_size(p_glyph.font_rid, Vector2i(p_glyph.font_size, p_outline_size), p_glyph.index);
+			if (gl_size.x > 0 && gl_size.y > 0) {
+				hull = _get_glyph_hull(p_glyph, p_outline_size, tex, gl_uv);
+			}
 		}
 	} else if (((p_glyph.flags & TextServer::GRAPHEME_IS_VIRTUAL) != TextServer::GRAPHEME_IS_VIRTUAL) && ((p_glyph.flags & TextServer::GRAPHEME_IS_EMBEDDED_OBJECT) != TextServer::GRAPHEME_IS_EMBEDDED_OBJECT)) {
-		gl_sz = TS->get_hex_code_box_size(p_glyph.font_size, p_glyph.index) * pixel_size;
-		gl_of = Vector2(0, -gl_sz.y);
+		gl_size = TS->get_hex_code_box_size(p_glyph.font_size, p_glyph.index);
+		gl_pos = Vector2(0, -gl_size.y);
 	}
 
 	if (gl_uv.size.x <= 2 || gl_uv.size.y <= 2) {
@@ -402,51 +442,53 @@ void Label3D::_generate_glyph_surfaces(const Glyph &p_glyph, Vector2 &r_offset, 
 			RS::get_singleton()->material_set_param(surf.material, "albedo_texture_size", texs);
 			if (get_alpha_cut_mode() == ALPHA_CUT_DISABLED) {
 				RS::get_singleton()->material_set_render_priority(surf.material, p_priority);
+				// The path tracer ignores render priority, so keep outline and fill off the same plane.
+				surf.z_shift = p_priority * pixel_size * BLEND_PRIORITY_Z_STEP;
 			} else {
 				surf.z_shift = p_priority * pixel_size;
 			}
+			aabb.expand_to(Vector3(aabb.position.x, aabb.position.y, surf.z_shift));
 
 			surfaces[key] = surf;
 		}
 		SurfaceData &s = surfaces[key];
 
-		s.mesh_vertices.resize((s.offset + 1) * 4);
-		s.mesh_normals.resize((s.offset + 1) * 4);
-		s.mesh_tangents.resize((s.offset + 1) * 16);
-		s.mesh_colors.resize((s.offset + 1) * 4);
-		s.mesh_uvs.resize((s.offset + 1) * 4);
+		const Vector2 glyph_shift = Vector2(p_glyph.x_off, p_glyph.y_off);
+		const int first_vertex = s.mesh_vertices.size();
+		auto add_vertex = [&](const Vector2 &p_px, const Vector2 &p_uv) {
+			s.mesh_vertices.push_back(Vector3(r_offset.x + (p_px.x + glyph_shift.x) * pixel_size, r_offset.y - (p_px.y + glyph_shift.y) * pixel_size, s.z_shift));
+			s.mesh_normals.push_back(Vector3(0.0, 0.0, 1.0));
+			s.mesh_tangents.push_back(1.0);
+			s.mesh_tangents.push_back(0.0);
+			s.mesh_tangents.push_back(0.0);
+			s.mesh_tangents.push_back(1.0);
+			s.mesh_colors.push_back(p_modulate);
+			s.mesh_uvs.push_back(p_uv);
+		};
 
-		s.mesh_vertices.write[(s.offset * 4) + 3] = Vector3(r_offset.x + gl_of.x, r_offset.y - gl_of.y - gl_sz.y, s.z_shift);
-		s.mesh_vertices.write[(s.offset * 4) + 2] = Vector3(r_offset.x + gl_of.x + gl_sz.x, r_offset.y - gl_of.y - gl_sz.y, s.z_shift);
-		s.mesh_vertices.write[(s.offset * 4) + 1] = Vector3(r_offset.x + gl_of.x + gl_sz.x, r_offset.y - gl_of.y, s.z_shift);
-		s.mesh_vertices.write[(s.offset * 4) + 0] = Vector3(r_offset.x + gl_of.x, r_offset.y - gl_of.y, s.z_shift);
-
-		for (int i = 0; i < 4; i++) {
-			s.mesh_normals.write[(s.offset * 4) + i] = Vector3(0.0, 0.0, 1.0);
-			s.mesh_tangents.write[(s.offset * 16) + (i * 4) + 0] = 1.0;
-			s.mesh_tangents.write[(s.offset * 16) + (i * 4) + 1] = 0.0;
-			s.mesh_tangents.write[(s.offset * 16) + (i * 4) + 2] = 0.0;
-			s.mesh_tangents.write[(s.offset * 16) + (i * 4) + 3] = 1.0;
-			s.mesh_colors.write[(s.offset * 4) + i] = p_modulate;
-			s.mesh_uvs.write[(s.offset * 4) + i] = Vector2();
+		if (hull) {
+			const Vector2 px_per_texel = gl_size / gl_uv.size;
+			for (const Vector2 &texel : hull->points) {
+				add_vertex(gl_pos + (texel - gl_uv.position) * px_per_texel, texel / texs);
+			}
+			for (int idx : hull->indices) {
+				s.indices.push_back(first_vertex + idx);
+			}
+		} else {
+			Vector2 uv0 = Vector2(gl_uv.position.x / texs.x, gl_uv.position.y / texs.y);
+			Vector2 uv1 = Vector2((gl_uv.position.x + gl_uv.size.x) / texs.x, (gl_uv.position.y + gl_uv.size.y) / texs.y);
+			add_vertex(gl_pos, uv0);
+			add_vertex(Vector2(gl_pos.x + gl_size.x, gl_pos.y), Vector2(uv1.x, uv0.y));
+			add_vertex(gl_pos + gl_size, uv1);
+			add_vertex(Vector2(gl_pos.x, gl_pos.y + gl_size.y), Vector2(uv0.x, uv1.y));
+			s.indices.push_back(first_vertex + 0);
+			s.indices.push_back(first_vertex + 1);
+			s.indices.push_back(first_vertex + 2);
+			s.indices.push_back(first_vertex + 0);
+			s.indices.push_back(first_vertex + 2);
+			s.indices.push_back(first_vertex + 3);
 		}
 
-		if (tex.is_valid()) {
-			s.mesh_uvs.write[(s.offset * 4) + 3] = Vector2(gl_uv.position.x / texs.x, (gl_uv.position.y + gl_uv.size.y) / texs.y);
-			s.mesh_uvs.write[(s.offset * 4) + 2] = Vector2((gl_uv.position.x + gl_uv.size.x) / texs.x, (gl_uv.position.y + gl_uv.size.y) / texs.y);
-			s.mesh_uvs.write[(s.offset * 4) + 1] = Vector2((gl_uv.position.x + gl_uv.size.x) / texs.x, gl_uv.position.y / texs.y);
-			s.mesh_uvs.write[(s.offset * 4) + 0] = Vector2(gl_uv.position.x / texs.x, gl_uv.position.y / texs.y);
-		}
-
-		s.indices.resize((s.offset + 1) * 6);
-		s.indices.write[(s.offset * 6) + 0] = (s.offset * 4) + 0;
-		s.indices.write[(s.offset * 6) + 1] = (s.offset * 4) + 1;
-		s.indices.write[(s.offset * 6) + 2] = (s.offset * 4) + 2;
-		s.indices.write[(s.offset * 6) + 3] = (s.offset * 4) + 0;
-		s.indices.write[(s.offset * 6) + 4] = (s.offset * 4) + 2;
-		s.indices.write[(s.offset * 6) + 5] = (s.offset * 4) + 3;
-
-		s.offset++;
 		r_offset.x += p_glyph.advance * pixel_size;
 	}
 }
@@ -582,46 +624,49 @@ void Label3D::_shape() {
 	}
 
 	Vector2 offset = Vector2(0, vbegin + lbl_offset.y * pixel_size);
-	for (int i = 0; i < lines_rid.size(); i++) {
-		const Glyph *glyphs = TS->shaped_text_get_glyphs(lines_rid[i]);
-		int gl_size = TS->shaped_text_get_glyph_count(lines_rid[i]);
-		float line_width = TS->shaped_text_get_width(lines_rid[i]) * pixel_size;
+	{
+		MutexLock hull_cache_lock(glyph_hull_cache_mutex);
+		for (int i = 0; i < lines_rid.size(); i++) {
+			const Glyph *glyphs = TS->shaped_text_get_glyphs(lines_rid[i]);
+			int gl_size = TS->shaped_text_get_glyph_count(lines_rid[i]);
+			float line_width = TS->shaped_text_get_width(lines_rid[i]) * pixel_size;
 
-		switch (horizontal_alignment) {
-			case HORIZONTAL_ALIGNMENT_LEFT:
-				offset.x = 0.0;
-				break;
-			case HORIZONTAL_ALIGNMENT_FILL:
-			case HORIZONTAL_ALIGNMENT_CENTER: {
-				offset.x = -line_width / 2.0;
-			} break;
-			case HORIZONTAL_ALIGNMENT_RIGHT: {
-				offset.x = -line_width;
-			} break;
-		}
-		offset.x += lbl_offset.x * pixel_size;
-		if (aabb == AABB()) {
-			aabb.position = Vector3(offset.x, offset.y, 0);
-			aabb.expand_to(Vector3(offset.x + line_width, offset.y - (TS->shaped_text_get_size(lines_rid[i]).y + line_spacing) * pixel_size, 0));
-		} else {
-			aabb.expand_to(Vector3(offset.x, offset.y, 0));
-			aabb.expand_to(Vector3(offset.x + line_width, offset.y - (TS->shaped_text_get_size(lines_rid[i]).y + line_spacing) * pixel_size, 0));
-		}
-		offset.y -= TS->shaped_text_get_ascent(lines_rid[i]) * pixel_size;
-
-		if (outline_modulate.a != 0.0 && outline_size > 0) {
-			// Outline surfaces.
-			Vector2 ol_offset = offset;
-			for (int j = 0; j < gl_size; j++) {
-				_generate_glyph_surfaces(glyphs[j], ol_offset, outline_modulate, outline_render_priority, outline_size);
+			switch (horizontal_alignment) {
+				case HORIZONTAL_ALIGNMENT_LEFT:
+					offset.x = 0.0;
+					break;
+				case HORIZONTAL_ALIGNMENT_FILL:
+				case HORIZONTAL_ALIGNMENT_CENTER: {
+					offset.x = -line_width / 2.0;
+				} break;
+				case HORIZONTAL_ALIGNMENT_RIGHT: {
+					offset.x = -line_width;
+				} break;
 			}
-		}
+			offset.x += lbl_offset.x * pixel_size;
+			if (aabb == AABB()) {
+				aabb.position = Vector3(offset.x, offset.y, 0);
+				aabb.expand_to(Vector3(offset.x + line_width, offset.y - (TS->shaped_text_get_size(lines_rid[i]).y + line_spacing) * pixel_size, 0));
+			} else {
+				aabb.expand_to(Vector3(offset.x, offset.y, 0));
+				aabb.expand_to(Vector3(offset.x + line_width, offset.y - (TS->shaped_text_get_size(lines_rid[i]).y + line_spacing) * pixel_size, 0));
+			}
+			offset.y -= TS->shaped_text_get_ascent(lines_rid[i]) * pixel_size;
 
-		// Main text surfaces.
-		for (int j = 0; j < gl_size; j++) {
-			_generate_glyph_surfaces(glyphs[j], offset, modulate, render_priority);
+			if (outline_modulate.a != 0.0 && outline_size > 0) {
+				// Outline surfaces.
+				Vector2 ol_offset = offset;
+				for (int j = 0; j < gl_size; j++) {
+					_generate_glyph_surfaces(glyphs[j], ol_offset, outline_modulate, outline_render_priority, outline_size);
+				}
+			}
+
+			// Main text surfaces.
+			for (int j = 0; j < gl_size; j++) {
+				_generate_glyph_surfaces(glyphs[j], offset, modulate, render_priority);
+			}
+			offset.y -= (TS->shaped_text_get_descent(lines_rid[i]) + line_spacing) * pixel_size;
 		}
-		offset.y -= (TS->shaped_text_get_descent(lines_rid[i]) + line_spacing) * pixel_size;
 	}
 
 	switch (get_billboard_mode()) {

@@ -30,10 +30,15 @@
 
 #include "renderer_scene_render_rd.h"
 
+#ifdef WINDOWS_ENABLED
+#include <windows.h>
+#endif
+
 #include "core/config/project_settings.h"
 #include "core/io/image.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
+#include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "servers/rendering/renderer_rd/shaders/decal_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/light_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/scene_data_inc.glsl.gen.h"
@@ -43,6 +48,8 @@
 #include "servers/rendering/rendering_server_enums.h"
 #include "servers/rendering/shader_include_db.h"
 #include "servers/rendering/storage/camera_attributes_storage.h"
+
+#include <thirdparty/fast_noise/fast_noise_vec2_64x64x32.h>
 
 void get_vogel_disk(float *r_kernel, int p_sample_count) {
 	const float golden_angle = 2.4;
@@ -90,6 +97,15 @@ void RendererSceneRenderRD::environment_set_volumetric_fog_volume_size(int p_siz
 
 void RendererSceneRenderRD::environment_set_volumetric_fog_filter_active(bool p_enable) {
 	volumetric_fog_filter_active = p_enable;
+}
+
+void RendererSceneRenderRD::environment_set_volumetric_fog_sampling(RSE::EnvironmentVolumetricFogSampling p_sampling) {
+	ERR_FAIL_INDEX(p_sampling, RSE::ENV_VOLUMETRIC_FOG_SAMPLING_MAX);
+	if (volumetric_fog_sampling == p_sampling) {
+		return;
+	}
+	volumetric_fog_sampling = p_sampling;
+	_update_shader_quality_settings(); // Forward+ bakes the mode into a specialization constant.
 }
 
 void RendererSceneRenderRD::environment_set_sdfgi_ray_count(RSE::EnvironmentSDFGIRayCount p_ray_count) {
@@ -470,7 +486,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	bool can_use_storage = _render_buffers_can_be_storage();
 
 	RSE::ViewportScaling3DMode scale_mode = rb->get_scaling_3d_mode();
-	bool use_upscaled_texture = rb->has_upscaled_texture() && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL);
+	bool use_upscaled_texture = rb->has_upscaled_texture() && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS);
 	SpatialUpscaler *spatial_upscaler = nullptr;
 	if (can_use_effects) {
 		if (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR) {
@@ -482,8 +498,10 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		}
 	}
 
+	// SMAA causes issues when enabled with temporal upscalers.
+	bool temporal_upscaler_active = scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL;
 	bool use_fxaa = rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_FXAA;
-	bool use_smaa = smaa && rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_SMAA;
+	bool use_smaa = smaa && rb->get_screen_space_aa() == RSE::VIEWPORT_SCREEN_SPACE_AA_SMAA && !temporal_upscaler_active;
 	// If doing bilinear or nearest scaling + FXAA / SMAA, the framebuffer must be scaled in a framebuffer copy after AA is applied.
 	bool using_scaling_pass = spatial_upscaler || ((use_fxaa || use_smaa) && (scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_BILINEAR || scale_mode == RSE::VIEWPORT_SCALING_3D_MODE_NEAREST));
 
@@ -492,6 +510,36 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	Size2i color_size = use_upscaled_texture ? target_size : rb->get_internal_size();
 
 	bool dest_is_msaa_2d = rb->get_view_count() == 1 && texture_storage->render_target_get_msaa(render_target) != RSE::VIEWPORT_MSAA_DISABLED;
+
+	// Reconstruct full-resolution depth from low-res depth buffer using
+	// color-guided bilateral upsampling with motion-vector temporal accumulation.
+	bool has_reconstructed_depth = false;
+	if (can_use_effects && can_use_storage && use_upscaled_texture && depth_reconstruct && rb->get_depth_reconstruct_requested()) {
+		Size2i internal_size = rb->get_internal_size();
+		bool size_differs = (internal_size.x != target_size.x) || (internal_size.y != target_size.y);
+		if (size_differs) {
+			RENDER_TIMESTAMP("Depth Reconstruct");
+			RD::get_singleton()->draw_command_begin_label("Depth Reconstruct");
+
+			uint32_t depth_usage = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+			rb->create_texture(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, RD::DATA_FORMAT_R32_SFLOAT, depth_usage, RD::TEXTURE_SAMPLES_1, target_size, 0, 1, true, true);
+
+			for (uint32_t i = 0; i < rb->get_view_count(); i++) {
+				float z_near = p_render_data->scene_data->view_projection[i].get_z_near();
+				float z_far = p_render_data->scene_data->view_projection[i].get_z_far();
+
+				RID lowres_depth = rb->get_depth_texture(i);
+				RID upscaled_color = use_upscaled_texture ? rb->get_upscaled_texture(i) : rb->get_internal_texture(i);
+				RID velocity = rb->get_velocity_buffer(false, i);
+				RID dest_depth = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, i, 0);
+
+				depth_reconstruct->process(lowres_depth, upscaled_color, velocity, dest_depth, target_size, internal_size, z_near, z_far);
+			}
+			has_reconstructed_depth = true;
+
+			RD::get_singleton()->draw_command_end_label();
+		}
+	}
 
 	bool using_dof = RSG::camera_attributes->camera_attributes_uses_dof(p_render_data->camera_attributes);
 
@@ -517,7 +565,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		if (can_use_storage) {
 			for (uint32_t i = 0; i < rb->get_view_count(); i++) {
 				buffers.base_texture = use_upscaled_texture ? rb->get_upscaled_texture(i) : rb->get_internal_texture(i);
-				buffers.depth_texture = rb->get_depth_texture(i);
+#ifdef WINDOWS_ENABLED
+				bool force_lowres_depth = (GetAsyncKeyState(VK_BACK) & 0x8000) != 0;
+#else
+				bool force_lowres_depth = false;
+#endif
+				buffers.depth_texture = (has_reconstructed_depth && !force_lowres_depth) ? rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH, i, 0) : rb->get_depth_texture(i);
 
 				// In stereo p_render_data->z_near and p_render_data->z_far can be offset for our combined frustum.
 				float z_near = p_render_data->scene_data->view_projection[i].get_z_near();
@@ -606,7 +659,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			}
 			for (uint32_t l = 0; l < rb->get_view_count(); l++) {
 				Size2i vp_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, 0);
-				RID source = rb->get_internal_texture(l);
+				RID source = use_upscaled_texture ? rb->get_upscaled_texture(l) : rb->get_internal_texture(l);
 				RID dest = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, l, 0);
 				copy_effects->gaussian_glow(source, dest, vp_size, environment_get_glow_strength(p_render_data->environment), true, environment_get_glow_hdr_luminance_cap(p_render_data->environment), environment_get_exposure(p_render_data->environment), environment_get_glow_bloom(p_render_data->environment), environment_get_glow_hdr_bleed_threshold(p_render_data->environment), environment_get_glow_hdr_bleed_scale(p_render_data->environment), luminance_texture, auto_exposure_scale);
 
@@ -1270,6 +1323,57 @@ void RendererSceneRenderRD::decals_set_filter(RSE::DecalFilter p_filter) {
 	decals_filter = p_filter;
 	_update_shader_quality_settings();
 }
+
+RID RendererSceneRenderRD::decals_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const {
+	RSE::CanvasItemTextureFilter filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+	switch (decals_filter) {
+		case RSE::DECAL_FILTER_NEAREST:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST;
+			break;
+		case RSE::DECAL_FILTER_LINEAR:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR;
+			break;
+		case RSE::DECAL_FILTER_NEAREST_MIPMAPS:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS;
+			break;
+		case RSE::DECAL_FILTER_LINEAR_MIPMAPS:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+			break;
+		case RSE::DECAL_FILTER_NEAREST_MIPMAPS_ANISOTROPIC:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+		case RSE::DECAL_FILTER_LINEAR_MIPMAPS_ANISOTROPIC:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+	}
+	return p_samplers.get_sampler(filter, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+}
+
+RID RendererSceneRenderRD::light_projectors_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const {
+	RSE::CanvasItemTextureFilter filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+	switch (light_projectors_filter) {
+		case RSE::LIGHT_PROJECTOR_FILTER_NEAREST:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST;
+			break;
+		case RSE::LIGHT_PROJECTOR_FILTER_LINEAR:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR;
+			break;
+		case RSE::LIGHT_PROJECTOR_FILTER_NEAREST_MIPMAPS:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS;
+			break;
+		case RSE::LIGHT_PROJECTOR_FILTER_LINEAR_MIPMAPS:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+			break;
+		case RSE::LIGHT_PROJECTOR_FILTER_NEAREST_MIPMAPS_ANISOTROPIC:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+		case RSE::LIGHT_PROJECTOR_FILTER_LINEAR_MIPMAPS_ANISOTROPIC:
+			filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC;
+			break;
+	}
+	return p_samplers.get_sampler(filter, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+}
+
 void RendererSceneRenderRD::light_projectors_set_filter(RSE::LightProjectorFilter p_filter) {
 	if (light_projectors_filter == p_filter) {
 		return;
@@ -1356,7 +1460,7 @@ void RendererSceneRenderRD::_post_prepass_render(RenderDataRD *p_render_data, bo
 	}
 }
 
-void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info) {
+void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info, const RTCullData *p_rt_cull, RID p_viewport) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -1375,6 +1479,7 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 		scene_data.camera_visible_layers = p_camera_data->visible_layers;
 		scene_data.taa_jitter = p_camera_data->taa_jitter;
 		scene_data.taa_frame_count = p_camera_data->taa_frame_count;
+		scene_data.frame_number = uint32_t(RSG::rasterizer->get_frame_number());
 		scene_data.main_cam_transform = p_camera_data->main_transform;
 		scene_data.flip_y = !p_reflection_probe.is_valid();
 
@@ -1470,6 +1575,12 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 		render_data.window_output_max_value = p_window_output_max_value;
 
 		render_data.render_info = r_render_info;
+		if (p_rt_cull) {
+			render_data.rt_instances = p_rt_cull->instances;
+			render_data.rt_lights = p_rt_cull->lights;
+			render_data.rt_decals = p_rt_cull->decals;
+		}
+		render_data.viewport = p_viewport;
 
 		if (p_render_buffers.is_valid() && p_reflection_probe.is_null()) {
 			render_data.transparent_bg = texture_storage->render_target_get_transparent(rb->get_render_target());
@@ -1556,6 +1667,38 @@ void RendererSceneRenderRD::set_debug_draw_mode(RSE::ViewportDebugDraw p_debug_d
 
 void RendererSceneRenderRD::update() {
 	sky.update_dirty_skys();
+	_sync_volumetric_fog_sampling_setting();
+}
+
+// The project setting wins whenever it changes; environment_set_volumetric_fog_sampling() overrides it until then.
+void RendererSceneRenderRD::_sync_volumetric_fog_sampling_setting() {
+	int setting = GLOBAL_GET_CACHED(int, "rendering/environment/volumetric_fog/sampling");
+	if (setting != volumetric_fog_sampling_setting) {
+		volumetric_fog_sampling_setting = setting;
+		environment_set_volumetric_fog_sampling(RSE::EnvironmentVolumetricFogSampling(setting));
+	}
+}
+
+void RendererSceneRenderRD::_create_volumetric_fog_noise_texture() {
+	RD::TextureFormat tf;
+	tf.format = RD::DATA_FORMAT_R8G8_UNORM;
+	tf.texture_type = RD::TEXTURE_TYPE_2D_ARRAY;
+	tf.width = FAST_NOISE_VEC2_SIZE;
+	tf.height = FAST_NOISE_VEC2_SIZE;
+	tf.array_layers = FAST_NOISE_VEC2_LAYERS;
+	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+
+	const uint32_t layer_size = FAST_NOISE_VEC2_BYTES / FAST_NOISE_VEC2_LAYERS;
+	const uint8_t *data = fast_noise_vec2_get_data();
+	Vector<Vector<uint8_t>> layers;
+	for (uint32_t i = 0; i < FAST_NOISE_VEC2_LAYERS; i++) {
+		Vector<uint8_t> layer;
+		layer.resize(layer_size);
+		memcpy(layer.ptrw(), data + i * layer_size, layer_size);
+		layers.push_back(layer);
+	}
+	volumetric_fog_noise_texture = RD::get_singleton()->texture_create(tf, RD::TextureView(), layers);
+	RD::get_singleton()->set_resource_name(volumetric_fog_noise_texture, "Volumetric Fog FAST Noise");
 }
 
 void RendererSceneRenderRD::set_time(double p_time, double p_step) {
@@ -1766,6 +1909,14 @@ bool RendererSceneRenderRD::is_vrs_supported() const {
 	return RD::get_singleton()->has_feature(RD::SUPPORTS_ATTACHMENT_VRS);
 }
 
+BitField<RSE::RenderingNotReadyReason> RendererSceneRenderRD::get_not_ready_reasons() {
+	BitField<RSE::RenderingNotReadyReason> reasons = 0;
+	if (pipeline_hash_map_rd_compilations_in_flight.get() > 0) {
+		reasons.set_flag(RSE::RENDERING_NOT_READY_PIPELINE_COMPILATION);
+	}
+	return reasons;
+}
+
 bool RendererSceneRenderRD::is_dynamic_gi_supported() const {
 	// usable by default (unless low end = true)
 	return true;
@@ -1797,6 +1948,8 @@ void RendererSceneRenderRD::init() {
 		ShaderIncludeDB::register_built_in_include_file("godot/light_data_inc.glsl", light_data_inc_shader_glsl);
 		ShaderIncludeDB::register_built_in_include_file("godot/scene_data_inc.glsl", scene_data_inc_shader_glsl);
 	}
+
+	_create_volumetric_fog_noise_texture(); // The sky binds it in init().
 
 	/* SKY SHADER */
 
@@ -1838,6 +1991,7 @@ void RendererSceneRenderRD::init() {
 	environment_set_volumetric_fog_volume_size(GLOBAL_GET("rendering/environment/volumetric_fog/volume_size"), GLOBAL_GET("rendering/environment/volumetric_fog/volume_depth"));
 	environment_set_volumetric_fog_filter_active(GLOBAL_GET("rendering/environment/volumetric_fog/use_filter"));
 	fog_use_legacy_blending = GLOBAL_GET("rendering/environment/fog/use_legacy_blending");
+	_sync_volumetric_fog_sampling_setting();
 
 	decals_set_filter(RSE::DecalFilter(int(GLOBAL_GET("rendering/textures/decals/filter"))));
 	light_projectors_set_filter(RSE::LightProjectorFilter(int(GLOBAL_GET("rendering/textures/light_projectors/filter"))));
@@ -1868,6 +2022,9 @@ void RendererSceneRenderRD::init() {
 
 	bokeh_dof = memnew(RendererRD::BokehDOF(!can_use_storage));
 	copy_effects = memnew(RendererRD::CopyEffects(raster_effects));
+	if (can_use_storage) {
+		depth_reconstruct = memnew(RendererRD::DepthReconstruct);
+	}
 	debug_effects = memnew(RendererRD::DebugEffects);
 	luminance = memnew(RendererRD::Luminance(!can_use_storage));
 	smaa = memnew(RendererRD::SMAA);
@@ -1894,6 +2051,9 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 	}
 	if (copy_effects) {
 		memdelete(copy_effects);
+	}
+	if (depth_reconstruct) {
+		memdelete(depth_reconstruct);
 	}
 	if (debug_effects) {
 		memdelete(debug_effects);
@@ -1925,6 +2085,10 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 
 	if (sky.sky_scene_state.uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(sky.sky_scene_state.uniform_set)) {
 		RD::get_singleton()->free_rid(sky.sky_scene_state.uniform_set);
+	}
+
+	if (volumetric_fog_noise_texture.is_valid()) {
+		RD::get_singleton()->free_rid(volumetric_fog_noise_texture);
 	}
 
 	if (is_dynamic_gi_supported()) {

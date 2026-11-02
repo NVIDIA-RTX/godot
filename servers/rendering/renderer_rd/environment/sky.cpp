@@ -834,6 +834,14 @@ void sky() {
 
 		{
 			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+			u.binding = 0;
+			u.append_id(RendererSceneRenderRD::get_singleton()->volumetric_fog_noise_get_texture());
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
 			u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 			u.binding = 1;
 			u.append_id(RendererRD::MaterialStorage::get_singleton()->global_shader_uniforms_get_storage_buffer());
@@ -1151,8 +1159,9 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 
 	// Setup fog variables.
 	sky_scene_state.ubo.volumetric_fog_enabled = false;
-	if (p_render_data->render_buffers->has_custom_data(RB_SCOPE_FOG)) {
-		Ref<RendererRD::Fog::VolumetricFog> fog = p_render_data->render_buffers->get_custom_data(RB_SCOPE_FOG);
+	sky_scene_state.fog_uniform_set = RID();
+	Ref<RendererRD::Fog::VolumetricFog> fog = RendererRD::Fog::get_active(p_render_data->render_buffers.ptr(), p_render_data->environment);
+	if (fog.is_valid()) {
 		sky_scene_state.ubo.volumetric_fog_enabled = true;
 
 		float fog_end = fog->length;
@@ -1227,6 +1236,8 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 	sky_scene_state.ubo.fog_sky_affect = RendererSceneRenderRD::get_singleton()->environment_get_fog_sky_affect(p_render_data->environment);
 	sky_scene_state.ubo.volumetric_fog_sky_affect = RendererSceneRenderRD::get_singleton()->environment_get_volumetric_fog_sky_affect(p_render_data->environment);
 	sky_scene_state.ubo.fog_use_legacy_blending = RendererSceneRenderRD::get_singleton()->fog_use_legacy_blending_get();
+	sky_scene_state.ubo.volumetric_fog_sampling = RendererSceneRenderRD::get_singleton()->volumetric_fog_sampling_get();
+	sky_scene_state.ubo.frame_number = p_render_data->scene_data->frame_number;
 
 	RD::get_singleton()->buffer_update(sky_scene_state.uniform_buffer, 0, sizeof(SkySceneState::UBO), &sky_scene_state.ubo);
 }
@@ -1576,6 +1587,7 @@ void SkyRD::update_dirty_skys() {
 
 				// Create view into the first layer slice for user shaders.
 				sky->radiance_first_layer_slice = RD::get_singleton()->texture_create_shared_from_slice(RD::TextureView(), sky->radiance, 0, 0, mipmaps, RD::TEXTURE_SLICE_2D, 1);
+				RD::get_singleton()->set_resource_name(sky->radiance_first_layer_slice, "Sky Radiance First Layer Slice");
 
 				sky->reflection.update_reflection_data(w, mipmaps, true, sky->radiance, 0, use_realtime, roughness_layers, texture_format, sky->uv_border_size);
 			} else {
@@ -1698,6 +1710,16 @@ RID SkyRD::sky_get_radiance_texture_rd(RID p_sky) const {
 	ERR_FAIL_NULL_V(sky, RID());
 
 	return sky->radiance;
+}
+
+RID SkyRD::sky_get_radiance_2d_texture_rd(RID p_sky) const {
+	Sky *sky = get_sky(p_sky);
+	ERR_FAIL_NULL_V(sky, RID());
+
+	// High-quality skies store radiance as a 2D array; expose the layer-0 slice
+	// so consumers binding a texture2D get a matching texture type. Low-quality
+	// skies already use a plain 2D texture.
+	return sky->radiance_first_layer_slice.is_valid() ? sky->radiance_first_layer_slice : sky->radiance;
 }
 
 float SkyRD::sky_get_uv_border_size(RID p_sky) {

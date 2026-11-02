@@ -32,6 +32,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/error/error_macros.h"
 #include "core/math/transform_interpolator.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -49,6 +50,17 @@
 #include "servers/xr/xr_interface.h"
 #include "servers/xr/xr_server.h"
 #endif // XR_DISABLED
+
+#ifdef STREAMLINE_ENABLED
+#include "drivers/streamline/streamline_context.h"
+#endif
+
+// No RenderingDevice exists under the Compatibility renderer.
+static void _set_gpu_label_prefix(const String &p_prefix) {
+	if (RD::get_singleton()) {
+		RD::get_singleton()->draw_command_set_label_prefix(p_prefix);
+	}
+}
 
 static Transform2D _canvas_get_transform(RendererViewport::Viewport *p_viewport, RendererCanvasCull::Canvas *p_canvas, RendererViewport::Viewport::CanvasData *p_canvas_data, const Vector2 &p_vp_size) {
 	Transform2D xf = p_viewport->global_transform;
@@ -141,7 +153,7 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			const float EPSILON = 0.0001;
 			float scaling_3d_scale = p_viewport->scaling_3d_scale;
 			RSE::ViewportScaling3DMode scaling_3d_mode = p_viewport->scaling_3d_mode;
-			bool upscaler_available = p_viewport->fsr_enabled;
+			bool upscaler_available = p_viewport->fsr_enabled || p_viewport->dlss_enabled;
 			RSE::ViewportScaling3DType scaling_type = RSE::scaling_3d_mode_type(scaling_3d_mode);
 
 			if ((!upscaler_available || (scaling_type == RSE::VIEWPORT_SCALING_3D_TYPE_SPATIAL)) && scaling_3d_scale >= (1.0 - EPSILON) && scaling_3d_scale <= (1.0 + EPSILON)) {
@@ -202,17 +214,17 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			bool use_taa = p_viewport->use_taa;
 
 			if (scaling_3d_is_not_bilinear && scaling_3d_scale >= (1.0 + EPSILON)) {
-				// FSR, MetalFX, and nearest-neighbor scaling are not designed for downsampling.
+				// FSR, MetalFX, DLSS, and nearest-neighbor scaling are not designed for downsampling.
 				// Fall back to bilinear scaling.
-				WARN_PRINT_ONCE("FSR, MetalFX, and nearest-neighbor 3D resolution scaling are not designed for downsampling. Falling back to bilinear 3D resolution scaling.");
+				WARN_PRINT_ONCE("FSR, MetalFX, DLSS, and nearest-neighbor 3D resolution scaling are not designed for downsampling. Falling back to bilinear 3D resolution scaling.");
 				scaling_3d_mode = RSE::VIEWPORT_SCALING_3D_MODE_BILINEAR;
 				scaling_type = RSE::scaling_3d_mode_type(scaling_3d_mode);
 			}
 
 			if (scaling_3d_is_not_bilinear && scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST && !upscaler_available) {
-				// FSR is not actually available.
+				// FSR, MetalFX, or DLSS is not actually available.
 				// Fall back to bilinear scaling.
-				WARN_PRINT_ONCE("FSR 3D resolution scaling is not available. Falling back to bilinear 3D resolution scaling.");
+				WARN_PRINT_ONCE("Temporal upscaler is currently not available. Falling back to bilinear 3D resolution scaling.");
 				scaling_3d_mode = RSE::VIEWPORT_SCALING_3D_MODE_BILINEAR;
 				scaling_type = RSE::scaling_3d_mode_type(scaling_3d_mode);
 			}
@@ -220,7 +232,7 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			if (use_taa && scaling_type == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL) {
 				// Temporal upscalers can't be used with TAA.
 				// Turn it off and prefer using the temporal upscaler.
-				WARN_PRINT_ONCE("FSR 2 or MetalFX Temporal is not compatible with TAA. Disabling TAA internally.");
+				WARN_PRINT_ONCE("Temporal upscalers are not compatible with TAA. Disabling TAA internally.");
 				use_taa = false;
 			}
 
@@ -243,10 +255,11 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 				case RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL:
 				case RSE::VIEWPORT_SCALING_3D_MODE_FSR:
 				case RSE::VIEWPORT_SCALING_3D_MODE_FSR2:
+				case RSE::VIEWPORT_SCALING_3D_MODE_DLSS:
 					target_width = p_viewport->size.width;
 					target_height = p_viewport->size.height;
-					render_width = MAX(target_width * scaling_3d_scale, 1.0); // target_width / (target_width * scaling)
-					render_height = MAX(target_height * scaling_3d_scale, 1.0);
+					render_width = MAX(ceilf((float)target_width * scaling_3d_scale), 1.0); // target_width / (target_width * scaling)
+					render_height = MAX(ceilf((float)target_height * scaling_3d_scale), 1.0);
 					break;
 				case RSE::VIEWPORT_SCALING_3D_MODE_OFF:
 					target_width = p_viewport->size.width;
@@ -265,6 +278,15 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 					render_height = target_height;
 					break;
 			}
+
+#ifdef STREAMLINE_ENABLED
+			if (scaling_3d_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
+				if (StreamlineContext::get().dlss_clamp_render_size(target_width, target_height, render_width, render_height)) {
+					WARN_PRINT_ONCE(vformat("DLSS does not support the requested 3D resolution scale. Clamping the internal resolution to %dx%d.", render_width, render_height));
+					scaling_3d_scale = (float)render_width / (float)target_width;
+				}
+			}
+#endif
 
 			uint32_t jitter_phase_count = 0;
 			if (scaling_type == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL) {
@@ -295,6 +317,7 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			rb_config.set_texture_mipmap_bias(texture_mipmap_bias);
 			rb_config.set_anisotropic_filtering_level(p_viewport->anisotropic_filtering_level);
 			rb_config.set_use_taa(use_taa);
+			rb_config.set_use_frame_generation(p_viewport->frame_generation);
 			rb_config.set_use_debanding(p_viewport->use_debanding);
 
 			p_viewport->render_buffers->configure(&rb_config);
@@ -870,6 +893,7 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 		}
 
 		RENDER_TIMESTAMP("> Render Viewport " + itos(i));
+		_set_gpu_label_prefix(vp->debug_name.is_empty() ? "Viewport " + itos(i) : vp->debug_name);
 
 		RSG::texture_storage->render_target_set_as_unused(vp->render_target);
 #ifndef XR_DISABLED
@@ -956,6 +980,7 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 			vp->update_mode = RSE::VIEWPORT_UPDATE_DISABLED;
 		}
 
+		_set_gpu_label_prefix(String());
 		RENDER_TIMESTAMP("< Render Viewport " + itos(i));
 
 		// 3D render info.
@@ -997,6 +1022,7 @@ void RendererViewport::viewport_initialize(RID p_rid) {
 	viewport->viewport_render_direct_to_screen = false;
 
 	viewport->fsr_enabled = !RSG::rasterizer->is_low_end() && !viewport->disable_3d;
+	viewport->dlss_enabled = !RSG::rasterizer->is_low_end() && !viewport->disable_3d;
 }
 
 #ifndef XR_DISABLED
@@ -1036,10 +1062,23 @@ void RendererViewport::viewport_set_scaling_3d_mode(RID p_viewport, RSE::Viewpor
 			WARN_PRINT_ONCE_ED("MetalFX Temporal 3D scaling is only available when using the Forward+ renderer.");
 			return;
 		}
+		if (p_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
+			WARN_PRINT_ONCE_ED("DLSS 3D scaling is only available when using the Forward+ renderer.");
+			return;
+		}
 	}
 	if (rendering_method == "gl_compatibility" && p_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_SPATIAL) {
 		WARN_PRINT_ONCE_ED("MetalFX Spatial 3D scaling is only available when using the Forward+ or Mobile renderer.");
 		return;
+	}
+	if (p_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
+#ifndef STREAMLINE_ENABLED
+		ERR_PRINT_ONCE_ED("DLSS is not available because Streamline support was not compiled into the engine.");
+#else
+		if (StreamlineContext::get().slInit == nullptr) {
+			ERR_PRINT_ONCE_ED("DLSS is not available because Streamline failed to initialize (sl.interposer.dll not found or failed to load). Please download the Streamline SDK from GitHub (NVIDIA-RTX/Streamline) and make sure the Streamline SDK binaries are in the same directory as the Godot executable, and restart Godot.");
+		}
+#endif
 	}
 
 	if (viewport->scaling_3d_mode == p_mode) {
@@ -1093,6 +1132,14 @@ void RendererViewport::viewport_set_scaling_3d_scale(RID p_viewport, float p_sca
 	}
 
 	viewport->scaling_3d_scale = CLAMP(p_scaling_3d_scale, 0.1, 2.0);
+	_configure_3d_render_buffers(viewport);
+}
+
+void RendererViewport::viewport_set_frame_generation(RID p_viewport, bool p_frame_generation) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+
+	viewport->frame_generation = p_frame_generation;
 	_configure_3d_render_buffers(viewport);
 }
 
@@ -1443,6 +1490,18 @@ void RendererViewport::viewport_set_screen_space_aa(RID p_viewport, RSE::Viewpor
 	_configure_3d_render_buffers(viewport);
 }
 
+void RendererViewport::viewport_set_use_pathtracing(RID p_viewport, bool p_use_pathtracing) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+	viewport->use_pathtracing = p_use_pathtracing;
+}
+
+bool RendererViewport::viewport_get_use_pathtracing(RID p_viewport) const {
+	const Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL_V(viewport, true);
+	return viewport->use_pathtracing;
+}
+
 void RendererViewport::viewport_set_use_taa(RID p_viewport, bool p_use_taa) {
 	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
 	ERR_FAIL_NULL(viewport);
@@ -1658,6 +1717,12 @@ void RendererViewport::viewport_set_vrs_texture(RID p_viewport, RID p_texture) {
 
 	RSG::texture_storage->render_target_set_vrs_texture(viewport->render_target, p_texture);
 	_configure_3d_render_buffers(viewport);
+}
+
+void RendererViewport::viewport_set_debug_name(RID p_viewport, const String &p_name) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+	viewport->debug_name = p_name;
 }
 
 bool RendererViewport::free(RID p_rid) {

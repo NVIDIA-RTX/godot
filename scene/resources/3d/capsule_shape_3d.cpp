@@ -34,7 +34,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> CapsuleShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> CapsuleShape3D::_build_debug_mesh_lines() const {
 	float c_radius = get_radius();
 	float c_height = get_height();
 
@@ -69,7 +69,7 @@ Vector<Vector3> CapsuleShape3D::get_debug_mesh_lines() const {
 	return points;
 }
 
-Ref<ArrayMesh> CapsuleShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> CapsuleShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	Array capsule_array;
 	capsule_array.resize(RSE::ARRAY_MAX);
 	CapsuleMesh::create_mesh_array(capsule_array, radius, height, 32, 8);

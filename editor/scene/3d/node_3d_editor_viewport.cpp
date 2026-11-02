@@ -42,6 +42,7 @@
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
 #include "core/string/translation_server.h"
+#include "drivers/streamline/streamline.h"
 #include "editor/animation/animation_player_editor_plugin.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/docks/scene_tree_dock.h"
@@ -601,9 +602,12 @@ void Node3DEditorViewport::cancel_transform() {
 }
 
 void Node3DEditorViewport::_update_shrink() {
-	const float scaling_3d_scale = GLOBAL_GET("rendering/scaling_3d/scale");
-	const float shrink_factor = view_display_menu->get_popup()->is_item_checked(view_display_menu->get_popup()->get_item_index(VIEW_HALF_RESOLUTION)) ? 0.5 : 1.0;
-	viewport->set_scaling_3d_scale(MAX(0.25, scaling_3d_scale * shrink_factor));
+	const bool shrink = view_display_menu->get_popup()->is_item_checked(view_display_menu->get_popup()->get_item_index(VIEW_HALF_RESOLUTION));
+
+	subviewport_container->set_stretch_shrink(shrink ? 2 : 1);
+	subviewport_container->set_texture_filter(shrink ? TEXTURE_FILTER_NEAREST : TEXTURE_FILTER_PARENT_NODE);
+
+	viewport->set_scaling_3d_scale(GLOBAL_GET("rendering/scaling_3d/scale"));
 }
 
 float Node3DEditorViewport::get_znear() const {
@@ -640,6 +644,18 @@ Vector3 Node3DEditorViewport::_get_camera_normal() const {
 
 Vector3 Node3DEditorViewport::get_ray(const Vector2 &p_pos) const {
 	return camera->project_ray_normal(p_pos);
+}
+
+bool Node3DEditorViewport::is_view_gizmos_enabled() const {
+	if (!view_display_menu) {
+		return true;
+	}
+	PopupMenu *popup = view_display_menu->get_popup();
+	const int idx = popup->get_item_index(VIEW_GIZMOS);
+	if (idx < 0) {
+		return true;
+	}
+	return popup->is_item_checked(idx);
 }
 
 void Node3DEditorViewport::_clear_selected() {
@@ -3149,6 +3165,10 @@ void Node3DEditorViewport::_project_settings_changed() {
 
 	const Viewport::AnisotropicFiltering anisotropic_filtering_level = Viewport::AnisotropicFiltering(int(GLOBAL_GET("rendering/textures/default_filters/anisotropic_filtering_level")));
 	viewport->set_anisotropic_filtering_level(anisotropic_filtering_level);
+
+	if (Streamline::get_singleton()) {
+		Streamline::get_singleton()->update_project_settings();
+	}
 }
 
 static void override_label_colors(Control *p_control) {
@@ -3692,6 +3712,37 @@ void Node3DEditorViewport::_notification(int p_what) {
 				text += vformat(TTR("Objects: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_OBJECTS_IN_FRAME)) + "\n";
 				text += vformat(TTR("Primitives: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_PRIMITIVES_IN_FRAME)) + "\n";
 				text += vformat(TTR("Draw Calls: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_DRAW_CALLS_IN_FRAME));
+
+				auto rt_info = [&](Viewport::RenderInfo p_info) {
+					return viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, p_info);
+				};
+				const int rt_tlas = rt_info(Viewport::RENDER_INFO_RT_TLAS_INSTANCES);
+				if (rt_tlas > 0) {
+					text += "\n";
+					text += "\n" + vformat(TTR("RT TLAS Instances: %d"), rt_tlas) + "\n";
+					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_BUILDS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_BUILT)) + "\n";
+					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_REFITS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_REFIT));
+
+					const int rt_updated = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_UPDATED);
+					const int rt_held = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_HELD);
+					const int rt_limited = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED);
+					if (rt_updated + rt_held + rt_limited > 0) {
+						text += "\n" + vformat(TTR("RT Dynamic: %d updated, %d held, %d budget-limited"), rt_updated, rt_held, rt_limited);
+					}
+					const int rt_rebakes = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_REBAKES);
+					if (rt_rebakes > 0) {
+						text += "\n" + vformat(TTR("RT Rebakes: %d (%d verts)"), rt_rebakes, rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_REBAKE_VERTICES));
+					}
+					const int rt_captured = rt_info(Viewport::RENDER_INFO_RT_CAPTURED_MESHES);
+					if (rt_captured > 0) {
+						text += "\n" + vformat(TTR("RT Captures: %d (%d verts)"), rt_captured, rt_info(Viewport::RENDER_INFO_RT_CAPTURED_VERTICES));
+					}
+					auto rt_mb = [&](Viewport::RenderInfo p_kb_info) {
+						return (int64_t(rt_info(p_kb_info)) + 999) / 1000;
+					};
+					text += "\n" + vformat(TTR("RT AS Scratch: %04d / %04d MB (%03d rollovers)"), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_SIZE_KB), rt_info(Viewport::RENDER_INFO_RT_SCRATCH_ROLLOVERS));
+					text += "\n" + vformat(TTR("RT Capture Arena: %04d / %04d MB"), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB));
+				}
 
 				info_label->set_text(text);
 			}
@@ -4542,6 +4593,8 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_GIZMOS: {
 			int idx = view_display_menu->get_popup()->get_item_index(VIEW_GIZMOS);
 			bool current = view_display_menu->get_popup()->is_item_checked(idx);
+			Node3DEditor *editor = Node3DEditor::get_singleton();
+			const bool was_globally_off = editor && !editor->is_any_view_gizmos_enabled();
 			current = !current;
 			uint32_t layers = camera->get_cull_mask();
 			layers &= ~(1 << GIZMO_EDIT_LAYER);
@@ -4550,6 +4603,13 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 			}
 			camera->set_cull_mask(layers);
 			view_display_menu->get_popup()->set_item_checked(idx, current);
+
+			// If we are the first viewport bringing gizmos back, every
+			// gizmo in the edited scene was visually suppressed during its
+			// last redraw and now needs to actually populate its meshes.
+			if (was_globally_off && current && editor) {
+				editor->update_all_gizmos();
+			}
 
 		} break;
 		case VIEW_TRANSFORM_GIZMO: {
@@ -4618,7 +4678,12 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES:
 		case VIEW_DISPLAY_DEBUG_OCCLUDERS:
 		case VIEW_DISPLAY_MOTION_VECTORS:
-		case VIEW_DISPLAY_INTERNAL_BUFFER: {
+		case VIEW_DISPLAY_INTERNAL_BUFFER:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS:
+		case VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS:
+		case VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH: {
 			static const int display_options[] = {
 				VIEW_DISPLAY_NORMAL,
 				VIEW_DISPLAY_WIREFRAME,
@@ -4649,6 +4714,11 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_OCCLUDERS,
 				VIEW_DISPLAY_MOTION_VECTORS,
 				VIEW_DISPLAY_INTERNAL_BUFFER,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS,
+				VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS,
+				VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH,
 				VIEW_MAX
 			};
 			static const Viewport::DebugDraw debug_draw_modes[] = {
@@ -4681,6 +4751,11 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_OCCLUDERS,
 				Viewport::DEBUG_DRAW_MOTION_VECTORS,
 				Viewport::DEBUG_DRAW_INTERNAL_BUFFER,
+				Viewport::DEBUG_DRAW_DLSS_RR_DIFFUSE_ALBEDO,
+				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_ALBEDO,
+				Viewport::DEBUG_DRAW_DLSS_RR_NORMAL_ROUGHNESS,
+				Viewport::DEBUG_DRAW_DLSS_RR_SPECULAR_MOTION_VECTORS,
+				Viewport::DEBUG_DRAW_RECONSTRUCTED_DEPTH,
 			};
 
 			for (int idx = 0; display_options[idx] != VIEW_MAX; idx++) {
@@ -6828,6 +6903,17 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Represents motion vectors with colored lines in the direction of motion. Gray dots represent areas with no per-pixel motion."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Internal Buffer"), VIEW_DISPLAY_INTERNAL_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
 			TTRC("Shows the scene rendered in linear colorspace before any tonemapping or post-processing."));
+	display_submenu->add_separator();
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Diffuse Albedo"), VIEW_DISPLAY_DEBUG_DLSS_RR_DIFFUSE_ALBEDO, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction diffuse albedo output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Albedo"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_ALBEDO, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction specular albedo output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Normal/Roughness"), VIEW_DISPLAY_DEBUG_DLSS_RR_NORMAL_ROUGHNESS, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction normal and roughness output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("DLSS RR Specular Motion Vectors"), VIEW_DISPLAY_DEBUG_DLSS_RR_SPECULAR_MOTION_VECTORS, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the DLSS Ray Reconstruction specular hit distance output buffer. Requires raytracing with DLSS RR enabled."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Reconstructed Depth"), VIEW_DISPLAY_DEBUG_RECONSTRUCTED_DEPTH, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the reconstructed full-resolution depth buffer. Requires DLSS RR path tracing with upscaling."));
 	view_display_menu->get_popup()->add_submenu_node_item(TTRC("Display Advanced..."), display_submenu, VIEW_DISPLAY_ADVANCED);
 
 	view_display_menu->get_popup()->add_separator();
@@ -7195,6 +7281,9 @@ void Node3DEditorViewportContainer::set_view(View p_view) {
 		ERR_FAIL_NULL(viewports[i]);
 	}
 
+	Node3DEditor *editor = Node3DEditor::get_singleton();
+	const bool was_globally_off = editor && !editor->is_any_view_gizmos_enabled();
+
 	const bool previous_main_vertical = !first_split->is_vertical();
 	const float horizontal_offset = previous_main_vertical ? first_split->get_split_offset() : main_split->get_split_offset();
 	const float vertical_offset = previous_main_vertical ? main_split->get_split_offset() : first_split->get_split_offset();
@@ -7251,6 +7340,10 @@ void Node3DEditorViewportContainer::set_view(View p_view) {
 			first_split->set_dragging_enabled(false);
 			_update_split_drag_margin();
 		} break;
+	}
+
+	if (was_globally_off && editor && editor->is_any_view_gizmos_enabled()) {
+		editor->update_all_gizmos();
 	}
 }
 

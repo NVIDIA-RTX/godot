@@ -34,7 +34,7 @@
 #include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> SeparationRayShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> SeparationRayShape3D::_build_debug_mesh_lines() const {
 	Vector<Vector3> points = {
 		Vector3(),
 		Vector3(0, 0, get_length())
@@ -43,7 +43,7 @@ Vector<Vector3> SeparationRayShape3D::get_debug_mesh_lines() const {
 	return points;
 }
 
-Ref<ArrayMesh> SeparationRayShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> SeparationRayShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	return memnew(ArrayMesh);
 }
 

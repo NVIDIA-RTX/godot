@@ -63,7 +63,7 @@ Error DirAccessJAndroid::list_dir_begin() {
 	return OK;
 }
 
-String DirAccessJAndroid::get_next() {
+String DirAccessJAndroid::_get_next_entry() {
 	ERR_FAIL_COND_V(id == 0, "");
 	if (_dir_next) {
 		JNIEnv *env = get_jni_env();

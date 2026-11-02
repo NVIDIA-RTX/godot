@@ -11,6 +11,9 @@
 #define SCENE_DATA_FLAGS_USE_UV2_MATERIAL (1 << 5)
 #define SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS (1 << 6)
 #define SCENE_DATA_FLAGS_IN_SHADOW_PASS (1 << 7)
+#define SCENE_DATA_FLAGS_USE_DEPTH_FOG (1 << 8)
+#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG (1 << 9)
+#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE (1 << 10)
 
 struct SceneData {
 	mat4 projection_matrix;
@@ -81,4 +84,6 @@ struct SceneData {
 	float IBL_exposure_normalization;
 	uint camera_visible_layers;
 	float pass_alpha_multiplier;
+	float fog_sky_affect;
+	uint frame_number; // Monotonic, unlike taa_frame_count which wraps with the jitter cycle.
 };

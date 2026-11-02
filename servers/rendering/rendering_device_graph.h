@@ -120,6 +120,9 @@ public:
 			TYPE_TEXTURE_UPDATE,
 			TYPE_CAPTURE_TIMESTAMP,
 			TYPE_DRIVER_CALLBACK,
+			TYPE_BOTTOM_LEVEL_ACCELERATION_STRUCTURE_UPDATE,
+			TYPE_ACCELERATION_STRUCTURE_BUILD_BATCH,
+			TYPE_FULL_BARRIER,
 			TYPE_MAX
 		};
 
@@ -150,6 +153,23 @@ public:
 	struct RecordedBufferToTextureCopy {
 		RDD::BufferID from_buffer;
 		RDD::BufferTextureCopyRegion region;
+	};
+
+	struct RecordedAccelerationStructureBuild {
+		enum Type {
+			TYPE_BLAS_BUILD,
+			TYPE_BLAS_UPDATE,
+			TYPE_TLAS_BUILD,
+		};
+
+		Type type = TYPE_BLAS_BUILD;
+		bool barrier_before = false;
+		RDD::AccelerationStructureID acceleration_structure;
+		RDD::BufferID scratch_buffer;
+		uint64_t scratch_offset = 0;
+		RDD::BufferID instance_buffer;
+		uint32_t instance_offset = 0;
+		uint32_t instance_count = 0;
 	};
 
 	enum ResourceUsage {
@@ -353,6 +373,18 @@ private:
 		RDD::BufferID instance_buffer;
 		uint32_t instance_offset = 0;
 		uint32_t instance_count = 0;
+	};
+
+	struct RecordedAccelerationStructureBuildBatchCommand : RecordedCommand {
+		uint32_t build_count = 0;
+
+		_FORCE_INLINE_ RecordedAccelerationStructureBuild *builds() {
+			return reinterpret_cast<RecordedAccelerationStructureBuild *>(&this[1]);
+		}
+
+		_FORCE_INLINE_ const RecordedAccelerationStructureBuild *builds() const {
+			return reinterpret_cast<const RecordedAccelerationStructureBuild *>(&this[1]);
+		}
 	};
 
 	struct RecordedBufferClearCommand : RecordedCommand {
@@ -871,6 +903,7 @@ private:
 	void _run_compute_list_command(RDD::CommandBufferID p_command_buffer, const uint8_t *p_instruction_data, uint32_t p_instruction_data_size);
 	void _get_draw_list_render_pass_and_framebuffer(const RecordedDrawListCommand *p_draw_list_command, RDD::RenderPassID &r_render_pass, RDD::FramebufferID &r_framebuffer);
 	void _run_raytracing_list_command(RDD::CommandBufferID p_command_buffer, const uint8_t *p_instruction_data, uint32_t p_instruction_data_size);
+	void _run_acceleration_structure_build_batch(RDD::CommandBufferID p_command_buffer, const RecordedAccelerationStructureBuild *p_builds, uint32_t p_build_count);
 	void _run_draw_list_command(RDD::CommandBufferID p_command_buffer, const uint8_t *p_instruction_data, uint32_t p_instruction_data_size);
 	void _add_draw_list_begin(FramebufferCache *p_framebuffer_cache, RDD::RenderPassID p_render_pass, RDD::FramebufferID p_framebuffer, Rect2i p_region, VectorView<AttachmentOperation> p_attachment_operations, VectorView<RDD::RenderPassClearValue> p_attachment_clear_values, BitField<RDD::PipelineStageBits> p_stages, uint32_t p_breadcrumb, bool p_split_cmd_buffer);
 	void _run_secondary_command_buffer_task(const SecondaryCommandBuffer *p_secondary);
@@ -891,7 +924,10 @@ public:
 	void finalize();
 	void begin();
 	void add_blas_build(RDD::AccelerationStructureID p_blas, RDD::BufferID p_scratch_buffer, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
+	void add_blas_update(RDD::AccelerationStructureID p_blas, RDD::BufferID p_scratch_buffer, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
 	void add_tlas_build(RDD::AccelerationStructureID p_tlas, RDD::BufferID p_scratch_buffer, RDD::BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
+	void add_acceleration_structure_build_batch(VectorView<RecordedAccelerationStructureBuild> p_builds);
+	void add_full_barrier();
 	void add_buffer_clear(RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, uint32_t p_offset, uint32_t p_size);
 	void add_buffer_copy(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, RDD::BufferCopyRegion p_region);
 	void add_buffer_get_data(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, RDD::BufferCopyRegion p_region);

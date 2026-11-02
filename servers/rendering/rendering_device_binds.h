@@ -746,25 +746,58 @@ protected:
 	}
 };
 
+// Two-level nested variant of RD_SETGET_SUB. Routes a flat GDScript property
+// (m_name) onto a `base.m_sub1.m_sub2.m_field` access path. The property name
+// is decoupled from the C++ field name so nested union/discriminator layouts
+// can still expose a flat, stable GDScript API.
+#define RD_SETGET_SUB2(m_type, m_sub1, m_sub2, m_field, m_name) \
+	void set_##m_name(m_type p_##m_name) { \
+		base.m_sub1.m_sub2.m_field = p_##m_name; \
+	} \
+	m_type get_##m_name() const { \
+		return base.m_sub1.m_sub2.m_field; \
+	}
+
 class RDAccelerationStructureGeometry : public RefCounted {
 	GDCLASS(RDAccelerationStructureGeometry, RefCounted)
 	friend class RenderingDevice;
 	RD::AccelerationStructureGeometry base;
 
 public:
+	// Mirrors RD::AccelerationStructureGeometry::Type so the enum can be
+	// exposed to GDScript without leaking a nested type into the binding API.
+	enum Type {
+		TYPE_TRIANGLES = RD::AccelerationStructureGeometry::TYPE_TRIANGLES,
+		TYPE_AABBS = RD::AccelerationStructureGeometry::TYPE_AABBS,
+	};
+
+	void set_geometry_type(Type p_type) { base.type = static_cast<RD::AccelerationStructureGeometry::Type>(p_type); }
+	Type get_geometry_type() const { return static_cast<Type>(base.type); }
+
 	RD_SETGET(BitField<RD::AccelerationStructureGeometryFlagBits>, flags)
-	RD_SETGET(RID, vertex_buffer)
-	RD_SETGET(uint32_t, vertex_offset)
-	RD_SETGET(uint32_t, vertex_stride)
-	RD_SETGET(uint32_t, vertex_count)
-	RD_SETGET(RD::DataFormat, vertex_format)
-	RD_SETGET(RID, index_buffer)
-	RD_SETGET(uint32_t, index_offset)
-	RD_SETGET(uint32_t, index_count)
+
+	// Triangle geometry (active when type == TYPE_TRIANGLES, which is the
+	// default so unchanged GDScript code keeps working).
+	RD_SETGET_SUB2(RID, geometry, triangles, vertex_buffer, vertex_buffer)
+	RD_SETGET_SUB2(uint32_t, geometry, triangles, vertex_offset, vertex_offset)
+	RD_SETGET_SUB2(uint32_t, geometry, triangles, vertex_stride, vertex_stride)
+	RD_SETGET_SUB2(uint32_t, geometry, triangles, vertex_count, vertex_count)
+	RD_SETGET_SUB2(RD::DataFormat, geometry, triangles, vertex_format, vertex_format)
+	RD_SETGET_SUB2(RID, geometry, triangles, index_buffer, index_buffer)
+	RD_SETGET_SUB2(uint32_t, geometry, triangles, index_offset, index_offset)
+	RD_SETGET_SUB2(uint32_t, geometry, triangles, index_count, index_count)
+
+	// Procedural AABB geometry (active when type == TYPE_AABBS).
+	RD_SETGET_SUB2(RID, geometry, aabbs, buffer, aabb_buffer)
+	RD_SETGET_SUB2(uint32_t, geometry, aabbs, offset, aabb_offset)
+	RD_SETGET_SUB2(uint32_t, geometry, aabbs, stride, aabb_stride)
+	RD_SETGET_SUB2(uint32_t, geometry, aabbs, count, aabb_count)
 
 protected:
 	static void _bind_methods() {
+		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, geometry_type);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, flags);
+
 		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, vertex_buffer);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_offset);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_stride);
@@ -773,8 +806,18 @@ protected:
 		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, index_buffer);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_offset);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_count);
+
+		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, aabb_buffer);
+		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_offset);
+		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_stride);
+		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_count);
+
+		BIND_ENUM_CONSTANT(TYPE_TRIANGLES);
+		BIND_ENUM_CONSTANT(TYPE_AABBS);
 	}
 };
+
+VARIANT_ENUM_CAST(RDAccelerationStructureGeometry::Type);
 
 class RDAccelerationStructureInstance : public RefCounted {
 	GDCLASS(RDAccelerationStructureInstance, RefCounted)

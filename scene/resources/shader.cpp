@@ -57,7 +57,9 @@ void Shader::_check_shader_rid() const {
 	MutexLock lock(shader_rid_mutex);
 	if (shader_rid.is_null() && !preprocessed_code.is_empty()) {
 		shader_rid = RenderingServer::get_singleton()->shader_create_from_code(preprocessed_code, get_path());
+		RenderingServer::get_singleton()->shader_set_code_rt(shader_rid, preprocessed_code_rt);
 		preprocessed_code = String();
+		preprocessed_code_rt = String();
 	}
 }
 
@@ -91,6 +93,7 @@ void Shader::set_code(const String &p_code) {
 
 	code = p_code;
 	preprocessed_code = p_code;
+	preprocessed_code_rt = p_code;
 
 	{
 		String path = get_path();
@@ -107,6 +110,12 @@ void Shader::set_code(const String &p_code) {
 			// This ensures previous include resources are not freed and then re-loaded during parse (which would make compiling slower)
 			include_dependencies = new_include_dependencies;
 		}
+
+		// Second pass with `RT` defined for ray-tracing consumers. Raster
+		// pass above is authoritative for include-dependency tracking.
+		ShaderPreprocessor preprocessor_rt;
+		preprocessor_rt.add_define("RT", "1");
+		preprocessor_rt.preprocess(p_code, path, preprocessed_code_rt, nullptr, nullptr, nullptr, nullptr);
 	}
 
 	// Try to get the shader type from the final, fully preprocessed shader code.
@@ -132,7 +141,9 @@ void Shader::set_code(const String &p_code) {
 
 	if (shader_rid.is_valid()) {
 		RenderingServer::get_singleton()->shader_set_code(shader_rid, preprocessed_code);
+		RenderingServer::get_singleton()->shader_set_code_rt(shader_rid, preprocessed_code_rt);
 		preprocessed_code = String();
+		preprocessed_code_rt = String();
 	}
 
 	emit_changed();

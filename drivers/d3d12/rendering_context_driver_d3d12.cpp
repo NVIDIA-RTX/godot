@@ -32,8 +32,11 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "core/string/ustring.h"
 #include "core/templates/local_vector.h"
+#include "drivers/aftermath/aftermath.h"
+#include "drivers/streamline/streamline.h"
 
 GODOT_GCC_WARNING_PUSH_AND_IGNORE("-Wnon-virtual-dtor")
 GODOT_CLANG_WARNING_PUSH_AND_IGNORE("-Wnon-virtual-dtor")
@@ -103,6 +106,11 @@ Error RenderingContextDriverD3D12::_init_device_factory() {
 	ERR_FAIL_NULL_V(lib_dcomp, ERR_CANT_CREATE);
 #endif
 
+	// Streamline doesn't currently support device factories, so fall back to default D3D12CreateDevice
+	if (Streamline::get_singleton()->get_internal_parameter(STREAMLINE_INTERNAL_PARAMETER_FUNC_D3D12GetInterface)) {
+		return OK;
+	}
+
 	// Note: symbol is not available in MinGW import library.
 	PFN_D3D12_GET_INTERFACE d3d_D3D12GetInterface = (PFN_D3D12_GET_INTERFACE)(void *)GetProcAddress(lib_d3d12, "D3D12GetInterface");
 	if (!d3d_D3D12GetInterface) {
@@ -145,6 +153,10 @@ Error RenderingContextDriverD3D12::_create_dxgi_factory() {
 	typedef HRESULT(WINAPI * PFN_DXGI_CREATE_DXGI_FACTORY2)(UINT, REFIID, void **);
 	PFN_DXGI_CREATE_DXGI_FACTORY2 dxgi_CreateDXGIFactory2 = (PFN_DXGI_CREATE_DXGI_FACTORY2)(void *)GetProcAddress(lib_dxgi, "CreateDXGIFactory2");
 	ERR_FAIL_NULL_V(dxgi_CreateDXGIFactory2, ERR_CANT_CREATE);
+
+	if (Streamline::get_singleton()->get_internal_parameter(STREAMLINE_INTERNAL_PARAMETER_FUNC_CreateDXGIFactory2)) {
+		dxgi_CreateDXGIFactory2 = (PFN_DXGI_CREATE_DXGI_FACTORY2)Streamline::get_singleton()->get_internal_parameter(STREAMLINE_INTERNAL_PARAMETER_FUNC_CreateDXGIFactory2);
+	}
 
 	HRESULT res = dxgi_CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&dxgi_factory));
 	ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
@@ -348,9 +360,15 @@ void RenderingContextDriverD3D12::surface_destroy(SurfaceID p_surface) {
 }
 
 bool RenderingContextDriverD3D12::is_debug_utils_enabled() const {
-#ifdef PIX_ENABLED
+#ifdef DEV_ENABLED
 	return true;
 #else
+	if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+		return true;
+	}
+	if (OS::get_singleton() && OS::get_singleton()->is_stdout_verbose()) {
+		return true;
+	}
 	return false;
 #endif
 }

@@ -1424,6 +1424,14 @@
 			- Vulkan: [code]VkFormat[/code].
 			- D3D12: [code]DXGI_FORMAT[/code].
 		</constant>
+		<constant name="DRIVER_RESOURCE_TEXTURE_DEVICE_MEMORY" value="13" enum="DriverResource">
+			The native handle of the data memory of the texture.
+			- Vulkan: [code]VkDeviceMemory[/code].
+		</constant>
+		<constant name="DRIVER_RESOURCE_TEXTURE_USAGE_FLAGS" value="14" enum="DriverResource">
+			The native image usage flags of the texture.
+			- Vulkan: [code]VkImageUsageFlags[/code].
+		</constant>
 		<constant name="DRIVER_RESOURCE_SAMPLER" value="8" enum="DriverResource">
 			- Vulkan: [code]VkSampler[/code].
 		</constant>
@@ -2846,6 +2854,12 @@
 		</constant>
 		<constant name="SUPPORTS_HDR_OUTPUT" value="13" enum="Features">
 			Support for high dynamic range (HDR) output.
+		</constant>
+		<constant name="SUPPORTS_SHADER_DEVICE_CLOCK" value="14" enum="Features">
+			Support for a device-wide shader clock. On Vulkan, requires [code]VK_KHR_shader_clock[/code] and its [code]shaderDeviceClock[/code] feature. Clock ticks are coherent across ray tracing calls and shader invocation reordering, but their period is implementation-dependent.
+		</constant>
+		<constant name="SUPPORTS_VERTEX_PIPELINE_STORES" value="15" enum="Features">
+			Support for storage buffer writes from vertex shaders. On Vulkan, requires the [code]vertexPipelineStoresAndAtomics[/code] feature.
 		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.

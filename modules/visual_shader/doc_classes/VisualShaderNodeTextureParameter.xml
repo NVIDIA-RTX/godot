@@ -9,6 +9,9 @@
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="alpha_hint" type="bool" setter="set_alpha_hint" getter="get_alpha_hint" default="false">
+			If [code]true[/code], adds [code]hint_alpha[/code] to the uniform declaration. This marks the texture's alpha channel as the source of opacity for path tracing ray query alpha tests (simple shadows and Opacity Micromap baking). Can be combined with any [member texture_type], for example [constant TYPE_COLOR] for a color-plus-alpha albedo texture or [constant TYPE_DATA] for a dedicated grayscale alpha mask.
+		</member>
 		<member name="color_default" type="int" setter="set_color_default" getter="get_color_default" enum="VisualShaderNodeTextureParameter.ColorDefault" default="0">
 			Sets the default color if no texture is assigned to the uniform.
 		</member>

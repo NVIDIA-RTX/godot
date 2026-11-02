@@ -282,8 +282,16 @@ bool Engine::is_validation_layers_enabled() const {
 	return use_validation_layers;
 }
 
+bool Engine::is_raytracing_validation_enabled() const {
+	return use_raytracing_validation;
+}
+
 bool Engine::is_generate_spirv_debug_info_enabled() const {
 	return generate_spirv_debug_info;
+}
+
+bool Engine::is_gpu_markers_enabled() const {
+	return use_gpu_markers;
 }
 
 bool Engine::is_extra_gpu_memory_tracking_enabled() const {

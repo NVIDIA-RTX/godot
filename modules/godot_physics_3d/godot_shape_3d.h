@@ -31,7 +31,9 @@
 #pragma once
 
 #include "core/math/geometry_3d.h"
+#include "core/os/mutex.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/safe_refcount.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
 class GodotShape3D;
@@ -301,7 +303,7 @@ public:
 	GodotConvexPolygonShape3D();
 };
 
-struct _Volume_BVH;
+struct _Volume_BVH_Element;
 struct GodotFaceShape3D;
 
 struct GodotConcavePolygonShape3D : public GodotConcaveShape3D {
@@ -353,10 +355,23 @@ struct GodotConcavePolygonShape3D : public GodotConcaveShape3D {
 
 	bool backface_collision = false;
 
+	static constexpr int64_t BVH_BUILD_TASK_NONE = -1;
+	mutable SafeNumeric<int64_t> bvh_build_task{ BVH_BUILD_TASK_NONE };
+	mutable Mutex bvh_build_mutex;
+
 	void _cull_segment(int p_idx, _SegmentCullParams *p_params) const;
 	bool _cull(int p_idx, _CullParams *p_params) const;
 
-	void _fill_bvh(_Volume_BVH *p_bvh_tree, BVH *p_bvh_array, int &p_idx);
+	int _build_bvh_recursive(_Volume_BVH_Element *p_elements, int p_size, BVH *p_bvh_array, int &p_next_idx);
+	void _build_bvh();
+	static void _bvh_build_thread_func(void *p_self);
+	void _wait_for_bvh_build() const;
+
+	_FORCE_INLINE_ void _ensure_bvh_built() const {
+		if (unlikely(bvh_build_task.get() != BVH_BUILD_TASK_NONE)) {
+			_wait_for_bvh_build();
+		}
+	}
 
 	void _setup(const Vector<Vector3> &p_faces, bool p_backface_collision);
 
@@ -380,6 +395,7 @@ public:
 	virtual Variant get_data() const override;
 
 	GodotConcavePolygonShape3D();
+	~GodotConcavePolygonShape3D();
 };
 
 struct GodotHeightMapShape3D : public GodotConcaveShape3D {

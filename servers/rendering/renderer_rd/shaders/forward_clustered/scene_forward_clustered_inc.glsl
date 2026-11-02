@@ -146,6 +146,16 @@ bool sc_cluster_has_area_light() {
 	return ((sc_packed_1() >> 5) & 1U) != 0;
 }
 
+// Material debug view (Environment.pathtracing_debug_mode value), 0 when disabled.
+uint sc_material_debug_mode() {
+	return (sc_packed_1() >> 6) & 31U;
+}
+
+// VOLUMETRIC_FOG_SAMPLING_* value.
+uint sc_volumetric_fog_sampling() {
+	return (sc_packed_1() >> 11) & 3U;
+}
+
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;
@@ -309,6 +319,8 @@ layout(set = 0, binding = 18) uniform sampler2D ltc_lut1;
 layout(set = 0, binding = 19) uniform sampler2D ltc_lut2;
 
 layout(set = 0, binding = 20) uniform texture2D area_light_atlas;
+
+layout(set = 0, binding = 21) uniform texture2DArray volumetric_fog_noise;
 /* Set 1: Render Pass (changes per render pass) */
 
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {

@@ -60,6 +60,7 @@ private:
 	bool include_navigational = false;
 	bool include_hidden = false;
 
+	String _last_entry;
 	bool _is_temp = false;
 	bool _temp_keep_after_free = false;
 	String _temp_path;
@@ -81,11 +82,14 @@ protected:
 		return memnew(T);
 	}
 
+	virtual String _get_next_entry() = 0; // Platform implementation of get_next().
+
 public:
 	virtual Error list_dir_begin() = 0; ///< This starts dir listing
-	virtual String get_next() = 0;
+	String get_next();
 	virtual bool current_is_dir() const = 0;
 	virtual bool current_is_hidden() const = 0;
+	virtual uint64_t current_modified_time() const; // Modified time of the entry last returned by get_next(); platforms may answer from enumeration state (e.g win32)
 
 	virtual void list_dir_end() = 0; ///<
 

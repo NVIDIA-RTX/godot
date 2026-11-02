@@ -4,38 +4,64 @@
 		Acceleration structure geometry (used by [RenderingDevice]).
 	</brief_description>
 	<description>
-		[RDAccelerationStructureGeometry] describes a set of triangles used as raytracing geometry in the [method RenderingDevice.blas_create] method.
-		The geometry is always in triangle list form, either indexed or non-indexed. Triangle strips are not supported.
+		[RDAccelerationStructureGeometry] describes the geometry data used to build a Bottom-Level Acceleration Structure (BLAS) in [method RenderingDevice.blas_create].
+		Two geometry types are supported, selected via [member geometry_type]:
+		- [constant TYPE_TRIANGLES]: triangle mesh geometry defined by [member vertex_buffer] and an optional [member index_buffer].
+		- [constant TYPE_AABBS]: procedural axis-aligned bounding box geometry defined by [member aabb_buffer], used for custom intersection shaders.
+		Only the members relevant to the active [member geometry_type] are used when building the acceleration structure.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="aabb_buffer" type="RID" setter="set_aabb_buffer" getter="get_aabb_buffer" default="RID()">
+			Buffer containing axis-aligned bounding boxes (AABBs). Each AABB is stored as two [Vector3] values: the minimum and maximum corners, packed as [code skip-lint]float[/code] values. Active when [member geometry_type] is [constant TYPE_AABBS].
+		</member>
+		<member name="aabb_count" type="int" setter="set_aabb_count" getter="get_aabb_count" default="0">
+			Number of AABBs in [member aabb_buffer]. Active when [member geometry_type] is [constant TYPE_AABBS].
+		</member>
+		<member name="aabb_offset" type="int" setter="set_aabb_offset" getter="get_aabb_offset" default="0">
+			Byte offset of the first AABB in [member aabb_buffer]. Active when [member geometry_type] is [constant TYPE_AABBS].
+		</member>
+		<member name="aabb_stride" type="int" setter="set_aabb_stride" getter="get_aabb_stride" default="24">
+			Number of bytes between each AABB entry in [member aabb_buffer]. Active when [member geometry_type] is [constant TYPE_AABBS].
+		</member>
 		<member name="flags" type="int" setter="set_flags" getter="get_flags" enum="RenderingDevice.AccelerationStructureGeometryFlagBits" is_bitfield="true" default="0">
 			Flags for the geometry.
 		</member>
+		<member name="geometry_type" type="int" setter="set_geometry_type" getter="get_geometry_type" enum="RDAccelerationStructureGeometry.Type" default="0">
+			The type of geometry described by this object. Set to [constant TYPE_TRIANGLES] for triangle mesh geometry or [constant TYPE_AABBS] for procedural AABB geometry. Only the members relevant to the active type are used when building the acceleration structure. See [enum Type].
+		</member>
 		<member name="index_buffer" type="RID" setter="set_index_buffer" getter="get_index_buffer" default="RID()">
-			Buffer containing vertex indices. If [code]null[/code], triangles are non-indexed.
+			Buffer containing vertex indices. If [code]null[/code], triangles are non-indexed. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="index_count" type="int" setter="set_index_count" getter="get_index_count" default="0">
-			Number of indices used by this geometry in [member index_buffer].
+			Number of indices used by this geometry in [member index_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="index_offset" type="int" setter="set_index_offset" getter="get_index_offset" default="0">
-			Byte offset of the first index in [member index_buffer].
+			Byte offset of the first index in [member index_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="vertex_buffer" type="RID" setter="set_vertex_buffer" getter="get_vertex_buffer" default="RID()">
-			Buffer containing vertices.
+			Buffer containing vertex positions. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="vertex_count" type="int" setter="set_vertex_count" getter="get_vertex_count" default="0">
-			Number of vertices used by this geometry in [member vertex_buffer].
+			Number of vertices used by this geometry in [member vertex_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="vertex_format" type="int" setter="set_vertex_format" getter="get_vertex_format" enum="RenderingDevice.DataFormat" default="232">
-			Format of the vertices in [member vertex_buffer].
+			Format of the vertices in [member vertex_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="vertex_offset" type="int" setter="set_vertex_offset" getter="get_vertex_offset" default="0">
-			Byte offset of the first vertex in [member vertex_buffer].
+			Byte offset of the first vertex in [member vertex_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 		<member name="vertex_stride" type="int" setter="set_vertex_stride" getter="get_vertex_stride" default="0">
-			Number of bytes between each vertex in [member vertex_buffer].
+			Number of bytes between each vertex in [member vertex_buffer]. Active when [member geometry_type] is [constant TYPE_TRIANGLES].
 		</member>
 	</members>
+	<constants>
+		<constant name="TYPE_TRIANGLES" value="0" enum="Type">
+			The geometry is defined as a triangle mesh. Use the [code]vertex_*[/code] and [code]index_*[/code] members to describe the mesh data.
+		</constant>
+		<constant name="TYPE_AABBS" value="1" enum="Type">
+			The geometry is defined as a set of axis-aligned bounding boxes (AABBs). Use the [code]aabb_*[/code] members to describe the AABB data. Requires a custom intersection shader in the raytracing pipeline.
+		</constant>
+	</constants>
 </class>

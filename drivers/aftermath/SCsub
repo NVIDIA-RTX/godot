@@ -1,0 +1,26 @@
+#!/usr/bin/env python
+
+Import("env")
+
+thirdparty_vulkan_dir = "#thirdparty/vulkan"
+thirdparty_aftermath_dir = "#thirdparty/aftermath"
+
+env_aftermath = env.Clone()
+
+driver_obj = []
+
+if env["use_aftermath"]:
+    env_aftermath.Prepend(CPPPATH=[thirdparty_aftermath_dir + "/include"])
+
+if env["vulkan"]:
+    env_aftermath.Prepend(CPPPATH=[thirdparty_vulkan_dir, thirdparty_vulkan_dir + "/include"])
+    if env["use_aftermath"]:
+        env_aftermath.Prepend(CPPDEFINES=["AFTERMATH_ENABLED_VULKAN=1"])
+
+if env["d3d12"]:
+    env_aftermath.Prepend(CPPPATH=["#thirdparty/directx_headers/include/directx"])
+    if env["use_aftermath"]:
+        env_aftermath.Prepend(CPPDEFINES=["AFTERMATH_ENABLED_D3D12=1"])
+
+env_aftermath.add_source_files(driver_obj, "*.cpp")
+env.drivers_sources += driver_obj

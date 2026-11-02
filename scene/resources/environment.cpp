@@ -39,6 +39,9 @@
 #include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
 
+static_assert(int(Environment::RT_DEBUG_TIMING_HEATMAP) == RS::PT_DEBUG_TIMING_HEATMAP);
+static_assert(int(Environment::RT_DEBUG_DYNAMIC_GEOMETRY) == RS::PT_DEBUG_DYNAMIC_GEOMETRY);
+
 RID Environment::get_rid() const {
 	return environment;
 }
@@ -601,6 +604,73 @@ void Environment::_update_sdfgi() {
 			sdfgi_energy,
 			sdfgi_normal_bias,
 			sdfgi_probe_bias);
+}
+
+// Pathtracing
+
+void Environment::set_pathtracing_enabled(bool p_enabled) {
+	pathtracing_enabled = p_enabled;
+	_update_pathtracing();
+}
+
+bool Environment::is_pathtracing_enabled() const {
+	return pathtracing_enabled;
+}
+
+void Environment::set_pathtracing_debug_mode(PathtracingDebugMode p_mode) {
+	pathtracing_debug_mode = p_mode;
+	_update_pathtracing();
+}
+
+Environment::PathtracingDebugMode Environment::get_pathtracing_debug_mode() const {
+	return pathtracing_debug_mode;
+}
+
+void Environment::set_pathtracing_samples_per_pixel(int p_samples) {
+	pathtracing_samples_per_pixel = MAX(1, p_samples);
+	_update_pathtracing();
+}
+
+int Environment::get_pathtracing_samples_per_pixel() const {
+	return pathtracing_samples_per_pixel;
+}
+
+void Environment::set_pathtracing_max_bounces(int p_bounces) {
+	pathtracing_max_bounces = CLAMP(p_bounces, 0, 8);
+	_update_pathtracing();
+}
+
+int Environment::get_pathtracing_max_bounces() const {
+	return pathtracing_max_bounces;
+}
+
+void Environment::set_pathtracing_denoiser(RSE::PathtracingDenoiser p_denoiser) {
+	pathtracing_denoiser = p_denoiser;
+	_update_pathtracing();
+}
+
+RSE::PathtracingDenoiser Environment::get_pathtracing_denoiser() const {
+	return pathtracing_denoiser;
+}
+
+void Environment::set_pathtracing_sky_shader_enabled(bool p_enabled) {
+	pathtracing_sky_shader_enabled = p_enabled;
+	_update_pathtracing();
+}
+
+bool Environment::is_pathtracing_sky_shader_enabled() const {
+	return pathtracing_sky_shader_enabled;
+}
+
+void Environment::_update_pathtracing() {
+	RS::get_singleton()->environment_set_pathtracing(
+			environment,
+			pathtracing_enabled,
+			(int)pathtracing_debug_mode,
+			pathtracing_samples_per_pixel,
+			pathtracing_max_bounces,
+			pathtracing_denoiser,
+			pathtracing_sky_shader_enabled);
 }
 
 // Glow
@@ -1430,6 +1500,30 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sdfgi_normal_bias"), "set_sdfgi_normal_bias", "get_sdfgi_normal_bias");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sdfgi_probe_bias"), "set_sdfgi_probe_bias", "get_sdfgi_probe_bias");
 
+	// Pathtracing
+
+	ClassDB::bind_method(D_METHOD("set_pathtracing_enabled", "enabled"), &Environment::set_pathtracing_enabled);
+	ClassDB::bind_method(D_METHOD("is_pathtracing_enabled"), &Environment::is_pathtracing_enabled);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_debug_mode", "mode"), &Environment::set_pathtracing_debug_mode);
+	ClassDB::bind_method(D_METHOD("get_pathtracing_debug_mode"), &Environment::get_pathtracing_debug_mode);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_samples_per_pixel", "samples"), &Environment::set_pathtracing_samples_per_pixel);
+	ClassDB::bind_method(D_METHOD("get_pathtracing_samples_per_pixel"), &Environment::get_pathtracing_samples_per_pixel);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_max_bounces", "bounces"), &Environment::set_pathtracing_max_bounces);
+	ClassDB::bind_method(D_METHOD("get_pathtracing_max_bounces"), &Environment::get_pathtracing_max_bounces);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_denoiser", "denoiser"), &Environment::set_pathtracing_denoiser);
+	ClassDB::bind_method(D_METHOD("get_pathtracing_denoiser"), &Environment::get_pathtracing_denoiser);
+	ClassDB::bind_method(D_METHOD("set_pathtracing_sky_shader_enabled", "enabled"), &Environment::set_pathtracing_sky_shader_enabled);
+	ClassDB::bind_method(D_METHOD("is_pathtracing_sky_shader_enabled"), &Environment::is_pathtracing_sky_shader_enabled);
+	GLOBAL_DEF("rendering/pathtracing/use_simple_shadows", false);
+
+	ADD_GROUP("Pathtracing", "pathtracing_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_pathtracing_enabled", "is_pathtracing_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_debug_mode", PROPERTY_HINT_ENUM, "Disabled,Mirror Reflection,Geometry Normals,Final Normals,Normal Map,Tangent,Bitangent,UV,Albedo,ORM,Diffuse Albedo,Specular Albedo,Normal+Roughness,Specular Hit Dist,Metalness,Roughness,View Normals,Diffuse+Specular,Fresnel F0,Front/Back Face,Depth,Emissive,BRDF Rejection,Transparency Layers,Timing Heatmap,Volumetric Fog,Volumetric Fog Transmittance,Directional Shadow Blocker,Decal Overlap,Dynamic Geometry"), "set_pathtracing_debug_mode", "get_pathtracing_debug_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_samples_per_pixel", PROPERTY_HINT_RANGE, "1,16,1"), "set_pathtracing_samples_per_pixel", "get_pathtracing_samples_per_pixel");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_max_bounces", PROPERTY_HINT_RANGE, "0,8,1"), "set_pathtracing_max_bounces", "get_pathtracing_max_bounces");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_denoiser", PROPERTY_HINT_ENUM, "None,DLSS Ray Reconstruction"), "set_pathtracing_denoiser", "get_pathtracing_denoiser");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_sky_shader_enabled"), "set_pathtracing_sky_shader_enabled", "is_pathtracing_sky_shader_enabled");
+
 	// Glow
 
 	ClassDB::bind_method(D_METHOD("set_glow_enabled", "enabled"), &Environment::set_glow_enabled);
@@ -1626,6 +1720,37 @@ void Environment::_bind_methods() {
 	BIND_ENUM_CONSTANT(GLOW_BLEND_MODE_REPLACE);
 	BIND_ENUM_CONSTANT(GLOW_BLEND_MODE_MIX);
 
+	BIND_ENUM_CONSTANT(RT_DEBUG_DISABLED);
+	BIND_ENUM_CONSTANT(RT_DEBUG_MIRROR_REFLECTION);
+	BIND_ENUM_CONSTANT(RT_DEBUG_GEOMETRY_NORMALS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_FINAL_NORMALS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_NORMAL_MAP);
+	BIND_ENUM_CONSTANT(RT_DEBUG_TANGENT);
+	BIND_ENUM_CONSTANT(RT_DEBUG_BITANGENT);
+	BIND_ENUM_CONSTANT(RT_DEBUG_UV);
+	BIND_ENUM_CONSTANT(RT_DEBUG_ALBEDO);
+	BIND_ENUM_CONSTANT(RT_DEBUG_ORM);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DIFFUSE_ALBEDO);
+	BIND_ENUM_CONSTANT(RT_DEBUG_SPECULAR_ALBEDO);
+	BIND_ENUM_CONSTANT(RT_DEBUG_NORMAL_ROUGHNESS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_SPECULAR_HIT_DISTANCE);
+	BIND_ENUM_CONSTANT(RT_DEBUG_METALNESS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_ROUGHNESS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_VIEW_NORMALS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DIFFUSE_SPECULAR_SPLIT);
+	BIND_ENUM_CONSTANT(RT_DEBUG_FRESNEL_F0);
+	BIND_ENUM_CONSTANT(RT_DEBUG_FRONT_BACK_FACE);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DEPTH);
+	BIND_ENUM_CONSTANT(RT_DEBUG_EMISSIVE);
+	BIND_ENUM_CONSTANT(RT_DEBUG_BRDF_REJECTION);
+	BIND_ENUM_CONSTANT(RT_DEBUG_TRANSPARENCY_LAYERS);
+	BIND_ENUM_CONSTANT(RT_DEBUG_TIMING_HEATMAP);
+	BIND_ENUM_CONSTANT(RT_DEBUG_VOLUMETRIC_FOG);
+	BIND_ENUM_CONSTANT(RT_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DIRECTIONAL_SHADOW_BLOCKER);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DECAL_OVERLAP);
+	BIND_ENUM_CONSTANT(RT_DEBUG_DYNAMIC_GEOMETRY);
+
 	BIND_ENUM_CONSTANT(FOG_MODE_EXPONENTIAL);
 	BIND_ENUM_CONSTANT(FOG_MODE_DEPTH);
 
@@ -1654,6 +1779,7 @@ Environment::Environment() {
 	_update_ssao();
 	_update_ssil();
 	_update_sdfgi();
+	_update_pathtracing();
 	_update_glow();
 	_update_fog();
 	_update_adjustment();

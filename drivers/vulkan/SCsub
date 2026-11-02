@@ -8,6 +8,7 @@ thirdparty_dir = "#thirdparty/vulkan"
 thirdparty_volk_dir = "#thirdparty/volk"
 thirdparty_spirv_headers_dir = "#thirdparty/spirv-headers"
 thirdparty_respirv_dir = "#thirdparty/re-spirv"
+thirdparty_streamline_dir = "#thirdparty/streamline"
 
 # Use bundled Vulkan headers
 env.Prepend(CPPPATH=[thirdparty_dir, thirdparty_dir + "/include"])

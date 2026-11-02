@@ -66,6 +66,12 @@
 			The material override for the whole geometry.
 			If a material is assigned to this property, it will be used instead of any material set in any material slot of the mesh.
 		</member>
+		<member name="rt_blas_update" type="int" setter="set_rt_blas_update" getter="get_rt_blas_update" enum="GeometryInstance3D.RTBlasUpdate" default="0">
+			How the path tracer updates the bottom-level acceleration structure of this instance's dynamic geometry (vertex-captured surfaces, camera-facing MultiMeshes and GPU particles) after its first build. [constant RT_BLAS_UPDATE_AUTO] follows the shader's [code]rt_blas[/code] render mode. Changes of structure, such as a new instance count, always rebuild.
+		</member>
+		<member name="shadow_renderers" type="int" setter="set_shadow_renderers" getter="get_shadow_renderers" enum="RenderingServer.ShadowRenderer" is_bitfield="true" default="3">
+			The renderers that draw this geometry's shadow while [member cast_shadow] is not [constant SHADOW_CASTING_SETTING_OFF]. Unticking [b]Rasterizer[/b] keeps the geometry out of shadow maps. Unticking [b]Path Tracer[/b] keeps it out of the path tracer's shadow rays. [constant SHADOW_CASTING_SETTING_SHADOWS_ONLY] still hides the geometry from the camera in both renderers.
+		</member>
 		<member name="transparency" type="float" setter="set_transparency" getter="get_transparency" default="0.0" keywords="opacity">
 			The transparency applied to the whole geometry (as a multiplier of the materials' existing transparency). [code]0.0[/code] is fully opaque, while [code]1.0[/code] is fully transparent. Values greater than [code]0.0[/code] (exclusive) will force the geometry's materials to go through the transparent pipeline, which is slower to render and can exhibit rendering issues due to incorrect transparency sorting. However, unlike using a transparent material, setting [member transparency] to a value greater than [code]0.0[/code] (exclusive) will [i]not[/i] disable shadow rendering.
 			In spatial shaders, [code]1.0 - transparency[/code] is set as the default value of the [code]ALPHA[/code] built-in.
@@ -105,6 +111,18 @@
 		<constant name="SHADOW_CASTING_SETTING_SHADOWS_ONLY" value="3" enum="ShadowCastingSetting">
 			Will only show the shadows casted from this object.
 			In other words, the actual mesh will not be visible, only the shadows casted from the mesh will be.
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_SELF_SHADOWING" value="4" enum="ShadowCastingSetting">
+			The path tracer casts this object's shadows only onto objects that also use [constant SHADOW_CASTING_SETTING_SELF_SHADOWING], such as the parts of a first-person weapon and arms. The object still receives shadows from everything, and still appears in reflections and indirect lighting. The rasterizer casts no shadows from it, like [constant SHADOW_CASTING_SETTING_OFF].
+		</constant>
+		<constant name="RT_BLAS_UPDATE_AUTO" value="0" enum="RTBlasUpdate">
+			Follows the shader's [code]rt_blas[/code] render mode; refits with a periodic rebuild (see [member ProjectSettings.rendering/pathtracing/dynamic_rebuild_interval_frames]) when the shader doesn't set one.
+		</constant>
+		<constant name="RT_BLAS_UPDATE_REFIT" value="1" enum="RTBlasUpdate">
+			Only refits, never rebuilds periodically. Cheapest; suited to geometry that sways around its rest pose, such as foliage in the wind.
+		</constant>
+		<constant name="RT_BLAS_UPDATE_REBUILD" value="2" enum="RTBlasUpdate">
+			Only rebuilds, never refits. Suited to geometry whose primitives move far apart, such as particles, where refits degrade tracing performance quickly. Updates are held while the [member ProjectSettings.rendering/pathtracing/dynamic_blas_build_triangle_budget] is spent.
 		</constant>
 		<constant name="GI_MODE_DISABLED" value="0" enum="GIMode">
 			Disabled global illumination mode. Use for dynamic objects that do not contribute to global illumination (such as characters). When using [VoxelGI] and SDFGI, the geometry will [i]receive[/i] indirect lighting and reflections but the geometry will not be considered in GI baking.

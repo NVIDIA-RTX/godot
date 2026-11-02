@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/templates/local_vector.h"
 #include "core/templates/paged_array.h"
 #include "core/templates/rid_owner.h"
 #include "servers/rendering/renderer_rd/shaders/canvas_sdf.glsl.gen.h"
@@ -98,6 +99,34 @@ public:
 	};
 
 	typedef void (*InvalidationCallback)(bool p_deleted, void *p_userdata);
+
+	struct DecalSortInfo {
+		RID instance;
+		Vector3 position;
+		float radius = 0.0;
+		float distance = 0.0;
+		float sort_key = 0.0; // Lower is drawn on top.
+		float fade = 1.0;
+		uint64_t version = 0; // Changes when decal_instance_get_world_info() would.
+
+		bool operator<(const DecalSortInfo &p_other) const { return sort_key < p_other.sort_key; }
+	};
+
+	struct DecalWorldInfo {
+		// Maps the unit box (x/z in [0, 1], y in [-1, 1]) to world space.
+		Transform3D box_transform;
+		Transform3D world_to_box;
+		Basis normal_basis;
+		Vector3 normal;
+		Color modulate; // Linear.
+		float emission_energy = 1.0;
+		float albedo_mix = 1.0;
+		float upper_fade = 0.3;
+		float lower_fade = 0.3;
+		float normal_fade = 0.0;
+		uint32_t cull_mask = 0;
+		RID textures[RSE::DECAL_TEXTURE_MAX];
+	};
 
 private:
 	friend class LightStorage;
@@ -316,6 +345,9 @@ private:
 
 		HashMap<RID, Texture> textures;
 		bool dirty = true;
+		bool resident = false; // False: textures are tracked but the atlas is kept at minimum size.
+		bool used = true; // Set by rect lookups, consumed by update_decal_atlas().
+		uint64_t last_used_usec = 0;
 		int mipmaps = 5;
 
 		RID texture;
@@ -343,6 +375,7 @@ private:
 		float distance_fade_begin = 40.0;
 		float distance_fade_length = 10.0;
 		float normal_fade = 0.0;
+		uint32_t version = 1; // Bumped by every setter, see DecalSortInfo::version.
 
 		Dependency dependency;
 	};
@@ -357,6 +390,7 @@ private:
 		float sorting_offset = 0.0;
 		uint32_t cull_mask = 0;
 		RendererRD::ForwardID forward_id = -1;
+		uint32_t version = 1; // Bumped when the transform changes, see DecalSortInfo::version.
 	};
 
 	mutable RID_Owner<DecalInstance> decal_instance_owner;
@@ -381,19 +415,13 @@ private:
 		float normal_fade;
 	};
 
-	struct DecalInstanceSort {
-		float depth;
-		DecalInstance *decal_instance;
-		Decal *decal;
-		bool operator<(const DecalInstanceSort &p_sort) const {
-			return depth < p_sort.depth;
-		}
-	};
+	// Writes the GPU data of a decal. p_space_inverse maps world space into the shading space (camera inverse).
+	void _decal_instance_fill_data(const DecalSortInfo &p_info, const Transform3D &p_space_inverse, DecalData &r_data);
 
 	uint32_t max_decals = 0;
 	uint32_t decal_count = 0;
 	DecalData *decals = nullptr;
-	DecalInstanceSort *decal_sort = nullptr;
+	LocalVector<DecalSortInfo> decal_sort;
 	RID decal_buffer;
 
 	/* RENDER TARGET API */
@@ -715,6 +743,7 @@ public:
 			return Rect2();
 		}
 
+		decal_atlas.used = true;
 		return t->uv_rect;
 	}
 
@@ -842,6 +871,9 @@ public:
 	void set_max_decals(const uint32_t p_max_decals);
 	RID get_decal_buffer() { return decal_buffer; }
 	void update_decal_buffer(const PagedArray<RID> &p_decals, const Transform3D &p_camera_xform);
+
+	bool decal_instance_get_sort_info(RID p_decal_instance, const Vector3 &p_camera_pos, DecalSortInfo &r_info) const;
+	bool decal_instance_get_world_info(RID p_decal_instance, DecalWorldInfo &r_info) const;
 
 	/* RENDER TARGET API */
 

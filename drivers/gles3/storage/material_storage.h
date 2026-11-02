@@ -336,6 +336,7 @@ struct SceneShaderData : public ShaderData {
 	bool uses_fragment_time;
 	bool writes_modelview_or_projection;
 	bool uses_world_coordinates;
+	bool uses_billboard_transform; // Any billboard* or fixed_size render mode.
 	bool uses_tangent;
 	bool writes_tangent;
 	bool uses_color;

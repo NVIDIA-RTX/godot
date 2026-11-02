@@ -34,6 +34,7 @@
 #include "servers/rendering/renderer_rd/effects/bokeh_dof.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/effects/debug_effects.h"
+#include "servers/rendering/renderer_rd/effects/depth_reconstruct.h"
 #include "servers/rendering/renderer_rd/effects/fsr.h"
 #include "servers/rendering/renderer_rd/effects/luminance.h"
 #include "servers/rendering/renderer_rd/effects/resolve.h"
@@ -62,6 +63,7 @@ protected:
 	RendererRD::ForwardIDStorage *forward_id_storage = nullptr;
 	RendererRD::BokehDOF *bokeh_dof = nullptr;
 	RendererRD::CopyEffects *copy_effects = nullptr;
+	RendererRD::DepthReconstruct *depth_reconstruct = nullptr;
 	RendererRD::DebugEffects *debug_effects = nullptr;
 	RendererRD::Luminance *luminance = nullptr;
 	RendererRD::SMAA *smaa = nullptr;
@@ -164,6 +166,11 @@ private:
 
 	/* Fog */
 	bool fog_use_legacy_blending = false;
+	RSE::EnvironmentVolumetricFogSampling volumetric_fog_sampling = RSE::ENV_VOLUMETRIC_FOG_SAMPLING_TRILINEAR;
+	int volumetric_fog_sampling_setting = -1; // Last applied project setting value, -1 before the first read.
+	void _sync_volumetric_fog_sampling_setting();
+	RID volumetric_fog_noise_texture;
+	void _create_volumetric_fog_noise_texture();
 
 	/* Volumetric Fog */
 
@@ -204,6 +211,7 @@ public:
 
 	virtual void environment_set_volumetric_fog_volume_size(int p_size, int p_depth) override;
 	virtual void environment_set_volumetric_fog_filter_active(bool p_enable) override;
+	virtual void environment_set_volumetric_fog_sampling(RSE::EnvironmentVolumetricFogSampling p_sampling) override;
 
 	virtual void environment_set_sdfgi_ray_count(RSE::EnvironmentSDFGIRayCount p_ray_count) override;
 	virtual void environment_set_sdfgi_frames_to_converge(RSE::EnvironmentSDFGIFramesToConverge p_frames) override;
@@ -249,7 +257,7 @@ public:
 
 	virtual void base_uniforms_changed() = 0;
 
-	virtual void render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data = nullptr, RenderingServerTypes::RenderInfo *r_render_info = nullptr) override;
+	virtual void render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data = nullptr, RenderingServerTypes::RenderInfo *r_render_info = nullptr, const RTCullData *p_rt_cull = nullptr, RID p_viewport = RID()) override;
 
 	virtual void render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) override;
 
@@ -323,6 +331,8 @@ public:
 	_FORCE_INLINE_ RSE::DecalFilter decals_get_filter() const {
 		return decals_filter;
 	}
+	RID decals_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const;
+	RID light_projectors_get_sampler(const RendererRD::MaterialStorage::Samplers &p_samplers) const;
 
 	_FORCE_INLINE_ bool material_use_debanding_get() const {
 		return material_use_debanding;
@@ -332,6 +342,14 @@ public:
 		return fog_use_legacy_blending;
 	}
 
+	/// Froxel lookup filter, see environment_set_volumetric_fog_sampling().
+	_FORCE_INLINE_ RSE::EnvironmentVolumetricFogSampling volumetric_fog_sampling_get() const {
+		return volumetric_fog_sampling;
+	}
+	/// FAST noise layers (RG8 2D array) read by RSE::ENV_VOLUMETRIC_FOG_SAMPLING_FAST_NOISE.
+	_FORCE_INLINE_ RID volumetric_fog_noise_get_texture() const {
+		return volumetric_fog_noise_texture;
+	}
 	int get_roughness_layers() const;
 	bool is_using_radiance_octmap_array() const;
 
@@ -350,6 +368,8 @@ public:
 	virtual void set_time(double p_time, double p_step) override;
 
 	virtual void sdfgi_set_debug_probe_select(const Vector3 &p_position, const Vector3 &p_dir) override;
+
+	virtual BitField<RSE::RenderingNotReadyReason> get_not_ready_reasons() override;
 
 	virtual bool is_vrs_supported() const;
 	virtual bool is_dynamic_gi_supported() const;

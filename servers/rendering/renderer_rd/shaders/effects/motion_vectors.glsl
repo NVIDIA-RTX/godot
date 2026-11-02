@@ -24,6 +24,7 @@ layout(location = 0) in vec2 uv_interp;
 
 layout(set = 0, binding = 0) uniform sampler2D source_velocity;
 layout(set = 0, binding = 1) uniform sampler2D source_depth;
+layout(set = 0, binding = 2) uniform sampler2D reference_velocity;
 
 layout(location = 0) out vec4 frag_color;
 
@@ -31,7 +32,7 @@ layout(push_constant, std430) uniform Params {
 	highp mat4 reprojection_matrix;
 	vec2 resolution;
 	uint force_derive_from_depth;
-	uint pad;
+	float reference_length; // 0 = no reference line.
 }
 params;
 
@@ -92,6 +93,16 @@ void main() {
 	if (derive_velocity) {
 		color = vec3(1.0f, 1.0f, 1.0f) - color;
 		alpha *= 0.5f;
+	}
+
+	// Reference vector: shorter and half as thick, drawn over the main line.
+	if (params.reference_length > 0.0f) {
+		vec2 reference_delta_uv = textureLod(reference_velocity, cell_pos_uv, 0.0f).xy * params.reference_length;
+		if (length(reference_delta_uv) > epsilon) {
+			float reference_alpha = clamp(1.0f - 2.0f * line_segment(uv_interp, cell_pos_uv, cell_pos_uv + reference_delta_uv), 0.0f, 1.0f);
+			color = mix(color, vec3(0.1f, 0.8f, 1.0f), reference_alpha);
+			alpha = max(clamp(alpha, 0.0f, 1.0f), reference_alpha);
+		}
 	}
 
 	frag_color = vec4(color, alpha);

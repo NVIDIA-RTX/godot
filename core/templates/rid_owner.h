@@ -299,17 +299,21 @@ public:
 		}
 	}
 
+	// Lock-free like get_or_null(): a thread-safe allocator never moves its chunk table.
 	_FORCE_INLINE_ bool owns(const RID &p_rid) const {
 		if constexpr (THREAD_SAFE) {
-			mutex.lock();
+			SYNC_ACQUIRE;
 		}
 
 		uint64_t id = p_rid.get_id();
 		uint32_t idx = uint32_t(id & 0xFFFFFFFF);
-		if (unlikely(idx >= max_alloc)) {
-			if constexpr (THREAD_SAFE) {
-				mutex.unlock();
-			}
+		uint32_t ma;
+		if constexpr (THREAD_SAFE) { // Read atomically to avoid data race with the store in _allocate_rid().
+			ma = ((const std::atomic<uint32_t> *)&max_alloc)->load(std::memory_order_relaxed);
+		} else {
+			ma = max_alloc;
+		}
+		if (unlikely(idx >= ma)) {
 			return false;
 		}
 
@@ -318,10 +322,19 @@ public:
 
 		uint32_t validator = uint32_t(id >> 32);
 
-		bool owned = (chunks[idx_chunk][idx_element].validator & 0x7FFFFFFF) == validator;
+		const Chunk &c = chunks[idx_chunk][idx_element];
+		if constexpr (THREAD_SAFE) {
+#ifdef TSAN_ENABLED
+			__tsan_acquire(const_cast<uint32_t *>(&c.validator));
+#endif
+		}
+
+		bool owned = (c.validator & 0x7FFFFFFF) == validator;
 
 		if constexpr (THREAD_SAFE) {
-			mutex.unlock();
+#ifdef TSAN_ENABLED
+			__tsan_release(const_cast<uint32_t *>(&c.validator));
+#endif
 		}
 
 		return owned;

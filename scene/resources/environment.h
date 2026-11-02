@@ -32,6 +32,7 @@
 
 #include "core/io/resource.h"
 #include "scene/resources/texture.h"
+#include "servers/rendering/rendering_server_enums.h"
 
 class Sky;
 
@@ -74,6 +75,40 @@ public:
 		SDFGI_Y_SCALE_50_PERCENT,
 		SDFGI_Y_SCALE_75_PERCENT,
 		SDFGI_Y_SCALE_100_PERCENT,
+	};
+
+	enum PathtracingDebugMode {
+		RT_DEBUG_DISABLED,
+		RT_DEBUG_MIRROR_REFLECTION,
+		RT_DEBUG_GEOMETRY_NORMALS,
+		RT_DEBUG_FINAL_NORMALS,
+		RT_DEBUG_NORMAL_MAP,
+		RT_DEBUG_TANGENT,
+		RT_DEBUG_BITANGENT,
+		RT_DEBUG_UV,
+		RT_DEBUG_ALBEDO,
+		RT_DEBUG_ORM,
+		RT_DEBUG_DIFFUSE_ALBEDO,
+		RT_DEBUG_SPECULAR_ALBEDO,
+		RT_DEBUG_NORMAL_ROUGHNESS,
+		RT_DEBUG_SPECULAR_HIT_DISTANCE,
+		RT_DEBUG_METALNESS,
+		RT_DEBUG_ROUGHNESS,
+		RT_DEBUG_VIEW_NORMALS,
+		RT_DEBUG_DIFFUSE_SPECULAR_SPLIT,
+		RT_DEBUG_FRESNEL_F0,
+		RT_DEBUG_FRONT_BACK_FACE,
+		RT_DEBUG_DEPTH,
+		RT_DEBUG_EMISSIVE,
+		RT_DEBUG_BRDF_REJECTION,
+		RT_DEBUG_TRANSPARENCY_LAYERS,
+		RT_DEBUG_TIMING_HEATMAP,
+		RT_DEBUG_VOLUMETRIC_FOG,
+		RT_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE,
+		RT_DEBUG_DIRECTIONAL_SHADOW_BLOCKER,
+		RT_DEBUG_DECAL_OVERLAP,
+		RT_DEBUG_DYNAMIC_GEOMETRY,
+		RT_DEBUG_MAX
 	};
 
 	enum FogMode {
@@ -161,6 +196,15 @@ private:
 	float sdfgi_normal_bias = 1.1;
 	float sdfgi_probe_bias = 1.1;
 	void _update_sdfgi();
+
+	// Pathtracing
+	bool pathtracing_enabled = false;
+	PathtracingDebugMode pathtracing_debug_mode = RT_DEBUG_DISABLED;
+	int pathtracing_samples_per_pixel = 1;
+	int pathtracing_max_bounces = 3;
+	RSE::PathtracingDenoiser pathtracing_denoiser = RSE::PT_DENOISER_DLSS_RAY_RECONSTRUCTION;
+	bool pathtracing_sky_shader_enabled = false;
+	void _update_pathtracing();
 
 	// Glow
 	bool glow_enabled = false;
@@ -349,6 +393,20 @@ public:
 	void set_sdfgi_probe_bias(float p_bias);
 	float get_sdfgi_probe_bias() const;
 
+	// Pathtracing
+	void set_pathtracing_enabled(bool p_enabled);
+	bool is_pathtracing_enabled() const;
+	void set_pathtracing_debug_mode(PathtracingDebugMode p_mode);
+	PathtracingDebugMode get_pathtracing_debug_mode() const;
+	void set_pathtracing_samples_per_pixel(int p_samples);
+	int get_pathtracing_samples_per_pixel() const;
+	void set_pathtracing_max_bounces(int p_bounces);
+	int get_pathtracing_max_bounces() const;
+	void set_pathtracing_denoiser(RSE::PathtracingDenoiser p_denoiser);
+	RSE::PathtracingDenoiser get_pathtracing_denoiser() const;
+	void set_pathtracing_sky_shader_enabled(bool p_enabled);
+	bool is_pathtracing_sky_shader_enabled() const;
+
 	// Glow
 	void set_glow_enabled(bool p_enabled);
 	bool is_glow_enabled() const;
@@ -459,4 +517,5 @@ VARIANT_ENUM_CAST(Environment::ReflectionSource)
 VARIANT_ENUM_CAST(Environment::ToneMapper)
 VARIANT_ENUM_CAST(Environment::SDFGIYScale)
 VARIANT_ENUM_CAST(Environment::GlowBlendMode)
+VARIANT_ENUM_CAST(Environment::PathtracingDebugMode)
 VARIANT_ENUM_CAST(Environment::FogMode)

@@ -558,6 +558,9 @@ void MeshLibraryEditor::_import_scene_parse_node(Ref<MeshLibrary> p_library, Has
 		case GeometryInstance3D::ShadowCastingSetting::SHADOW_CASTING_SETTING_SHADOWS_ONLY: {
 			p_library->set_item_mesh_cast_shadow(item_id, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
 		} break;
+		case GeometryInstance3D::ShadowCastingSetting::SHADOW_CASTING_SETTING_SELF_SHADOWING: {
+			p_library->set_item_mesh_cast_shadow(item_id, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_SELF_SHADOWING);
+		} break;
 		default: {
 			p_library->set_item_mesh_cast_shadow(item_id, RSE::ShadowCastingSetting::SHADOW_CASTING_SETTING_ON);
 		} break;

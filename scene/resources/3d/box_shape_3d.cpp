@@ -34,7 +34,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-Vector<Vector3> BoxShape3D::get_debug_mesh_lines() const {
+Vector<Vector3> BoxShape3D::_build_debug_mesh_lines() const {
 	Vector<Vector3> lines;
 	AABB aabb;
 	aabb.position = -size / 2;
@@ -50,7 +50,7 @@ Vector<Vector3> BoxShape3D::get_debug_mesh_lines() const {
 	return lines;
 }
 
-Ref<ArrayMesh> BoxShape3D::get_debug_arraymesh_faces(const Color &p_modulate) const {
+Ref<ArrayMesh> BoxShape3D::_build_debug_arraymesh_faces(const Color &p_modulate) const {
 	Array box_array;
 	box_array.resize(RSE::ARRAY_MAX);
 	BoxMesh::create_mesh_array(box_array, size);

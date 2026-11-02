@@ -659,9 +659,9 @@ void CollisionShape3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
 
 	if (Object::cast_to<ConcavePolygonShape3D>(*s)) {
 		Ref<ConcavePolygonShape3D> cs2 = s;
-		Ref<ArrayMesh> mesh = cs2->get_debug_mesh();
-		p_gizmo->add_lines(cs2->get_debug_mesh_lines(), material, false, collision_color);
-		p_gizmo->add_collision_segments(cs2->get_debug_mesh_lines());
+		const Vector<Vector3> debug_lines = cs2->get_debug_mesh_lines();
+		p_gizmo->add_lines(debug_lines, material, false, collision_color);
+		p_gizmo->add_collision_segments(debug_lines);
 	}
 
 	if (Object::cast_to<SeparationRayShape3D>(*s)) {

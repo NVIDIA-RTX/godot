@@ -31,6 +31,9 @@
 #include "error_macros.h"
 
 #include "core/core_globals.h"
+#ifdef ERROR_BACKTRACE_ENABLED
+#include "core/error/error_backtrace.h"
+#endif
 #include "core/io/logger.h"
 #include "core/object/object_id.h"
 #include "core/object/script_language.h"
@@ -110,6 +113,15 @@ void _err_print_error(const char *p_function, const char *p_file, int p_line, co
 	if (!CoreGlobals::print_ready) {
 		const char *err_details = (p_message && *p_message) ? p_message : p_error;
 		_err_print_fallback(p_function, p_file, p_line, err_details, p_type, false);
+#ifdef ERROR_BACKTRACE_ENABLED
+		if (p_type == ERR_HANDLER_ERROR || p_type == ERR_HANDLER_SHADER) {
+			const String bt = backtrace_dump();
+			if (!bt.is_empty()) {
+				fprintf(stderr, "%s", bt.utf8().get_data());
+				fflush(stderr);
+			}
+		}
+#endif
 		return;
 	}
 
@@ -129,6 +141,15 @@ void _err_print_error(const char *p_function, const char *p_file, int p_line, co
 		const char *err_details = (p_message && *p_message) ? p_message : p_error;
 		_err_print_fallback(p_function, p_file, p_line, err_details, p_type, false);
 	}
+
+#ifdef ERROR_BACKTRACE_ENABLED
+	if (p_type == ERR_HANDLER_ERROR || p_type == ERR_HANDLER_SHADER) {
+		const String bt = backtrace_dump();
+		if (!bt.is_empty()) {
+			fprintf(stderr, "%s", bt.utf8().get_data());
+		}
+	}
+#endif
 
 	_global_lock();
 

@@ -82,6 +82,7 @@ public:
 	virtual void light_set_reverse_cull_face_mode(RID p_light, bool p_enabled) override {}
 	virtual void light_set_shadow_caster_mask(RID p_light, uint32_t p_caster_mask) override {}
 	virtual uint32_t light_get_shadow_caster_mask(RID p_light) const override { return 0xFFFFFFFF; }
+	virtual void light_set_shadow_renderers(RID p_light, BitField<RSE::ShadowRenderer> p_renderers) override {}
 	virtual void light_set_bake_mode(RID p_light, RSE::LightBakeMode p_bake_mode) override {}
 	virtual void light_set_max_sdfgi_cascade(RID p_light, uint32_t p_cascade) override {}
 

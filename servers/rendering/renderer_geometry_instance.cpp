@@ -93,6 +93,22 @@ void RenderGeometryInstanceBase::set_layer_mask(uint32_t p_layer_mask) {
 	layer_mask = p_layer_mask;
 }
 
+void RenderGeometryInstanceBase::set_rt_shadows_only(bool p_shadows_only) {
+	rt_shadows_only = p_shadows_only;
+}
+
+void RenderGeometryInstanceBase::set_rt_self_shadowing(bool p_self_shadowing) {
+	rt_self_shadowing = p_self_shadowing;
+}
+
+void RenderGeometryInstanceBase::set_rt_shadow_caster(bool p_casts) {
+	rt_shadow_caster = p_casts;
+}
+
+void RenderGeometryInstanceBase::set_rt_blas_update(RSE::RTBlasUpdate p_update) {
+	rt_blas_update = p_update;
+}
+
 void RenderGeometryInstanceBase::set_fade_range(bool p_enable_near, float p_near_begin, float p_near_end, bool p_enable_far, float p_far_begin, float p_far_end) {
 	fade_near = p_enable_near;
 	fade_near_begin = p_near_begin;
