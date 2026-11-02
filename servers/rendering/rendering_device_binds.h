@@ -794,30 +794,33 @@ public:
 	RD_SETGET_SUB2(uint32_t, geometry, aabbs, count, aabb_count)
 
 protected:
-	static void _bind_methods() {
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, geometry_type);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, flags);
-
-		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, vertex_buffer);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_offset);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_stride);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_count);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_format);
-		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, index_buffer);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_offset);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_count);
-
-		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, aabb_buffer);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_offset);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_stride);
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_count);
-
-		BIND_ENUM_CONSTANT(TYPE_TRIANGLES);
-		BIND_ENUM_CONSTANT(TYPE_AABBS);
-	}
+	static void _bind_methods();
 };
 
+// Defined after VARIANT_ENUM_CAST: BIND_ENUM_CONSTANT needs GetTypeInfo<Type>.
 VARIANT_ENUM_CAST(RDAccelerationStructureGeometry::Type);
+
+inline void RDAccelerationStructureGeometry::_bind_methods() {
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, geometry_type);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, flags);
+
+	RD_BIND(Variant::RID, RDAccelerationStructureGeometry, vertex_buffer);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_offset);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_stride);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_count);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, vertex_format);
+	RD_BIND(Variant::RID, RDAccelerationStructureGeometry, index_buffer);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_offset);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, index_count);
+
+	RD_BIND(Variant::RID, RDAccelerationStructureGeometry, aabb_buffer);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_offset);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_stride);
+	RD_BIND(Variant::INT, RDAccelerationStructureGeometry, aabb_count);
+
+	BIND_ENUM_CONSTANT(TYPE_TRIANGLES);
+	BIND_ENUM_CONSTANT(TYPE_AABBS);
+}
 
 class RDAccelerationStructureInstance : public RefCounted {
 	GDCLASS(RDAccelerationStructureInstance, RefCounted)

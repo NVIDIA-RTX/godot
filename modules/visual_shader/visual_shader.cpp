@@ -1848,7 +1848,7 @@ bool VisualShader::_has_func_name(RSE::ShaderMode p_mode, const String &p_func_n
 }
 
 bool VisualShader::_is_node_reaching_output_port(Type p_type, int p_node, const String &p_output_port_name) const {
-	const Ref<VisualShaderNode> output_node = graph[p_type].nodes.has(NODE_ID_OUTPUT) ? graph[p_type].nodes[NODE_ID_OUTPUT].node : Ref<VisualShaderNode>();
+	const Ref<VisualShaderNode> output_node = graph[p_type]->get_node(NODE_ID_OUTPUT);
 	if (output_node.is_null()) {
 		return false;
 	}
@@ -1862,7 +1862,7 @@ bool VisualShader::_is_node_reaching_output_port(Type p_type, int p_node, const 
 			continue;
 		}
 		visited.insert(current);
-		for (const Connection &connection : graph[p_type].connections) {
+		for (const ShaderGraph::Connection &connection : graph[p_type]->get_connections()) {
 			if (connection.from_node != current) {
 				continue;
 			}
@@ -1883,7 +1883,7 @@ void VisualShader::_apply_node_render_modes(HashMap<String, int> &r_modes, HashS
 		return;
 	}
 	const Vector<ShaderLanguage::ModeInfo> &rmodes = ShaderTypes::get_singleton()->get_modes(RSE::ShaderMode(shader_mode));
-	for (const KeyValue<int, Node> &E : graph[TYPE_VERTEX].nodes) {
+	for (const KeyValue<int, ShaderGraph::Node> &E : graph[TYPE_VERTEX]->get_nodes()) {
 		if (E.key == NODE_ID_OUTPUT || E.value.node.is_null()) {
 			continue;
 		}

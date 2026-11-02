@@ -584,7 +584,7 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 
 		uint32_t transparent_pass_uniform_buffer_index = _setup_environment(p_render_data, false, screen_size, screen_size, p_default_bg_color, false);
 
-		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, transparent_pass_uniform_buffer_index, true);
+		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, rb->get_view_count() > 1, radiance_texture, samplers, transparent_pass_uniform_buffer_index, true);
 
 		{
 			uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
@@ -714,7 +714,7 @@ void RenderForwardClusteredPT::_record_rt_captures(const RenderDataRD *p_render_
 		capture_list.add_element(const_cast<GeometryInstanceSurfaceDataCache *>(static_cast<const GeometryInstanceSurfaceDataCache *>(request.surf)));
 	}
 	_fill_instance_data(RENDER_LIST_SECONDARY);
-	RID render_pass_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, p_render_data, RID(), p_samplers, p_uniform_buffer_index);
+	RID render_pass_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, p_render_data, false, RID(), p_samplers, p_uniform_buffer_index);
 
 	if (rt_capture_framebuffer.is_null()) {
 		rt_capture_framebuffer = RD::get_singleton()->framebuffer_create_empty(Size2i(1, 1), RD::TEXTURE_SAMPLES_1, RD::get_singleton()->framebuffer_format_create_empty());

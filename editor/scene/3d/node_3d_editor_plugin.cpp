@@ -2601,12 +2601,6 @@ void Node3DEditor::_notification(int p_what) {
 			}
 		} break;
 
-		case NOTIFICATION_VISIBILITY_CHANGED: {
-			if (is_visible_in_tree() && is_any_view_gizmos_enabled()) {
-				update_all_gizmos();
-			}
-		} break;
-
 		case NOTIFICATION_THEME_CHANGED: {
 			_update_theme();
 			_update_gizmos_menu_theme();
@@ -2619,6 +2613,9 @@ void Node3DEditor::_notification(int p_what) {
 				set_process(true);
 				set_physics_process(true);
 				refresh_dirty_gizmos();
+				if (is_any_view_gizmos_enabled()) {
+					update_all_gizmos();
+				}
 			} else {
 				set_process(false);
 				set_physics_process(false);
