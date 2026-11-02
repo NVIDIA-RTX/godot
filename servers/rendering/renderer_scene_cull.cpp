@@ -2864,7 +2864,9 @@ void RendererSceneCull::render_camera(const Ref<RenderSceneBuffers> &p_render_bu
 	RENDER_TIMESTAMP("Update Occlusion Buffer")
 
 	// For now just cull on the first camera
-	RendererSceneOcclusionCull::get_singleton()->buffer_update(p_viewport, camera_data.main_transform, camera_data.main_projection, camera_data.is_orthogonal);
+	if (_occlusion_culling_is_used(environment, p_viewport)) {
+		RendererSceneOcclusionCull::get_singleton()->buffer_update(p_viewport, camera_data.main_transform, camera_data.main_projection, camera_data.is_orthogonal);
+	}
 
 	_render_scene(&camera_data, p_render_buffers, environment, camera->attributes, compositor, camera->visible_layers, p_scenario, p_viewport, p_shadow_atlas, RID(), -1, p_screen_mesh_lod_threshold, p_window_output_max_value, true, r_render_info);
 #endif
@@ -3104,223 +3106,226 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 						idata.instance_geometry->set_parent_fade_alpha(fade);
 					}
 
-					if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_LIGHT) && (idata.flags & InstanceData::FLAG_GEOM_LIGHTING_DIRTY)) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
-						ERR_FAIL_NULL(geom->geometry_instance);
-						// Clear any existing light instances for this mesh and find the max count per-mesh, and total (per-scene).
-						geom->geometry_instance->clear_light_instances();
-						if ((max_lights_per_mesh > 0) && (max_lights_total > 0)) {
-							// For the top N lights, track the score and the index into the internal light storage array.
-							uint32_t total_omni_count = 0, total_spot_count = 0, total_area_count = 0;
-							bool omni_needs_heap = true, spot_needs_heap = true, area_needs_heap = true;
-							uint32_t omni_count = 0, spot_count = 0, area_count = 0;
-							omni_score_idx.clear();
-							spot_score_idx.clear();
-							area_score_idx.clear();
-							SortArray<Pair<float, uint32_t>> heapify; // SortArray has heap functions, but no local storage.
-							// Iterate over the lights (possibly > max_renderable_lights), keeping the closest to the mesh center.
-							Vector3 mesh_center = idata.instance->transformed_aabb.get_center();
-							for (const Instance *E : geom->lights) {
-								RSE::LightType light_type = RSG::light_storage->light_get_type(E->base);
-								if (((RSE::LIGHT_OMNI == light_type) && (total_omni_count++ < max_lights_total)) ||
-										((RSE::LIGHT_SPOT == light_type) && (total_spot_count++ < max_lights_total)) ||
-										((RSE::LIGHT_AREA == light_type) && (total_area_count++ < max_lights_total))) {
-									// Perform culling.
-									if (!(RSG::light_storage->light_get_cull_mask(E->base) & idata.layer_mask)) {
-										continue;
-									}
-									if ((RSG::light_storage->light_get_bake_mode(E->base) == RSE::LIGHT_BAKE_STATIC) && idata.instance->lightmap) {
-										continue;
-									}
+					// Only the raster draw uses the pairings and the list; the path tracer gathers its own.
+					if (cull_data.cull->raster_list_used) {
+						if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_LIGHT) && (idata.flags & InstanceData::FLAG_GEOM_LIGHTING_DIRTY)) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+							ERR_FAIL_NULL(geom->geometry_instance);
+							// Clear any existing light instances for this mesh and find the max count per-mesh, and total (per-scene).
+							geom->geometry_instance->clear_light_instances();
+							if ((max_lights_per_mesh > 0) && (max_lights_total > 0)) {
+								// For the top N lights, track the score and the index into the internal light storage array.
+								uint32_t total_omni_count = 0, total_spot_count = 0, total_area_count = 0;
+								bool omni_needs_heap = true, spot_needs_heap = true, area_needs_heap = true;
+								uint32_t omni_count = 0, spot_count = 0, area_count = 0;
+								omni_score_idx.clear();
+								spot_score_idx.clear();
+								area_score_idx.clear();
+								SortArray<Pair<float, uint32_t>> heapify; // SortArray has heap functions, but no local storage.
+								// Iterate over the lights (possibly > max_renderable_lights), keeping the closest to the mesh center.
+								Vector3 mesh_center = idata.instance->transformed_aabb.get_center();
+								for (const Instance *E : geom->lights) {
+									RSE::LightType light_type = RSG::light_storage->light_get_type(E->base);
+									if (((RSE::LIGHT_OMNI == light_type) && (total_omni_count++ < max_lights_total)) ||
+											((RSE::LIGHT_SPOT == light_type) && (total_spot_count++ < max_lights_total)) ||
+											((RSE::LIGHT_AREA == light_type) && (total_area_count++ < max_lights_total))) {
+										// Perform culling.
+										if (!(RSG::light_storage->light_get_cull_mask(E->base) & idata.layer_mask)) {
+											continue;
+										}
+										if ((RSG::light_storage->light_get_bake_mode(E->base) == RSE::LIGHT_BAKE_STATIC) && idata.instance->lightmap) {
+											continue;
+										}
 
-									InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
-									// Large scores are worse, so linear with distance, inverse with energy and range.
-									Vector3 light_center = E->transformed_aabb.get_center();
-									float light_range_energy =
-											RSG::light_storage->light_get_param(E->base, RSE::LightParam::LIGHT_PARAM_RANGE) *
-											RSG::light_storage->light_get_param(E->base, RSE::LightParam::LIGHT_PARAM_ENERGY);
-									float light_inst_score = mesh_center.distance_to(light_center) / MAX(0.01f, light_range_energy);
-									// Of the N lights (on a per-light-type basis, Omni or Spot) keep only the M "best" lights.
-									// If N <= M, we can simply store the lights, but once we exceed M, we need check each new
-									// light and see if it's score is better than the worst light stored to date.  If the new
-									// light is better, we can replace the current worst light with the new one.  In order to
-									// efficiently track our currently worst light we use a "max heap".  This loosely orders
-									// the elements in an array as a binary-tree structure, and has the properties that finding
-									// the worst score element is O(1) (it will always be stored in element [0]), and removing
-									// the old max and inserting a new value is O(log M).
+										InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
+										// Large scores are worse, so linear with distance, inverse with energy and range.
+										Vector3 light_center = E->transformed_aabb.get_center();
+										float light_range_energy =
+												RSG::light_storage->light_get_param(E->base, RSE::LightParam::LIGHT_PARAM_RANGE) *
+												RSG::light_storage->light_get_param(E->base, RSE::LightParam::LIGHT_PARAM_ENERGY);
+										float light_inst_score = mesh_center.distance_to(light_center) / MAX(0.01f, light_range_energy);
+										// Of the N lights (on a per-light-type basis, Omni or Spot) keep only the M "best" lights.
+										// If N <= M, we can simply store the lights, but once we exceed M, we need check each new
+										// light and see if it's score is better than the worst light stored to date.  If the new
+										// light is better, we can replace the current worst light with the new one.  In order to
+										// efficiently track our currently worst light we use a "max heap".  This loosely orders
+										// the elements in an array as a binary-tree structure, and has the properties that finding
+										// the worst score element is O(1) (it will always be stored in element [0]), and removing
+										// the old max and inserting a new value is O(log M).
 #define VERIFY_RELEVANT_LIGHT_HEAP 0
 #if VERIFY_RELEVANT_LIGHT_HEAP
-									WARN_PRINT_ONCE("VERIFY_RELEVANT_LIGHT_HEAP is True");
+										WARN_PRINT_ONCE("VERIFY_RELEVANT_LIGHT_HEAP is True");
 #endif
-									switch (light_type) {
-										case RSE::LIGHT_OMNI: {
-											if (omni_count < max_lights_per_mesh) {
-												// We have room to just add it, and track the score and where it goes.
-												omni_score_idx.push_back(Pair(light_inst_score, omni_count));
-												geom->geometry_instance->pair_light_instance(light->instance, light_type, omni_count++);
-											} else {
-												if (omni_needs_heap) {
-													// We need to make this a heap one time.
-													heapify.make_heap(0, omni_count, &omni_score_idx[0]);
-													omni_needs_heap = false;
-												}
-												if (light_inst_score < omni_score_idx[0].first) {
-#if VERIFY_RELEVANT_LIGHT_HEAP
-													// The [0] element should have the max score.
-													for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
-														if (omni_score_idx[vi].first > omni_score_idx[0].first) {
-															ERR_PRINT_ONCE("Relevant Omni Light Heap Error");
-														}
+										switch (light_type) {
+											case RSE::LIGHT_OMNI: {
+												if (omni_count < max_lights_per_mesh) {
+													// We have room to just add it, and track the score and where it goes.
+													omni_score_idx.push_back(Pair(light_inst_score, omni_count));
+													geom->geometry_instance->pair_light_instance(light->instance, light_type, omni_count++);
+												} else {
+													if (omni_needs_heap) {
+														// We need to make this a heap one time.
+														heapify.make_heap(0, omni_count, &omni_score_idx[0]);
+														omni_needs_heap = false;
 													}
-#endif
-													uint32_t replace_index = omni_score_idx[0].second;
-													geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
-													heapify.adjust_heap(0, 0, omni_count, Pair(light_inst_score, replace_index), &omni_score_idx[0]);
-												}
-											}
-										} break;
-										case RSE::LIGHT_SPOT: {
-											if (spot_count < max_lights_per_mesh) {
-												// We have room to just add it, and track the score and where it goes.
-												spot_score_idx.push_back(Pair(light_inst_score, spot_count));
-												geom->geometry_instance->pair_light_instance(light->instance, light_type, spot_count++);
-											} else {
-												if (spot_needs_heap) {
-													// We need to make this a heap one time.
-													heapify.make_heap(0, spot_count, &spot_score_idx[0]);
-													spot_needs_heap = false;
-												}
-												if (light_inst_score < spot_score_idx[0].first) {
+													if (light_inst_score < omni_score_idx[0].first) {
 #if VERIFY_RELEVANT_LIGHT_HEAP
-													// The [0] element should have the max score.
-													for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
-														if (spot_score_idx[vi].first > spot_score_idx[0].first) {
-															ERR_PRINT_ONCE("Relevant Spot Light Heap Error");
+														// The [0] element should have the max score.
+														for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
+															if (omni_score_idx[vi].first > omni_score_idx[0].first) {
+																ERR_PRINT_ONCE("Relevant Omni Light Heap Error");
+															}
 														}
-													}
 #endif
-													uint32_t replace_index = spot_score_idx[0].second;
-													geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
-													heapify.adjust_heap(0, 0, spot_count, Pair(light_inst_score, replace_index), &spot_score_idx[0]);
+														uint32_t replace_index = omni_score_idx[0].second;
+														geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
+														heapify.adjust_heap(0, 0, omni_count, Pair(light_inst_score, replace_index), &omni_score_idx[0]);
+													}
 												}
-											}
-										} break;
-										case RSE::LIGHT_AREA: {
-											if (area_count < max_lights_per_mesh) {
-												// We have room to just add it, and track the score and where it goes.
-												area_score_idx.push_back(Pair(light_inst_score, area_count));
-												geom->geometry_instance->pair_light_instance(light->instance, light_type, area_count++);
-											} else {
-												if (area_needs_heap) {
-													// We need to make this a heap one time.
-													heapify.make_heap(0, area_count, &area_score_idx[0]);
-													area_needs_heap = false;
-												}
-												if (light_inst_score < area_score_idx[0].first) {
+											} break;
+											case RSE::LIGHT_SPOT: {
+												if (spot_count < max_lights_per_mesh) {
+													// We have room to just add it, and track the score and where it goes.
+													spot_score_idx.push_back(Pair(light_inst_score, spot_count));
+													geom->geometry_instance->pair_light_instance(light->instance, light_type, spot_count++);
+												} else {
+													if (spot_needs_heap) {
+														// We need to make this a heap one time.
+														heapify.make_heap(0, spot_count, &spot_score_idx[0]);
+														spot_needs_heap = false;
+													}
+													if (light_inst_score < spot_score_idx[0].first) {
 #if VERIFY_RELEVANT_LIGHT_HEAP
-													// The [0] element should have the max score.
-													for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
-														if (area_score_idx[vi].first > area_score_idx[0].first) {
-															ERR_PRINT_ONCE("Relevant Area Light Heap Error");
+														// The [0] element should have the max score.
+														for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
+															if (spot_score_idx[vi].first > spot_score_idx[0].first) {
+																ERR_PRINT_ONCE("Relevant Spot Light Heap Error");
+															}
 														}
-													}
 #endif
-													uint32_t replace_index = area_score_idx[0].second;
-													geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
-													heapify.adjust_heap(0, 0, area_count, Pair(light_inst_score, replace_index), &area_score_idx[0]);
+														uint32_t replace_index = spot_score_idx[0].second;
+														geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
+														heapify.adjust_heap(0, 0, spot_count, Pair(light_inst_score, replace_index), &spot_score_idx[0]);
+													}
 												}
-											}
-										} break;
-										default:
-											break;
+											} break;
+											case RSE::LIGHT_AREA: {
+												if (area_count < max_lights_per_mesh) {
+													// We have room to just add it, and track the score and where it goes.
+													area_score_idx.push_back(Pair(light_inst_score, area_count));
+													geom->geometry_instance->pair_light_instance(light->instance, light_type, area_count++);
+												} else {
+													if (area_needs_heap) {
+														// We need to make this a heap one time.
+														heapify.make_heap(0, area_count, &area_score_idx[0]);
+														area_needs_heap = false;
+													}
+													if (light_inst_score < area_score_idx[0].first) {
+#if VERIFY_RELEVANT_LIGHT_HEAP
+														// The [0] element should have the max score.
+														for (uint32_t vi = 1; vi < max_lights_per_mesh; ++vi) {
+															if (area_score_idx[vi].first > area_score_idx[0].first) {
+																ERR_PRINT_ONCE("Relevant Area Light Heap Error");
+															}
+														}
+#endif
+														uint32_t replace_index = area_score_idx[0].second;
+														geom->geometry_instance->pair_light_instance(light->instance, light_type, replace_index);
+														heapify.adjust_heap(0, 0, area_count, Pair(light_inst_score, replace_index), &area_score_idx[0]);
+													}
+												}
+											} break;
+											default:
+												break;
+										}
 									}
 								}
 							}
+							idata.flags &= ~InstanceData::FLAG_GEOM_LIGHTING_DIRTY;
 						}
-						idata.flags &= ~InstanceData::FLAG_GEOM_LIGHTING_DIRTY;
-					}
 
-					if (idata.flags & InstanceData::FLAG_GEOM_PROJECTOR_SOFTSHADOW_DIRTY) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+						if (idata.flags & InstanceData::FLAG_GEOM_PROJECTOR_SOFTSHADOW_DIRTY) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
 
-						ERR_FAIL_NULL(geom->geometry_instance);
-						cull_data.cull->lock.lock();
-						geom->geometry_instance->set_softshadow_projector_pairing(geom->softshadow_count > 0, geom->projector_count > 0);
-						cull_data.cull->lock.unlock();
-						idata.flags &= ~InstanceData::FLAG_GEOM_PROJECTOR_SOFTSHADOW_DIRTY;
-					}
+							ERR_FAIL_NULL(geom->geometry_instance);
+							cull_data.cull->lock.lock();
+							geom->geometry_instance->set_softshadow_projector_pairing(geom->softshadow_count > 0, geom->projector_count > 0);
+							cull_data.cull->lock.unlock();
+							idata.flags &= ~InstanceData::FLAG_GEOM_PROJECTOR_SOFTSHADOW_DIRTY;
+						}
 
-					if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_REFLECTION_PROBE) && (idata.flags & InstanceData::FLAG_GEOM_REFLECTION_DIRTY)) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
-						uint32_t idx = 0;
+						if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_REFLECTION_PROBE) && (idata.flags & InstanceData::FLAG_GEOM_REFLECTION_DIRTY)) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+							uint32_t idx = 0;
 
-						for (const Instance *E : geom->reflection_probes) {
-							InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(E->base_data);
+							for (const Instance *E : geom->reflection_probes) {
+								InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(E->base_data);
 
-							instance_pair_buffer[idx++] = reflection_probe->instance;
-							if (idx == MAX_INSTANCE_PAIRS) {
-								break;
+								instance_pair_buffer[idx++] = reflection_probe->instance;
+								if (idx == MAX_INSTANCE_PAIRS) {
+									break;
+								}
 							}
+
+							ERR_FAIL_NULL(geom->geometry_instance);
+							geom->geometry_instance->pair_reflection_probe_instances(instance_pair_buffer, idx);
+							idata.flags &= ~InstanceData::FLAG_GEOM_REFLECTION_DIRTY;
 						}
 
-						ERR_FAIL_NULL(geom->geometry_instance);
-						geom->geometry_instance->pair_reflection_probe_instances(instance_pair_buffer, idx);
-						idata.flags &= ~InstanceData::FLAG_GEOM_REFLECTION_DIRTY;
-					}
+						if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_DECAL) && (idata.flags & InstanceData::FLAG_GEOM_DECAL_DIRTY)) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+							uint32_t idx = 0;
 
-					if (geometry_instance_pair_mask & (1 << RSE::INSTANCE_DECAL) && (idata.flags & InstanceData::FLAG_GEOM_DECAL_DIRTY)) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
-						uint32_t idx = 0;
+							for (const Instance *E : geom->decals) {
+								InstanceDecalData *decal = static_cast<InstanceDecalData *>(E->base_data);
 
-						for (const Instance *E : geom->decals) {
-							InstanceDecalData *decal = static_cast<InstanceDecalData *>(E->base_data);
-
-							instance_pair_buffer[idx++] = decal->instance;
-							if (idx == MAX_INSTANCE_PAIRS) {
-								break;
+								instance_pair_buffer[idx++] = decal->instance;
+								if (idx == MAX_INSTANCE_PAIRS) {
+									break;
+								}
 							}
+
+							ERR_FAIL_NULL(geom->geometry_instance);
+							geom->geometry_instance->pair_decal_instances(instance_pair_buffer, idx);
+
+							idata.flags &= ~InstanceData::FLAG_GEOM_DECAL_DIRTY;
 						}
 
-						ERR_FAIL_NULL(geom->geometry_instance);
-						geom->geometry_instance->pair_decal_instances(instance_pair_buffer, idx);
+						if (idata.flags & InstanceData::FLAG_GEOM_VOXEL_GI_DIRTY) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+							uint32_t idx = 0;
+							for (const Instance *E : geom->voxel_gi_instances) {
+								InstanceVoxelGIData *voxel_gi = static_cast<InstanceVoxelGIData *>(E->base_data);
 
-						idata.flags &= ~InstanceData::FLAG_GEOM_DECAL_DIRTY;
-					}
-
-					if (idata.flags & InstanceData::FLAG_GEOM_VOXEL_GI_DIRTY) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
-						uint32_t idx = 0;
-						for (const Instance *E : geom->voxel_gi_instances) {
-							InstanceVoxelGIData *voxel_gi = static_cast<InstanceVoxelGIData *>(E->base_data);
-
-							instance_pair_buffer[idx++] = voxel_gi->probe_instance;
-							if (idx == MAX_INSTANCE_PAIRS) {
-								break;
+								instance_pair_buffer[idx++] = voxel_gi->probe_instance;
+								if (idx == MAX_INSTANCE_PAIRS) {
+									break;
+								}
 							}
+
+							ERR_FAIL_NULL(geom->geometry_instance);
+							geom->geometry_instance->pair_voxel_gi_instances(instance_pair_buffer, idx);
+
+							idata.flags &= ~InstanceData::FLAG_GEOM_VOXEL_GI_DIRTY;
 						}
 
-						ERR_FAIL_NULL(geom->geometry_instance);
-						geom->geometry_instance->pair_voxel_gi_instances(instance_pair_buffer, idx);
-
-						idata.flags &= ~InstanceData::FLAG_GEOM_VOXEL_GI_DIRTY;
-					}
-
-					if ((idata.flags & InstanceData::FLAG_LIGHTMAP_CAPTURE) && idata.instance->last_frame_pass != frame_number && !idata.instance->lightmap_target_sh.is_empty() && !idata.instance->lightmap_sh.is_empty()) {
-						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
-						Color *sh = idata.instance->lightmap_sh.ptrw();
-						const Color *target_sh = idata.instance->lightmap_target_sh.ptr();
-						for (uint32_t j = 0; j < 9; j++) {
-							sh[j] = sh[j].lerp(target_sh[j], MIN(1.0, lightmap_probe_update_speed));
+						if ((idata.flags & InstanceData::FLAG_LIGHTMAP_CAPTURE) && idata.instance->last_frame_pass != frame_number && !idata.instance->lightmap_target_sh.is_empty() && !idata.instance->lightmap_sh.is_empty()) {
+							InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
+							Color *sh = idata.instance->lightmap_sh.ptrw();
+							const Color *target_sh = idata.instance->lightmap_target_sh.ptr();
+							for (uint32_t j = 0; j < 9; j++) {
+								sh[j] = sh[j].lerp(target_sh[j], MIN(1.0, lightmap_probe_update_speed));
+							}
+							ERR_FAIL_NULL(geom->geometry_instance);
+							cull_data.cull->lock.lock();
+							geom->geometry_instance->set_lightmap_capture(sh);
+							cull_data.cull->lock.unlock();
+							idata.instance->last_frame_pass = frame_number;
 						}
-						ERR_FAIL_NULL(geom->geometry_instance);
-						cull_data.cull->lock.lock();
-						geom->geometry_instance->set_lightmap_capture(sh);
-						cull_data.cull->lock.unlock();
-						idata.instance->last_frame_pass = frame_number;
-					}
 
-					if (keep) {
-						cull_result.geometry_instances.push_back(idata.instance_geometry);
+						if (keep) {
+							cull_result.geometry_instances.push_back(idata.instance_geometry);
+						}
 					}
 				}
 			}
@@ -3509,6 +3514,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		Vector3 cam_origin = p_camera_data->main_transform.origin;
 		cull.rt_aabb = AABB(cam_origin - Vector3(z_far, z_far, z_far), Vector3(z_far, z_far, z_far) * 2.0);
 	}
+	cull.raster_list_used = !cull.rt_enabled || scene_render->pathtracing_uses_raster_list();
 
 	Vector<RID> directional_lights;
 	// directional lights
@@ -3531,7 +3537,8 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 			//check shadow..
 
 			if (light) {
-				if (p_using_shadows && p_shadow_atlas.is_valid() && RSG::light_storage->light_has_shadow(E->base) && !(RSG::light_storage->light_get_type(E->base) == RSE::LIGHT_DIRECTIONAL && RSG::light_storage->light_directional_get_sky_mode(E->base) == RSE::LIGHT_DIRECTIONAL_SKY_MODE_SKY_ONLY)) {
+				// Path tracing never draws shadow maps, so it skips the cascade setup and culling.
+				if (p_using_shadows && p_shadow_atlas.is_valid() && !cull.rt_enabled && RSG::light_storage->light_has_shadow(E->base) && !(RSG::light_storage->light_get_type(E->base) == RSE::LIGHT_DIRECTIONAL && RSG::light_storage->light_directional_get_sky_mode(E->base) == RSE::LIGHT_DIRECTIONAL_SKY_MODE_SKY_ONLY)) {
 					lights_with_shadow.push_back(E);
 				}
 				//add to list
@@ -3586,7 +3593,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		cull_data.cam_transform = p_camera_data->main_transform;
 		cull_data.visible_layers = p_visible_layers;
 		cull_data.render_reflection_probe = render_reflection_probe;
-		cull_data.occlusion_buffer = RendererSceneOcclusionCull::get_singleton()->buffer_get_ptr(p_viewport);
+		cull_data.occlusion_buffer = cull.raster_list_used ? RendererSceneOcclusionCull::get_singleton()->buffer_get_ptr(p_viewport) : nullptr;
 		cull_data.camera_matrix = &p_camera_data->main_projection;
 		cull_data.visibility_viewport_mask = scenario->viewport_visibility_masks.has(p_viewport) ? scenario->viewport_visibility_masks[p_viewport] : 0;
 #ifdef DEBUG_CULL_TIME

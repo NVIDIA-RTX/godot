@@ -74,7 +74,7 @@ namespace RendererSceneRenderImplementation {
 class RenderForwardClustered;
 class SceneShaderRaytracing;
 
-// Must match GLSL GeometryData (std430, 144 bytes, 8-byte alignment).
+// Must match GLSL GeometryData (std430, 160 bytes, 8-byte alignment).
 struct alignas(8) RT_GeometryData {
 	uint64_t vertex_buffer_address;
 	uint64_t attribute_buffer_address;
@@ -111,8 +111,10 @@ struct alignas(8) RT_GeometryData {
 	uint32_t debug_state; // See RTDynamicGeometryDebug::pack().
 	uint32_t material_index; // See rt_pack_material_index().
 	uint32_t material_flags;
+	uint32_t material_feedback_index; // Texture streaming feedback slot, UINT32_MAX = none.
+	uint32_t pad;
 };
-static_assert(sizeof(RT_GeometryData) == 152, "RT_GeometryData must be 152 bytes for std430");
+static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
 
 // Marks an absent field in RT_GeometryData::instance_data_layout.
 static constexpr uint32_t RT_INSTANCE_DATA_FIELD_NONE = 0xFF;
@@ -701,6 +703,10 @@ struct RTMaterialData {
 	RID normal_texture_rd;
 	RID orm_texture_rd;
 	RID emission_texture_rd;
+	RID material; // Source material; null for the default material.
+	// Feedback slots must be registered with the current feedback buffer every frame; cached per frame.
+	mutable uint32_t feedback_index = UINT32_MAX;
+	mutable uint32_t feedback_frame = UINT32_MAX;
 };
 
 // A traced surface of one mesh instance while it is planned, before grouping.
@@ -1123,6 +1129,7 @@ class RenderRaytracing {
 	RenderForwardClustered *owner = nullptr;
 	SceneShaderRaytracing *shader = nullptr;
 	BindlessBlock *bindless_block = nullptr;
+	static void _on_rd_texture_replaced(void *p_userdata, RID p_old_rd_texture, RID p_new_rd_texture);
 
 	RID bindless_uniform_set;
 
@@ -1292,6 +1299,15 @@ class RenderRaytracing {
 
 	// Compression transforms of every compressed BLAS. Cleared last in cleanup_caches.
 	RTBlasTransformPool blas_transform_pool;
+
+	// Triangle BLASes are built with ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT; must match RT_FLAG_RAY_CONE_POSITION_FETCH.
+	bool blas_data_access = false;
+	// Frees the geometry caches when p_rt_flags flips RT_FLAG_RAY_CONE_POSITION_FETCH. Call before resolving cache entries.
+	void _sync_blas_data_access(uint32_t p_rt_flags);
+	// Frees every cached surface, mesh group, deformed, capture and merged MultiMesh BLAS.
+	void _free_geometry_caches();
+	// Build flags of a triangle BLAS; adds data access when blas_data_access is set.
+	BitField<RD::AccelerationStructureFlagBits> _triangle_blas_flags(bool p_prefer_fast_build, bool p_allow_update) const;
 
 	RTMeshGroupEntry *_process_mesh_group(const RTMeshGroupKey &p_key, Span<const RTPlanSurface> p_members, LocalVector<RID> &r_dirty_blas_list);
 	void _trim_mesh_group_variants(uint64_t p_mesh_id);

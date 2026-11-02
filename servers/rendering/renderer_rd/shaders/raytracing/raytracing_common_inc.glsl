@@ -11,6 +11,7 @@ layout(constant_id = 0) const uint RT_FLAGS = 0u;
 #define RT_FLAG_FOG_ENABLED (1u << 2)
 #define RT_FLAG_DEPTH_COMPOSITE_ENABLED (1u << 5)
 #define RT_FLAG_VOLUMETRIC_FOG_ENABLED (1u << 7)
+#define RT_FLAG_RAY_CONES_ENABLED (1u << 9)
 
 // Unified TLAS masks: bit 0 = opaque camera lane, bit 1 = transparent camera
 // lane, bits 2-7 = shadow-caster groups.
@@ -24,7 +25,7 @@ layout(constant_id = 0) const uint RT_FLAGS = 0u;
 #define RT_SAMPLE_MODE_DYNAMIC 3u
 #define RT_GET_SAMPLE_MODE() ((RT_FLAGS >> RT_SAMPLE_MODE_SHIFT) & RT_SAMPLE_MODE_MASK)
 #define RT_GET_SAMPLE_COUNT() (RT_GET_SAMPLE_MODE() == RT_SAMPLE_MODE_DYNAMIC \
-				? max(1u, uint(get_rt_param(RT_PARAM_SAMPLE_COUNT)))          \
+				? max(1u, uint(get_rt_param(RT_PARAM_SAMPLE_COUNT))) \
 				: (1u << RT_GET_SAMPLE_MODE()))
 
 #define RT_MAX_BOUNCES_SHIFT 28u

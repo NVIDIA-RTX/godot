@@ -76,7 +76,12 @@
 #include "scene/resources/immediate_mesh.h"
 #include "scene/resources/packed_scene.h"
 #include "servers/physics_3d/physics_server_3d_types.h"
+#include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server.h"
+
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+#include "main/performance.h"
+#endif
 
 #ifndef PHYSICS_3D_DISABLED
 #include "servers/physics_3d/direct_states/physics_direct_space_state_3d.h"
@@ -3764,8 +3769,7 @@ void Node3DEditorViewport::_notification(int p_what) {
 				if (rt_tlas > 0) {
 					text += "\n";
 					text += "\n" + vformat(TTR("RT TLAS Instances: %d"), rt_tlas) + "\n";
-					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_BUILDS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_BUILT)) + "\n";
-					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_REFITS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_REFIT));
+					text += vformat(TTR("RT Build: %d (%d t), Refit: %d (%d t)"), rt_info(Viewport::RENDER_INFO_RT_BLAS_BUILDS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_BUILT), rt_info(Viewport::RENDER_INFO_RT_BLAS_REFITS), rt_info(Viewport::RENDER_INFO_RT_TRIANGLES_REFIT));
 
 					const int rt_updated = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_UPDATED);
 					const int rt_held = rt_info(Viewport::RENDER_INFO_RT_DYNAMIC_HELD);
@@ -3787,6 +3791,22 @@ void Node3DEditorViewport::_notification(int p_what) {
 					text += "\n" + vformat(TTR("RT AS Scratch: %04d / %04d MB (%03d rollovers)"), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_SCRATCH_SIZE_KB), rt_info(Viewport::RENDER_INFO_RT_SCRATCH_ROLLOVERS));
 					text += "\n" + vformat(TTR("RT Capture Arena: %04d / %04d MB"), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_USED_KB), rt_mb(Viewport::RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB));
 				}
+
+#ifdef RD_ENABLED
+				if (const RenderingDevice *rd = RenderingDevice::get_singleton()) {
+					auto mb = [](uint64_t p_bytes) { return int64_t((p_bytes + 999999) / 1000000); };
+					text += "\n\n" + vformat(TTR("VRAM: %d MB, Tex: %d"), mb(rd->get_memory_usage(RenderingDevice::MEMORY_TOTAL)), mb(rd->get_memory_usage(RenderingDevice::MEMORY_TEXTURES)));
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+					text += vformat(" (%d)", mb(Performance::get_singleton()->get_monitor(Performance::RENDER_STREAMING_TEXTURE_MEM_USED)));
+#endif
+					text += "\n" + vformat(TTR("Buf: %d"), mb(rd->get_memory_usage(RenderingDevice::MEMORY_BUFFERS)));
+					const uint64_t blas = rd->get_memory_usage(RenderingDevice::MEMORY_BLAS);
+					const uint64_t tlas = rd->get_memory_usage(RenderingDevice::MEMORY_TLAS);
+					if (blas + tlas > 0) {
+						text += vformat(TTR(", BLAS: %d, TLAS: %d"), mb(blas), mb(tlas));
+					}
+				}
+#endif // RD_ENABLED
 
 				info_label->set_text(text);
 			}

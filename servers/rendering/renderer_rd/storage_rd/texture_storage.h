@@ -581,8 +581,19 @@ private:
 		// 128 is the max size of a push constant. We can replace "pad" but we can't add any more.
 	};
 
+	struct RDTextureReplacedListener {
+		void (*func)(void *p_userdata, RID p_old_rd_texture, RID p_new_rd_texture) = nullptr;
+		void *userdata = nullptr;
+	};
+	LocalVector<RDTextureReplacedListener> rd_texture_replaced_listeners;
+
+	void _notify_rd_texture_replaced(RID p_old_rd_texture, RID p_new_rd_texture);
+
 public:
 	static TextureStorage *get_singleton();
+
+	void rd_texture_replaced_add_listener(void (*p_func)(void *, RID, RID), void *p_userdata);
+	void rd_texture_replaced_remove_listener(void (*p_func)(void *, RID, RID), void *p_userdata);
 
 	void _tex_blit_shader_initialize();
 	void _tex_blit_shader_free();

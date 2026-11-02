@@ -578,6 +578,13 @@
 			Shows which geometry costs per-frame acceleration structure work, over dim grayscale shading. Red: its bottom-level acceleration structure (BLAS) was rebuilt. Yellow: its BLAS was refit. Magenta and blue: the same for a BLAS built or refit from a vertex capture. Faint green: only its transform in the top-level acceleration structure changed this frame. Gray: static.
 			Work done this frame is drawn at full strength. Earlier work fades out over 60 frames, so items updated only on some frames (for example by the dynamic update scheduler) stay visible. Skinned, blend shape, vertex captured, MultiMesh and particle geometry whose last BLAS work was a rebuild fades to dark red (dark magenta when captured) instead of gray and stays so until it is updated again. Transparent layers are peeled as in normal rendering and drawn over what's behind them, with their material alpha clamped to between [code]0.35[/code] and [code]0.75[/code]. Compare with [constant Viewport.RENDER_INFO_RT_BLAS_BUILDS], [constant Viewport.RENDER_INFO_RT_BLAS_REFITS] and [constant Viewport.RENDER_INFO_RT_CAPTURED_MESHES].
 		</constant>
+		<constant name="RT_DEBUG_TEXTURE_MIP" value="30" enum="PathtracingDebugMode">
+			Colors each primary hit by the mip level its albedo texture is sampled at, over the albedo's luminance: red (mip 0, full resolution), orange, yellow, green, cyan, blue, purple and magenta (mip 7 or coarser), blended between levels. Gray: no albedo texture, or a texture without mipmaps. Includes [member ProjectSettings.rendering/textures/default_filters/texture_mipmap_bias]. Without ray cones (see [member ProjectSettings.rendering/pathtracing/ray_cones]) everything is mip 0.
+			For [ShaderMaterial]s, the first sampled texture whose uniform uses [code]source_color[/code] is shown, else the first sampled 2D texture. Metallic mirrors (roughness up to [code]0.05[/code]) show the mips of what they reflect, up to [member pathtracing_max_bounces] reflections.
+		</constant>
+		<constant name="RT_DEBUG_MIRROR_GUIDES" value="31" enum="PathtracingDebugMode">
+			Colors each primary hit by how DLSS Ray Reconstruction guides treat it as a mirror, over the albedo's luminance. Shown whichever denoiser is selected. Gray: not a reflective metal (metallic below [code]0.9[/code] or roughness above [code]0.1[/code]). Yellow: its motion vectors follow the reflection, corrected for surface curvature; tinted toward red on convex and blue on concave surfaces as the curvature bends the reflection more. Green: also flat enough for primary surface replacement (roughness up to [code]0.01[/code]).
+		</constant>
 		<constant name="FOG_MODE_EXPONENTIAL" value="0" enum="FogMode">
 			Use a physically-based fog model defined primarily by fog density.
 		</constant>

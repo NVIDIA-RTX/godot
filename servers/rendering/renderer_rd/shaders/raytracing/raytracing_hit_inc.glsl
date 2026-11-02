@@ -29,11 +29,16 @@ vec4 fetch_instance_custom(GeometryData geom, uint primitive_id) {
 // ============================================================================
 struct VertexAttributes {
 	vec2 uv;
+	vec2 uv_edge1; // uv[i1] - uv[i0], with FETCH_UV.
+	vec2 uv_edge2; // uv[i2] - uv[i0], with FETCH_UV.
+	uvec3 indices; // Triangle vertex indices.
 	vec2 uv2;
 	vec3 normal;
 	vec3 tangent;
 	float bitangent_sign;
 	vec4 color;
+	vec3 normal_delta1; // Object-space normal[i1] - normal[i0], with FETCH_TBN.
+	vec3 normal_delta2; // Object-space normal[i2] - normal[i0], with FETCH_TBN.
 	bool has_uv;
 	bool has_uv2;
 	bool has_normal;
@@ -46,6 +51,8 @@ struct TBNResult {
 	vec3 tangent;
 	vec3 binormal;
 	float bitangent_sign;
+	vec3 normal_delta1; // normal[i1] - normal[i0]; only set by fetch_tbn.
+	vec3 normal_delta2; // normal[i2] - normal[i0]; only set by fetch_tbn.
 };
 
 // ============================================================================
@@ -103,6 +110,23 @@ bool rt_triangle_front_facing(in GeometryData geom) {
 // The shading normal p_normal, flipped on back faces of materials raster flips it for (DO_SIDE_CHECK).
 vec3 rt_side_checked_normal(in GeometryData geom, vec3 p_normal, bool p_front_facing) {
 	return (!p_front_facing && (geom.flags & FLAG_SIDE_CHECK) != 0u) ? -p_normal : p_normal;
+}
+
+// ============================================================================
+// POSITION FETCHING
+// ============================================================================
+// Object-space position of vertex p_index. Compressed positions are unorm16 within the surface AABB.
+vec3 fetch_position_vertex(in GeometryData geom, uint p_index) {
+	if ((geom.flags & FLAG_COMPRESSED) != 0u) {
+		Uint32Buffer vb = Uint32Buffer(geom.vertex_address);
+		uint xy = vb.v[p_index * 2u];
+		uint z = vb.v[p_index * 2u + 1u] & 0xFFFFu;
+		vec3 unorm = vec3(float(xy & 0xFFFFu), float(xy >> 16), float(z)) / 65535.0;
+		return vec3(geom.aabb_pos_x, geom.aabb_pos_y, geom.aabb_pos_z) + unorm * vec3(geom.aabb_size_x, geom.aabb_size_y, geom.aabb_size_z);
+	}
+	FloatBuffer vb = FloatBuffer(geom.vertex_address);
+	uint base = p_index * (geom.position_stride >> 2);
+	return vec3(vb.v[base], vb.v[base + 1u], geom.position_stride >= 12u ? vb.v[base + 2u] : 0.0);
 }
 
 // ============================================================================
@@ -233,6 +257,8 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 	result.tangent = vec3(1.0, 0.0, 0.0);
 	result.binormal = vec3(0.0, 0.0, 1.0);
 	result.bitangent_sign = 1.0;
+	result.normal_delta1 = vec3(0.0);
+	result.normal_delta2 = vec3(0.0);
 
 	if (geom.normal_byte_offset == OFFSET_NONE || geom.vertex_address == 0ul) {
 		return result;
@@ -251,6 +277,8 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 		t2 = fetch_tbn_uncompressed_vertex(geom, i2);
 	}
 
+	result.normal_delta1 = t1.normal - t0.normal;
+	result.normal_delta2 = t2.normal - t0.normal;
 	result.normal = normalize(bary.x * t0.normal + bary.y * t1.normal + bary.z * t2.normal);
 	result.tangent = normalize(bary.x * t0.tangent + bary.y * t1.tangent + bary.z * t2.tangent);
 	result.binormal = normalize(bary.x * t0.binormal + bary.y * t1.binormal + bary.z * t2.binormal);
@@ -272,11 +300,15 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs, uint fetch_flags) {
 	VertexAttributes attrs;
 	attrs.uv = vec2(0.0);
+	attrs.uv_edge1 = vec2(0.0);
+	attrs.uv_edge2 = vec2(0.0);
 	attrs.uv2 = vec2(0.0);
 	attrs.normal = vec3(0.0, 1.0, 0.0);
 	attrs.tangent = vec3(1.0, 0.0, 0.0);
 	attrs.bitangent_sign = 1.0;
 	attrs.color = vec4(1.0);
+	attrs.normal_delta1 = vec3(0.0);
+	attrs.normal_delta2 = vec3(0.0);
 	attrs.has_uv = false;
 	attrs.has_uv2 = false;
 	attrs.has_normal = false;
@@ -285,11 +317,15 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 
 	uint i0, i1, i2;
 	get_triangle_indices(geom, i0, i1, i2);
+	attrs.indices = uvec3(i0, i1, i2);
 
 	vec3 bary = vec3(1.0 - hit_attribs.x - hit_attribs.y, hit_attribs.x, hit_attribs.y);
 
-	if ((fetch_flags & FETCH_UV) != 0u && geom.uv_byte_offset != OFFSET_NONE) {
-		attrs.uv = fetch_uv(geom, i0, i1, i2, bary);
+	if ((fetch_flags & FETCH_UV) != 0u && geom.uv_byte_offset != OFFSET_NONE && geom.attribute_address != 0ul) {
+		vec2 uv0 = fetch_uv_vertex(geom, geom.uv_byte_offset, geom.uv_scale_packed, i0);
+		attrs.uv_edge1 = fetch_uv_vertex(geom, geom.uv_byte_offset, geom.uv_scale_packed, i1) - uv0;
+		attrs.uv_edge2 = fetch_uv_vertex(geom, geom.uv_byte_offset, geom.uv_scale_packed, i2) - uv0;
+		attrs.uv = uv0 + bary.y * attrs.uv_edge1 + bary.z * attrs.uv_edge2;
 		attrs.has_uv = true;
 	}
 
@@ -308,6 +344,8 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 		attrs.normal = tbn.normal;
 		attrs.tangent = tbn.tangent;
 		attrs.bitangent_sign = tbn.bitangent_sign;
+		attrs.normal_delta1 = tbn.normal_delta1;
+		attrs.normal_delta2 = tbn.normal_delta2;
 		attrs.has_normal = true;
 		attrs.has_tangent = true;
 	}

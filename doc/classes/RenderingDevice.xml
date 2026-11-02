@@ -2401,6 +2401,9 @@
 		<constant name="ACCELERATION_STRUCTURE_LOW_MEMORY_BIT" value="16" enum="AccelerationStructureFlagBits" is_bitfield="true" experimental="">
 			Reduces the memory usage of the acceleration structure, potentially at the cost of reduced ray traversal performance.
 		</constant>
+		<constant name="ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT" value="2048" enum="AccelerationStructureFlagBits" is_bitfield="true" experimental="">
+			Allows shaders to read the triangle vertex positions of a hit from the acceleration structure, at the cost of extra acceleration structure memory. Requires [constant SUPPORTS_RAYTRACING_POSITION_FETCH].
+		</constant>
 		<constant name="ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT" value="1" enum="AccelerationStructureGeometryFlagBits" is_bitfield="true" experimental="">
 			An opaque geometry does not invoke the any hit shaders.
 		</constant>
@@ -2867,6 +2870,9 @@
 		<constant name="SUPPORTS_VERTEX_PIPELINE_STORES" value="17" enum="Features">
 			Support for storage buffer writes from vertex shaders. On Vulkan, requires the [code]vertexPipelineStoresAndAtomics[/code] feature.
 		</constant>
+		<constant name="SUPPORTS_RAYTRACING_POSITION_FETCH" value="18" enum="Features">
+			Support for reading hit triangle vertex positions from acceleration structures built with [constant ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT]. On Vulkan, requires the [code]VK_KHR_ray_tracing_position_fetch[/code] extension.
+		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
 		</constant>
@@ -2994,6 +3000,12 @@
 		</constant>
 		<constant name="MEMORY_TOTAL" value="2" enum="MemoryType">
 			Total memory taken. This is greater than the sum of [constant MEMORY_TEXTURES] and [constant MEMORY_BUFFERS], as it also includes miscellaneous memory usage.
+		</constant>
+		<constant name="MEMORY_BLAS" value="3" enum="MemoryType">
+			Memory taken by bottom-level acceleration structures, excluding build scratch (counted in [constant MEMORY_BUFFERS]). Included in [constant MEMORY_TOTAL]. Only reported by the Vulkan driver.
+		</constant>
+		<constant name="MEMORY_TLAS" value="4" enum="MemoryType">
+			Memory taken by top-level acceleration structures, excluding build scratch and instance buffers (counted in [constant MEMORY_BUFFERS]). Included in [constant MEMORY_TOTAL]. Only reported by the Vulkan driver.
 		</constant>
 		<constant name="INVALID_ID" value="-1">
 			Returned by functions that return an ID if a value is invalid.

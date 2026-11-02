@@ -13,6 +13,11 @@
 // HIT DATA
 // ============================================================================
 
+// Ray cones only follow primary and mirror paths: rough bounces blur texture detail away.
+bool rt_ray_cone_active() {
+	return (RT_FLAGS & RT_FLAG_RAY_CONES_ENABLED) != 0u && rt_ray_is_singular(payload.packed_bounces_flags);
+}
+
 struct HitData {
 	vec3 hit_pos;
 	vec3 geometry_normal; // World space, flipped on back faces of cull_front / cull_disabled materials (raster DO_SIDE_CHECK).
@@ -23,7 +28,20 @@ struct HitData {
 	vec4 color; // Vertex color (white if not present).
 	bool is_front_face;
 	uint geometry_idx;
+	float uv_density; // Raw UV area per world area of the hit triangle; 0 without UVs or an active ray cone.
+	float uv2_density; // As uv_density for UV2; only computed when a material samples UV2.
+	float curvature; // Signed normal curvature of the triangle as seen (1 / world radius, > 0 convex); 0 without an active ray cone.
 };
+
+// Vertex normal differences up to this are treated as flat: export noise and TBN quantization.
+#define RT_CURVATURE_NORMAL_DELTA_MIN 0.002
+
+// Signed curvature (> 0 convex) along world-space edges p_e1/p_e2 with world normal differences p_dn1/p_dn2, averaged.
+float rt_triangle_curvature(vec3 p_e1, vec3 p_e2, vec3 p_dn1, vec3 p_dn2) {
+	float k1 = dot(p_dn1, p_dn1) > RT_CURVATURE_NORMAL_DELTA_MIN * RT_CURVATURE_NORMAL_DELTA_MIN ? dot(p_dn1, p_e1) / max(dot(p_e1, p_e1), 1e-12) : 0.0;
+	float k2 = dot(p_dn2, p_dn2) > RT_CURVATURE_NORMAL_DELTA_MIN * RT_CURVATURE_NORMAL_DELTA_MIN ? dot(p_dn2, p_e2) / max(dot(p_e2, p_e2), 1e-12) : 0.0;
+	return 0.5 * (k1 + k2);
+}
 
 // Fetch vertex attributes and transform to world space.
 // Requires hitAttributeEXT HitAttribs and GeometryBuffer/MaterialBuffer bindings.
@@ -36,14 +54,21 @@ HitData compute_hit_data() {
 	// pull all attributes; default HGs can skip color for perf.
 #ifdef RT_CUSTOM_HIT_GROUP
 	VertexAttributes attrs = fetch_vertex_attributes(geom, attribs, FETCH_ALL);
+#ifdef RT_USES_UV2
+	const bool uv2_density_used = true;
 #else
-	uint uv2_fetch = (rt_entry_material_flags(h.geometry_idx) & RT_MAT_FLAG_EMISSION_UV2) != 0u ? FETCH_UV2 : 0u;
-	VertexAttributes attrs = fetch_vertex_attributes(geom, attribs, FETCH_UV | FETCH_TBN | uv2_fetch);
+	const bool uv2_density_used = false;
+#endif
+#else
+	bool uv2_density_used = (rt_entry_material_flags(h.geometry_idx) & RT_MAT_FLAG_EMISSION_UV2) != 0u;
+	VertexAttributes attrs = fetch_vertex_attributes(geom, attribs, FETCH_UV | FETCH_TBN | (uv2_density_used ? FETCH_UV2 : 0u));
 #endif
 	h.uv = attrs.uv;
 	h.uv2 = attrs.uv2;
 	h.color = attrs.color;
-
+	h.uv_density = 0.0;
+	h.uv2_density = 0.0;
+	h.curvature = 0.0;
 	mat3 model_rotation = mat3(gl_ObjectToWorldEXT);
 	mat3 normal_matrix = mat3(
 			normalize(model_rotation[0]),
@@ -73,8 +98,35 @@ HitData compute_hit_data() {
 		h.tangent = normalize(normal_matrix * attrs.tangent);
 		h.bitangent = cross(h.geometry_normal, h.tangent) * attrs.bitangent_sign;
 
+		vec3 unchecked_normal = h.geometry_normal;
 		h.is_front_face = rt_triangle_front_facing(geom);
 		h.geometry_normal = rt_side_checked_normal(geom, h.geometry_normal, h.is_front_face);
+
+		if (rt_ray_cone_active()) {
+#ifdef RT_RAY_CONE_POSITION_FETCH
+			vec3 p0 = gl_HitTriangleVertexPositionsEXT[0];
+			vec3 p1 = gl_HitTriangleVertexPositionsEXT[1];
+			vec3 p2 = gl_HitTriangleVertexPositionsEXT[2];
+#else
+			vec3 p0 = fetch_position_vertex(geom, attrs.indices.x);
+			vec3 p1 = fetch_position_vertex(geom, attrs.indices.y);
+			vec3 p2 = fetch_position_vertex(geom, attrs.indices.z);
+#endif
+			vec3 e1 = model_rotation * (p1 - p0);
+			vec3 e2 = model_rotation * (p2 - p0);
+			// A side-checked back face is seen from inside: convex flips to concave.
+			float side = dot(h.geometry_normal, unchecked_normal) < 0.0 ? -1.0 : 1.0;
+			h.curvature = side * rt_triangle_curvature(e1, e2, normal_matrix * attrs.normal_delta1, normal_matrix * attrs.normal_delta2);
+			float world_area = length(cross(e1, e2));
+			float uv_area = abs(attrs.uv_edge1.x * attrs.uv_edge2.y - attrs.uv_edge1.y * attrs.uv_edge2.x);
+			h.uv_density = attrs.has_uv && world_area > 0.0 ? uv_area / world_area : 0.0;
+			if (uv2_density_used && attrs.has_uv2 && world_area > 0.0) {
+				vec2 uv2_0 = fetch_uv_vertex(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, attrs.indices.x);
+				vec2 uv2_edge1 = fetch_uv_vertex(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, attrs.indices.y) - uv2_0;
+				vec2 uv2_edge2 = fetch_uv_vertex(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, attrs.indices.z) - uv2_0;
+				h.uv2_density = abs(uv2_edge1.x * uv2_edge2.y - uv2_edge1.y * uv2_edge2.x) / world_area;
+			}
+		}
 	}
 
 	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
@@ -90,6 +142,75 @@ HitData compute_hit_data() {
 vec3 apply_normal_map(HitData h, vec3 tangent_space_normal, float normal_map_depth) {
 	vec3 mapped = h.tangent * tangent_space_normal.x + h.bitangent * tangent_space_normal.y + h.geometry_normal * tangent_space_normal.z;
 	return normalize(mix(h.geometry_normal, mapped, normal_map_depth));
+}
+
+// ============================================================================
+// TEXTURE STREAMING FEEDBACK (ray cones)
+// ============================================================================
+
+#include "../scene_forward_streaming_inc.glsl"
+
+// Width of the camera pixel cone at the hit. Mirrors are treated as flat (no curvature spread).
+float rt_pixel_cone_width() {
+	mat4 projection = scene_data_block.data.projection_matrix;
+	float pixel_size = 2.0 / (float(gl_LaunchSizeEXT.y) * abs(projection[1][1]));
+	if (projection[3][3] != 0.0) {
+		return pixel_size; // Orthogonal: constant world size.
+	}
+	vec3 camera_pos = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
+	return pixel_size * (distance(gl_WorldRayOriginEXT, camera_pos) + gl_HitTEXT);
+}
+
+// UV footprint of the pixel cone for a mapping of p_density (UV area per world area), zero when inactive.
+// Across the ray and stretched by 1 / cos along it; orientation in UV space is arbitrary.
+void rt_ray_cone_gradients(float p_density, vec3 p_normal, out vec2 r_ddx, out vec2 r_ddy) {
+	r_ddx = vec2(0.0);
+	r_ddy = vec2(0.0);
+	if (!rt_ray_cone_active() || p_density <= 0.0) {
+		return;
+	}
+	float across = sqrt(p_density) * rt_pixel_cone_width();
+	r_ddx.x = across;
+	r_ddy.y = across / max(abs(dot(p_normal, gl_WorldRayDirectionEXT)), 1e-3);
+}
+
+// UV density of a material UV channel: mesh UV density times UV scale, or the scale alone for triplanar mapping.
+float rt_channel_uv_density(MaterialUVChannel p_ch, float p_mesh_density) {
+	float scale_area = abs(p_ch.scale.x * p_ch.scale.y);
+	if (!p_ch.triplanar) {
+		return p_mesh_density * scale_area;
+	}
+	return p_ch.object_space ? scale_area / pow(abs(determinant(mat3(gl_ObjectToWorldEXT))), 2.0 / 3.0) : scale_area;
+}
+
+// p_mesh_density must match the channel's mesh UV set (h.uv_density or h.uv2_density).
+void rt_material_uv_apply_cone(inout MaterialUV r_muv, MaterialUVChannel p_ch, float p_mesh_density, HitData h) {
+	rt_ray_cone_gradients(rt_channel_uv_density(p_ch, p_mesh_density), h.geometry_normal, r_muv.uv_ddx, r_muv.uv_ddy);
+}
+
+// Same encoding as the raster material feedback (binding 38): atomicMax of ~floatBitsToUint(footprint_sq).
+layout(set = 0, binding = 42, std430) buffer RTMaterialFeedback {
+	uint data[];
+}
+rt_material_feedback;
+
+// Reports a UV footprint to texture streaming.
+void rt_texture_streaming_feedback(uint p_geometry_idx, vec2 p_ddx, vec2 p_ddy) {
+	uint flags = payload.packed_bounces_flags;
+	if (p_ddx == vec2(0.0) || !is_sample_zero(flags) || (flags & GUIDE_RAY_FLAG) != 0u) {
+		return;
+	}
+	uint slot = geometries[p_geometry_idx].material_feedback_index;
+	if (slot >= uint(rt_material_feedback.data.length())) {
+		return;
+	}
+	// The bound samplers apply the mipmap bias, so the streamed mips must cover it too.
+	float bias_scale = exp2(2.0 * get_rt_param(RT_PARAM_TEXTURE_MIPMAP_BIAS));
+	uint required = ~floatBitsToUint(streaming_footprint_sq(p_ddx, p_ddy) * bias_scale);
+	// Plain load first: most hits repeat a value already stored, and atomics on a few hot slots serialize.
+	if (rt_material_feedback.data[slot] < required) {
+		atomicMax(rt_material_feedback.data[slot], required);
+	}
 }
 
 // ============================================================================
@@ -315,6 +436,64 @@ uint rt_receiver_shadow_mask(uint p_geometry_idx) {
 
 #ifdef RT_DEBUG_ENABLED
 #define RT_VIS_DIRECTIONAL_SHADOW_BLOCKER 27
+#define RT_VIS_TEXTURE_MIP 30
+#define RT_VIS_MIRROR_GUIDES 31
+
+// DLSS-RR guide handling of a primary hit, for RT_VIS_MIRROR_GUIDES.
+#define RT_MIRROR_GUIDE_NONE 0u // Not a reflective metal: own guides and motion.
+#define RT_MIRROR_GUIDE_REFLECTION 1u // Velocity follows the curvature-aware reflection.
+#define RT_MIRROR_GUIDE_REPLACED 2u // Velocity follows the reflection and primary surface replacement runs.
+uint dlss_rr_debug_mirror_guide(HitData h, MaterialResult m, out float r_power);
+uint rt_debug_mirror_guide = RT_MIRROR_GUIDE_NONE; // Set by debug_material_inputs() in RT_VIS_MIRROR_GUIDES.
+float rt_debug_mirror_power = 0.0; // 2 * curvature * reflection distance (> 0 convex), with rt_debug_mirror_guide.
+
+// Gray: none, yellow: reflection (toward red when convex, blue when concave), green: replaced; over albedo luminance.
+vec3 debug_mirror_guide_color(uint p_guide, float p_power, vec3 p_albedo) {
+	const vec3 palette[3] = vec3[](vec3(0.5), vec3(1.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0));
+	vec3 color = palette[p_guide];
+	if (p_guide == RT_MIRROR_GUIDE_REFLECTION) {
+		color = mix(color, p_power > 0.0 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.3, 1.0), clamp(abs(p_power), 0.0, 1.0));
+	}
+	return color * mix(0.3, 1.0, clamp(luminance(p_albedo), 0.0, 1.0));
+}
+
+// Mip the bound samplers pick for a p_size texture with p_levels levels and footprint p_ddx/p_ddy, -1 without mipmaps.
+float rt_debug_texture_mip_level(ivec2 p_size, int p_levels, vec2 p_ddx, vec2 p_ddy) {
+	if (p_levels <= 1) {
+		return -1.0;
+	}
+	vec2 size = vec2(p_size);
+	float rho_sq = max(dot(p_ddx * size, p_ddx * size), dot(p_ddy * size, p_ddy * size));
+	float lod = 0.5 * log2(max(rho_sq, 1e-20)) + get_rt_param(RT_PARAM_TEXTURE_MIPMAP_BIAS);
+	return clamp(lod, 0.0, float(p_levels - 1));
+}
+
+// Albedo texture mip of the current hit for RT_VIS_TEXTURE_MIP, see rt_debug_texture_mip_level().
+float rt_debug_texture_mip = -1.0;
+int rt_debug_texture_rank = 0;
+
+// Records a custom shader texture() for RT_VIS_TEXTURE_MIP: the first of the highest rank wins. Returns 0 for the comma operator.
+float rt_debug_record_texture(ivec2 p_size, int p_levels, vec2 p_ddx, vec2 p_ddy, int p_rank) {
+	if (p_rank > rt_debug_texture_rank) {
+		rt_debug_texture_rank = p_rank;
+		rt_debug_texture_mip = rt_debug_texture_mip_level(p_size, p_levels, p_ddx, p_ddy);
+	}
+	return 0.0;
+}
+#define RT_TEXTURE_MIP_DEBUG
+
+// Red (mip 0), orange, yellow, green, cyan, blue, purple, magenta (7+), blended between levels, over albedo luminance.
+// Gray: no mipmaps or no albedo texture.
+vec3 debug_texture_mip_color(float p_mip, vec3 p_albedo) {
+	const vec3 palette[8] = vec3[](vec3(1.0, 0.0, 0.0), vec3(1.0, 0.5, 0.0), vec3(1.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0),
+			vec3(0.0, 1.0, 1.0), vec3(0.0, 0.25, 1.0), vec3(0.5, 0.0, 1.0), vec3(1.0, 0.0, 1.0));
+	float shade = mix(0.3, 1.0, clamp(luminance(p_albedo), 0.0, 1.0));
+	if (p_mip < 0.0) {
+		return vec3(0.5) * shade;
+	}
+	int level = min(int(p_mip), 7);
+	return mix(palette[level], palette[min(level + 1, 7)], p_mip - float(level)) * shade;
+}
 
 bool debug_is_camera_visible(uint p_geometry_idx, vec3 p_origin, vec3 p_direction, float p_t) {
 	rayQueryEXT rq;
@@ -442,6 +621,9 @@ MaterialDebugInputs debug_material_inputs(HitData p_h, MaterialResult p_m, vec3 
 	inputs.NdotV = max(dot(p_m.normal, -gl_WorldRayDirectionEXT), 0.0001);
 	inputs.front_facing = p_h.is_front_face;
 	inputs.depth = gl_HitTEXT / (scene_data_block.data.z_far - scene_data_block.data.z_near);
+	if (int(get_rt_param(RT_PARAM_VIS_MODE)) == RT_VIS_MIRROR_GUIDES) {
+		rt_debug_mirror_guide = dlss_rr_debug_mirror_guide(p_h, p_m, rt_debug_mirror_power);
+	}
 	return inputs;
 }
 
@@ -488,6 +670,19 @@ void debug_visualize(int vis_mode, MaterialDebugInputs dbg, float alpha) {
 			}
 			ps.radiance = color;
 		}
+	} else if (vis_mode == RT_VIS_TEXTURE_MIP) {
+		// Metallic mirrors show what they reflect, which keeps its ray cone (singular path) like in shading.
+		if (dbg.metallic >= 0.5 && dbg.roughness <= SINGULAR_ROUGHNESS_MAX && get_total_bounces(ps.packed_bounces_flags) < RT_GET_MAX_BOUNCES()) {
+			ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags);
+			ps.hit_t = gl_HitTEXT;
+			ps.offset_normal = dbg.geometry_normal;
+			ps.next_ray_dir = reflect(gl_WorldRayDirectionEXT, dbg.normal);
+			path_pack(payload, ps);
+			return;
+		}
+		ps.radiance = debug_texture_mip_color(rt_debug_texture_mip, dbg.albedo);
+	} else if (vis_mode == RT_VIS_MIRROR_GUIDES) {
+		ps.radiance = debug_mirror_guide_color(rt_debug_mirror_guide, rt_debug_mirror_power, dbg.albedo);
 	} else if (vis_mode == RT_VIS_DIRECTIONAL_SHADOW_BLOCKER) {
 		ps.radiance = debug_directional_shadow_blocker(dbg.geometry_normal, rt_receiver_shadow_mask(RT_HIT_GEOMETRY_IDX));
 	} else if (vis_mode == RT_VIS_DYNAMIC_GEOMETRY) {
@@ -693,14 +888,21 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	return true;
 }
 
-#ifdef DLSS_RR_ENABLED
-// Specular motion vector guide (rt_velocity_image convention). Treats the reflector as a plane:
-// the mirror hit's virtual image sits on the view ray at the reflection distance, moved by the
-// reflector's motion plus the reflected point's motion mirrored through the plane.
+// Debug builds also need the mirror decisions: RT_VIS_MIRROR_GUIDES runs with DLSS-RR off.
+#if defined(DLSS_RR_ENABLED) || defined(RT_DEBUG_ENABLED)
+// Concave reflectors focus where 1 + 2 * curvature * distance reaches 0; the clamp bounds the image depth to 4x past that.
+#define DLSS_RR_CURVED_MIRROR_MIN_DEPTH_DENOM 0.25
+
+// Specular motion vector guide (rt_velocity_image convention). Treats the reflector as a thin mirror
+// of p_curvature (see HitData::curvature): the virtual image sits on the view ray at the mirror-equation
+// depth, moved by the reflector's motion plus the reflected point's motion mirrored through the tangent
+// plane and scaled by the magnification. Flat reflectors (0) give the exact planar image.
 // Rough surfaces use the surface motion. Deterministic: RR guides must never carry sampling noise.
 // p_plane_normal must be the unbumped geometry normal: normal-map detail scatters the virtual
 // image per pixel and DLSS-RR warps highlights along that noise.
-vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_plane_normal, vec3 V, float p_roughness, uint p_mask) {
+// r_spec_t is the reflection distance, 0 when the surface motion is used.
+vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_plane_normal, float p_curvature, vec3 V, float p_roughness, uint p_mask, out float r_spec_t) {
+	r_spec_t = 0.0;
 	if (p_roughness >= MAX_DENOISER_SPECULAR_HIT_THRESHOLD) {
 		return rt_motion_vector(p_hit_pos, p_prev_hit_pos);
 	}
@@ -708,7 +910,7 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	vec3 spec_dir = reflect(-V, N);
 	vec3 spec_origin = offset_ray_origin(p_hit_pos, spec_dir);
 	rayQueryEXT spec_rq;
-	// A/B: TerminateOnFirstHit stops at whichever hit traversal finds first, not the closest.
+	// NOTE: TerminateOnFirstHit stops at whichever hit traversal finds first, not the closest. This is incorrect, but it seems to work well enough for a sizable perf boost.
 	rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS | gl_RayFlagsTerminateOnFirstHitEXT, p_mask, spec_origin, 0.001, spec_dir, 10000.0);
 	while (rayQueryProceedEXT(spec_rq)) {
 		if (rayQueryGetIntersectionTypeEXT(spec_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
@@ -719,44 +921,64 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 			rayQueryConfirmIntersectionEXT(spec_rq);
 		}
 	}
-	if (rayQueryGetIntersectionTypeEXT(spec_rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) {
-		// Reflected sky is at infinity: only camera rotation moves it, like the primary sky velocity.
-		vec3 far_world = p_hit_pos - V * 10000.0;
-		return rt_motion_vector(far_world, far_world);
+	// Reflected sky is far and static.
+	float spec_t = 10000.0;
+	vec3 reflected_motion = vec3(0.0);
+	if (rayQueryGetIntersectionTypeEXT(spec_rq, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
+		spec_t = rayQueryGetIntersectionTEXT(spec_rq, true);
+		vec3 reflected_pos = spec_origin + spec_dir * spec_t;
+		uint reflected_geom_idx = RT_RQ_GEOMETRY_IDX(spec_rq, true);
+		vec3 reflected_obj_pos = rt_prev_triangle_object_pos(geometries[reflected_geom_idx],
+				uint(rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, true)),
+				rayQueryGetIntersectionBarycentricsEXT(spec_rq, true),
+				(mat4(rayQueryGetIntersectionWorldToObjectEXT(spec_rq, true)) * vec4(reflected_pos, 1.0)).xyz);
+		vec3 reflected_prev_pos = rt_prev_world_pos(reflected_geom_idx, reflected_obj_pos,
+				mat4(rayQueryGetIntersectionObjectToWorldEXT(spec_rq, true)));
+		reflected_motion = reflected_prev_pos - reflected_pos;
 	}
+	r_spec_t = spec_t;
 
-	float spec_t = rayQueryGetIntersectionTEXT(spec_rq, true);
-	vec3 reflected_pos = spec_origin + spec_dir * spec_t;
-	uint reflected_geom_idx = RT_RQ_GEOMETRY_IDX(spec_rq, true);
-	vec3 reflected_obj_pos = rt_prev_triangle_object_pos(geometries[reflected_geom_idx],
-			uint(rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, true)),
-			rayQueryGetIntersectionBarycentricsEXT(spec_rq, true),
-			(mat4(rayQueryGetIntersectionWorldToObjectEXT(spec_rq, true)) * vec4(reflected_pos, 1.0)).xyz);
-	vec3 reflected_prev_pos = rt_prev_world_pos(reflected_geom_idx, reflected_obj_pos,
-			mat4(rayQueryGetIntersectionObjectToWorldEXT(spec_rq, true)));
-
+	// Thin mirror equation: virtual depth d / (1 + 2kd), lateral magnification the same ratio.
+	float magnification = 1.0 / max(1.0 + 2.0 * p_curvature * spec_t, DLSS_RR_CURVED_MIRROR_MIN_DEPTH_DENOM);
 	vec3 reflector_motion = p_prev_hit_pos - p_hit_pos;
-	vec3 relative_motion = reflected_prev_pos - reflected_pos - reflector_motion;
-	vec3 virtual_pos = p_hit_pos - V * spec_t;
-	vec3 virtual_prev_pos = virtual_pos + reflector_motion + reflect(relative_motion, N);
+	vec3 virtual_pos = p_hit_pos - V * (spec_t * magnification);
+	vec3 virtual_prev_pos = virtual_pos + reflector_motion + magnification * reflect(reflected_motion - reflector_motion, N);
 	return rt_motion_vector(virtual_pos, virtual_prev_pos);
 }
 
+// Primary hits at least this metallic take the reflection's motion as their own.
+#define DLSS_RR_SPECULAR_ONLY_METALNESS 0.9
+// Above this roughness the reflection is too blurry for its motion to beat the surface motion.
+#define DLSS_RR_REFLECTION_VELOCITY_ROUGHNESS_MAX 0.1
+// Max |curvature| * reflection distance for primary surface replacement; ~10% virtual image depth error.
+#define DLSS_RR_FLAT_MIRROR_MAX_CURVATURE_DISTANCE 0.05
+// Reflection distance cap for the flatness test, so sky (10000) doesn't reject near-flat mirrors.
+#define DLSS_RR_FLAT_MIRROR_MAX_DISTANCE 100.0
+
+// Glossy metals show nothing of their own, so primary motion follows the (curvature-aware) reflection.
+bool dlss_rr_velocity_follows_reflection(MaterialResult m) {
+	return m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS && m.roughness <= DLSS_RR_REFLECTION_VELOCITY_ROUGHNESS_MAX;
+}
+
+// Primary surface replacement maps hits through the mirror plane, so it needs a reflector that is flat over the reflection distance.
+bool dlss_rr_reflection_is_planar(HitData h, float p_spec_t) {
+	return abs(h.curvature) * min(p_spec_t, DLSS_RR_FLAT_MIRROR_MAX_DISTANCE) <= DLSS_RR_FLAT_MIRROR_MAX_CURVATURE_DISTANCE;
+}
+// Material-only test: an albedo/Fresnel based share flips per texel and with view angle, tearing
+// replaced and own guides apart on textured dielectrics.
+bool dlss_rr_is_replaceable_mirror(HitData h, MaterialResult m) {
+	return m.roughness <= DLSS_RR_REPLACEMENT_ROUGHNESS_MAX && m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS &&
+			!surface_is_unshaded(h.geometry_idx);
+}
+#endif // DLSS_RR_ENABLED || RT_DEBUG_ENABLED
+
+#ifdef DLSS_RR_ENABLED
 vec3 dlss_rr_compute_specular_albedo(MaterialResult m, float NdotV) {
 	return DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, material_specular_to_f0(m.specular), m.roughness, NdotV);
 }
 
 void dlss_rr_store_albedo_guides(MaterialResult m, float NdotV) {
 	dlss_rr_write_albedo_guides(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), dlss_rr_compute_specular_albedo(m, NdotV));
-}
-
-// Primary hits at least this metallic take the reflection's motion as their own.
-#define DLSS_RR_SPECULAR_ONLY_METALNESS 0.9
-// Material-only test: an albedo/Fresnel based share flips per texel and with view angle, tearing
-// replaced and own guides apart on textured dielectrics.
-bool dlss_rr_is_replaceable_mirror(HitData h, MaterialResult m) {
-	return m.roughness <= DLSS_RR_REPLACEMENT_ROUGHNESS_MAX && m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS &&
-			!surface_is_unshaded(h.geometry_idx);
 }
 
 // Guide ray hit, returned to raygen in the payload. Every hit: hit_t, diffuse albedo (packed_rt[2])
@@ -805,11 +1027,26 @@ void dlss_rr_composite_peel_guides(HitData h, MaterialResult m, vec3 N, vec3 V, 
 
 	// Blended motion vectors would point at neither surface, so the larger share owns them.
 	if (share >= 0.5) {
-		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, m.roughness, RT_VIS_MASK | RT_TMASK_TRANSPARENT);
+		float spec_t;
+		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, h.curvature, V, m.roughness, RT_VIS_MASK | RT_TMASK_TRANSPARENT, spec_t);
 		dlss_rr_write_specular_motion_vector(specular_mv);
 	}
 }
 #endif // DLSS_RR_ENABLED
+
+#ifdef RT_DEBUG_ENABLED
+// Mirrors the primary hit decisions in shade_and_bounce().
+uint dlss_rr_debug_mirror_guide(HitData h, MaterialResult m, out float r_power) {
+	r_power = 0.0;
+	if (!dlss_rr_velocity_follows_reflection(m)) {
+		return RT_MIRROR_GUIDE_NONE;
+	}
+	float spec_t;
+	dlss_rr_specular_motion_vector(h.hit_pos, h.hit_pos, h.geometry_normal, h.curvature, -gl_WorldRayDirectionEXT, m.roughness, RT_VIS_MASK, spec_t);
+	r_power = 2.0 * h.curvature * min(spec_t, DLSS_RR_FLAT_MIRROR_MAX_DISTANCE);
+	return dlss_rr_is_replaceable_mirror(h, m) && dlss_rr_reflection_is_planar(h, spec_t) ? RT_MIRROR_GUIDE_REPLACED : RT_MIRROR_GUIDE_REFLECTION;
+}
+#endif // RT_DEBUG_ENABLED
 
 // Production shading: emissive + NEE direct lighting + BRDF importance sampling + next bounce.
 // Also handles DLSS-RR G-buffer output on primary ray.
@@ -931,15 +1168,14 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 		dlss_rr_store_albedo_guides(m, NdotV);
 		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, m.roughness));
-		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, m.roughness, RT_VIS_MASK);
+		float spec_t;
+		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, h.curvature, V, m.roughness, RT_VIS_MASK, spec_t);
 		dlss_rr_write_specular_motion_vector(specular_mv);
-		// Metals show nothing of their own, so primary motion follows the reflection (which is the
-		// surface motion again past the spec MV roughness limit).
-		if (m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS) {
+		if (dlss_rr_velocity_follows_reflection(m)) {
 			imageStore(rt_velocity_image, pixel, vec4(specular_mv, 0.0, 0.0));
 		}
 		// The path's next hit (or raygen's fallback walk) replaces these guides with the surface seen through the mirror.
-		if (dlss_rr_is_replaceable_mirror(h, m)) {
+		if (dlss_rr_is_replaceable_mirror(h, m) && dlss_rr_reflection_is_planar(h, spec_t)) {
 			ps.packed_bounces_flags |= DLSS_RR_REPLACE_PENDING_FLAG;
 		}
 	} else if (total_bounces == 1u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u &&

@@ -49,12 +49,26 @@ public:
 	};
 
 	struct IdentifierActions {
+		struct TextureGradients {
+			StringName coord;
+			String ddx;
+			String ddy;
+		};
+
 		HashMap<StringName, Stage> entry_point_stages;
 
 		HashMap<StringName, Pair<int *, int>> render_mode_values;
 		HashMap<StringName, bool *> render_mode_flags;
 		HashMap<StringName, bool *> usage_flag_pointers;
 		HashMap<StringName, String> function_renames;
+
+		// texture() footprints. Entry 0 is the fallback; later ones apply to values derived from their coord.
+		Vector<TextureGradients> texture_gradients;
+		bool texture_explicit_gradients = false; // Emit texture() as textureGrad().
+		bool texture_gradients_pre_vertex = false; // Also scale by coord writes in vertex().
+		String texture_footprint_code; // Writes the finest footprint to texture_gradients[0].
+		String texture_debug_macro; // MACRO(sampler, ddx, ddy, rank), rank 2 for source_color.
+
 		HashMap<StringName, bool *> write_flag_pointers;
 		HashMap<StringName, Pair<int *, int>> stencil_mode_values;
 		int *stencil_reference = nullptr;
@@ -134,6 +148,33 @@ private:
 	HashSet<StringName> used_smode_defines;
 	HashSet<StringName> internal_functions;
 	HashSet<StringName> fragment_varyings;
+
+	enum CoordScale {
+		COORD_SCALE_NONE,
+		COORD_SCALE_AFFINE,
+		COORD_SCALE_UNKNOWN,
+	};
+
+	struct TextureFootprint {
+		int source = 0;
+		String scale;
+		bool operator==(const TextureFootprint &p_other) const { return source == p_other.source && scale == p_other.scale; }
+	};
+
+	struct DumpContext {
+		GeneratedCode *gen_code = nullptr;
+		IdentifierActions *actions = nullptr;
+		const DefaultIdentifierActions *default_actions = nullptr;
+	};
+
+	HashMap<StringName, LocalVector<const ShaderLanguage::Node *>> dataflow_defs;
+	LocalVector<HashSet<StringName>> texture_coord_dependents;
+	LocalVector<TextureFootprint> texture_footprints;
+
+	bool _is_uniform_expression(const ShaderLanguage::Node *p_node) const;
+	CoordScale _coord_scale(const ShaderLanguage::Node *p_node, int p_source, HashSet<StringName> &r_expanding, const DumpContext &p_context, String &r_scale);
+	TextureFootprint _texture_footprint(const ShaderLanguage::Node *p_coord, const DumpContext &p_context);
+	String _texture_footprint_code(const IdentifierActions &p_actions) const;
 
 	DefaultIdentifierActions actions;
 

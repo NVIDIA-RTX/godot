@@ -8,9 +8,8 @@
 #include "../half_inc.glsl"
 
 /* Include our forward mobile UBOs definitions etc. */
-#include "scene_forward_mobile_inc.glsl"
-
 #include "../billboard_inc.glsl"
+#include "scene_forward_mobile_inc.glsl"
 
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
@@ -1365,6 +1364,11 @@ void main() {
 #if !defined(STREAMING_LOD_USED)
 		vec2 uv_ddx = dFdx(uv_interp);
 		vec2 uv_ddy = dFdy(uv_interp);
+#if defined(UV2_USED)
+		vec2 uv2_ddx = dFdx(uv2_interp);
+		vec2 uv2_ddy = dFdy(uv2_interp);
+#endif
+#CODE : TEXTURE_FOOTPRINT
 #endif
 
 		if (!gl_HelperInvocation) {

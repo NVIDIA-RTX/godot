@@ -115,6 +115,19 @@ uint32_t BindlessBlock::add_texture(RID p_texture) {
 	return index;
 }
 
+void BindlessBlock::replace_texture(RID p_old, RID p_new) {
+	HashMap<RID, uint32_t>::Iterator it = texture_to_index.find(p_old);
+	if (it == texture_to_index.end()) {
+		return;
+	}
+	const uint32_t index = it->value;
+	texture_to_index.remove(it);
+	textures[index] = p_new;
+	if (!texture_to_index.has(p_new)) {
+		texture_to_index[p_new] = index;
+	}
+}
+
 RID BindlessBlock::create_uniform_set(RID p_shader, uint32_t p_set_index) const {
 	ERR_FAIL_COND_V_MSG(!is_initialized(), RID(), "BindlessBlock not initialized.");
 

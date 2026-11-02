@@ -218,11 +218,8 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 
 	RENDER_TIMESTAMP("Fill Render Lists");
 
-	// With a nonzero transparency layer budget, blend surfaces are path-traced
-	// through the unified TLAS and the raster alpha overlay is skipped.
-	// A zero budget restores the legacy raster overlay.
-	const bool pt_transparency = rb_data.is_valid() && raytracing && raytracing->get_shader() &&
-			(int)GLOBAL_GET("rendering/pathtracing/max_transparency_layers") > 0;
+	// Otherwise blend surfaces are path traced through the unified TLAS and the raster alpha overlay is skipped.
+	const bool pt_transparency = rb_data.is_valid() && raytracing && raytracing->get_shader() && !pathtracing_uses_raster_list();
 
 	if (pt_transparency) {
 		// _fill_render_list is skipped, but the TLAS build still needs fresh
@@ -667,6 +664,11 @@ bool RenderForwardClusteredPT::pathtracing_is_used(RID p_env, RID p_viewport) co
 	return p_env.is_valid() && environment_get_pathtracing_enabled(p_env) &&
 			(p_viewport.is_null() || RSG::viewport->viewport_get_use_pathtracing(p_viewport)) &&
 			RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE);
+}
+
+// A zero transparency budget falls back to the raster alpha overlay.
+bool RenderForwardClusteredPT::pathtracing_uses_raster_list() const {
+	return GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers") <= 0;
 }
 
 bool RenderForwardClusteredPT::_setup_rt() {

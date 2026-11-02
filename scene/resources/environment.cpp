@@ -1515,10 +1515,12 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_pathtracing_sky_shader_enabled", "enabled"), &Environment::set_pathtracing_sky_shader_enabled);
 	ClassDB::bind_method(D_METHOD("is_pathtracing_sky_shader_enabled"), &Environment::is_pathtracing_sky_shader_enabled);
 	GLOBAL_DEF("rendering/pathtracing/use_simple_shadows", false);
+	GLOBAL_DEF_RST("rendering/pathtracing/ray_cones", true);
+	GLOBAL_DEF("rendering/pathtracing/ray_cones_position_fetch", false);
 
 	ADD_GROUP("Pathtracing", "pathtracing_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "pathtracing_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_pathtracing_enabled", "is_pathtracing_enabled");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_debug_mode", PROPERTY_HINT_ENUM, "Disabled,Mirror Reflection,Geometry Normals,Final Normals,Normal Map,Tangent,Bitangent,UV,Albedo,ORM,Diffuse Albedo,Specular Albedo,Normal+Roughness,Specular Hit Dist,Metalness,Roughness,View Normals,Diffuse+Specular,Fresnel F0,Front/Back Face,Depth,Emissive,BRDF Rejection,Transparency Layers,Timing Heatmap,Volumetric Fog,Volumetric Fog Transmittance,Directional Shadow Blocker,Decal Overlap,Dynamic Geometry"), "set_pathtracing_debug_mode", "get_pathtracing_debug_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_debug_mode", PROPERTY_HINT_ENUM, "Disabled,Mirror Reflection,Geometry Normals,Final Normals,Normal Map,Tangent,Bitangent,UV,Albedo,ORM,Diffuse Albedo,Specular Albedo,Normal+Roughness,Specular Hit Dist,Metalness,Roughness,View Normals,Diffuse+Specular,Fresnel F0,Front/Back Face,Depth,Emissive,BRDF Rejection,Transparency Layers,Timing Heatmap,Volumetric Fog,Volumetric Fog Transmittance,Directional Shadow Blocker,Decal Overlap,Dynamic Geometry,Texture Mip,Mirror Guides"), "set_pathtracing_debug_mode", "get_pathtracing_debug_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_samples_per_pixel", PROPERTY_HINT_RANGE, "1,16,1"), "set_pathtracing_samples_per_pixel", "get_pathtracing_samples_per_pixel");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_max_bounces", PROPERTY_HINT_RANGE, "0,8,1"), "set_pathtracing_max_bounces", "get_pathtracing_max_bounces");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pathtracing_denoiser", PROPERTY_HINT_ENUM, "None,DLSS Ray Reconstruction"), "set_pathtracing_denoiser", "get_pathtracing_denoiser");
@@ -1750,6 +1752,8 @@ void Environment::_bind_methods() {
 	BIND_ENUM_CONSTANT(RT_DEBUG_DIRECTIONAL_SHADOW_BLOCKER);
 	BIND_ENUM_CONSTANT(RT_DEBUG_DECAL_OVERLAP);
 	BIND_ENUM_CONSTANT(RT_DEBUG_DYNAMIC_GEOMETRY);
+	BIND_ENUM_CONSTANT(RT_DEBUG_TEXTURE_MIP);
+	BIND_ENUM_CONSTANT(RT_DEBUG_MIRROR_GUIDES);
 
 	BIND_ENUM_CONSTANT(FOG_MODE_EXPONENTIAL);
 	BIND_ENUM_CONSTANT(FOG_MODE_DEPTH);

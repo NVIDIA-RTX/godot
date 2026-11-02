@@ -69,6 +69,7 @@ protected:
 
 public:
 	virtual bool pathtracing_is_used(RID p_env, RID p_viewport) const override;
+	virtual bool pathtracing_uses_raster_list() const override;
 	virtual BitField<RSE::RenderingNotReadyReason> get_not_ready_reasons() override;
 
 	RenderForwardClusteredPT();

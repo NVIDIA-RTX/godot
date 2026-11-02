@@ -39,6 +39,7 @@ public:
 	constexpr static uint32_t MAX_BINDLESS_TEXTURES = 128000;
 
 	uint32_t add_texture(RID p_texture);
+	void replace_texture(RID p_old, RID p_new);
 
 	void initialize(RenderingDevice *p_rd);
 

@@ -264,6 +264,7 @@ public:
 	int environment_get_pathtracing_max_bounces(RID p_env) const;
 	RSE::PathtracingDenoiser environment_get_pathtracing_denoiser(RID p_env) const;
 	virtual bool pathtracing_is_used(RID p_env, RID p_viewport) const { return false; }
+	virtual bool pathtracing_uses_raster_list() const { return true; }
 
 	// Adjustment
 	void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction);

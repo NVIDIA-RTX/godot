@@ -5,10 +5,9 @@
 #VERSION_DEFINES
 
 /* Include half precision types. */
+#include "../billboard_inc.glsl"
 #include "../half_inc.glsl"
 #include "scene_forward_clustered_inc.glsl"
-
-#include "../billboard_inc.glsl"
 
 #ifdef MODE_RT_CAPTURE
 #include "rt_capture_inc.glsl"
@@ -1076,10 +1075,9 @@ layout(location = 2) out vec2 motion_vector;
 #define SPECULAR_SCHLICK_GGX
 #endif
 
+#include "../material_inputs_inc.glsl"
 #include "../scene_forward_gi_inc.glsl"
 #include "../scene_forward_lights_inc.glsl"
-
-#include "../material_inputs_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
@@ -1368,6 +1366,11 @@ void fragment_shader(in SceneData scene_data) {
 #if !defined(STREAMING_LOD_USED)
 		vec2 uv_ddx = dFdx(uv_interp);
 		vec2 uv_ddy = dFdy(uv_interp);
+#if defined(UV2_USED)
+		vec2 uv2_ddx = dFdx(uv2_interp);
+		vec2 uv2_ddy = dFdy(uv2_interp);
+#endif
+#CODE : TEXTURE_FOOTPRINT
 #endif
 
 		if (!gl_HelperInvocation) {

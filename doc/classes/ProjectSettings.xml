@@ -3370,6 +3370,14 @@
 		<member name="rendering/pathtracing/parallel_planning" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the path tracer plans its per-frame instance records on the worker thread pool once a viewport has at least 256 instances. Instances that need to create or modify shared resources are deferred and planned serially afterwards, so the result matches serial planning. Disable this to plan on the render thread only, for example to rule out threading issues while debugging.
 		</member>
+		<member name="rendering/pathtracing/ray_cones" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], primary and mirror rays track the camera pixel footprint as a ray cone, and StandardMaterial3D textures are sampled at the matching mip level, including the viewport's texture mipmap bias. If [code]false[/code], path traced textures are always sampled at their most detailed mip level.
+			[b]Note:[/b] Ray cones are always enabled when [member rendering/textures/streaming/enabled] is [code]true[/code], as path traced surfaces report their texture streaming feedback through them. Custom shader materials only report streaming feedback.
+		</member>
+		<member name="rendering/pathtracing/ray_cones_position_fetch" type="bool" setter="" getter="" default="false">
+			If [code]true[/code] and the GPU supports [code]VK_KHR_ray_tracing_position_fetch[/code], ray cones read the hit triangle's vertex positions from the acceleration structure instead of loading them from the vertex buffer. This saves three vertex buffer loads per primary and mirror hit, but every triangle acceleration structure is built with position access, which uses more memory and can slow down tracing on some GPUs. Changing this at runtime recompiles the path tracing shaders and rebuilds all acceleration structures.
+			Has no effect when ray cones are disabled, see [member rendering/pathtracing/ray_cones].
+		</member>
 		<member name="rendering/pathtracing/transparency_dominant_layer_alpha" type="float" setter="" getter="" default="0.5">
 			Minimum alpha the nearest transparent layer needs to become the pixel's dominant surface in the path tracer. The dominant surface writes depth and motion vectors instead of the geometry behind it, and blends into the DLSS Ray Reconstruction guides. Dense smoke and flipbook particles then move with their own motion instead of smearing with the background. Additive and subtractive layers never become dominant unless they use [code]depth_draw_always[/code]. [code]0[/code] disables dominance, so transparent layers keep the motion of what is behind them.
 		</member>

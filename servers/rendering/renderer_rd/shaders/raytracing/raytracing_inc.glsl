@@ -2,8 +2,6 @@
 // Must be included before scene_data_inc.glsl since it defines MAX_VIEWS.
 #include "../oct_inc.glsl"
 
-#include "../oct_inc.glsl"
-
 #define MAX_VIEWS 2
 
 // Per-geometry entry (geometries, materials, motion) of a hit. A TLAS instance's custom index is its
@@ -43,6 +41,7 @@
 #define RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT 20 // rt_params[5].x - peel budget on other indirect segments
 #define RT_PARAM_SELF_SHADOW_MASK 21 // rt_params[5].y - TLAS shadow group bit of SELF_SHADOWING casters (0 = none)
 #define RT_PARAM_VOLUMETRIC_FOG_SAMPLING 22 // rt_params[5].z - VOLUMETRIC_FOG_SAMPLING_* froxel lookup filter
+#define RT_PARAM_TEXTURE_MIPMAP_BIAS 23 // rt_params[5].w - mipmap bias of the material samplers (ray cones only)
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
 #define RT_VIS_DYNAMIC_GEOMETRY 29

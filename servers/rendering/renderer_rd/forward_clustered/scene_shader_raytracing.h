@@ -85,6 +85,8 @@ public:
 		RT_FLAG_TIMING_ENABLED = (1 << 6),
 		RT_FLAG_VOLUMETRIC_FOG_ENABLED = (1 << 7),
 		RT_FLAG_DECALS_ENABLED = (1 << 8), // rendering/pathtracing/max_decals > 0.
+		RT_FLAG_RAY_CONES_ENABLED = (1 << 9),
+		RT_FLAG_RAY_CONE_POSITION_FETCH = (1 << 10),
 	};
 
 	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
@@ -106,7 +108,7 @@ public:
 
 	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
 	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
-	static_assert(uint32_t(RT_FLAG_DECALS_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
+	static_assert(uint32_t(RT_FLAG_RAY_CONE_POSITION_FETCH) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen
@@ -144,6 +146,7 @@ public:
 	static constexpr int RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT = 20;
 	static constexpr int RT_PARAM_SELF_SHADOW_MASK = 21; // RTShadowGroupTable::self_shadow_bit.
 	static constexpr int RT_PARAM_VOLUMETRIC_FOG_SAMPLING = 22; // RSE::EnvironmentVolumetricFogSampling.
+	static constexpr int RT_PARAM_TEXTURE_MIPMAP_BIAS = 23; // Mipmap bias of the bound material samplers.
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,
@@ -174,6 +177,9 @@ public:
 	// Build the full packed rt_flags from pathtracing environment settings.
 	// `p_environment` may be invalid (RT active with no pathtracing environment).
 	static uint32_t compute_rt_flags(RID p_environment, bool p_fog_enabled, bool p_volumetric_fog_enabled);
+	static bool is_texture_streaming_enabled();
+	static bool is_ray_cones_enabled();
+	static bool is_ray_cone_position_fetch_enabled();
 
 	static bool is_debug_vis_mode(int p_debug_mode) { return p_debug_mode != 0 && p_debug_mode != RT_DEBUG_TIMING_HEATMAP; }
 	static RSE::PathtracingDenoiser get_effective_denoiser(RID p_environment);
@@ -450,6 +456,8 @@ public:
 		bool needs_full_any_hit = false; // Blend-transparent or alpha: per-HG any-hit for peel/scissor evaluation
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
+		bool uses_uv2 = false; // Gates the UV2 density fetch for custom texture() ray cones.
+		String texture_footprint_code; // Writes the finest texture() footprint to rt_uv_ddx/ddy for streaming feedback.
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
 	};

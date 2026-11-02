@@ -35,22 +35,18 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 // TEXTURE SAMPLING
 // ============================================================================
 
-vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
-	return texture(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv);
-}
-
-// Sample with point/nearest filtering (for pixel art textures).
-vec4 sample_bindless_texture_point(uint tex_idx, vec2 uv) {
-	return texture(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_NEAREST_REPEAT), uv);
-}
-
-// Sample a MaterialData *_texture with the appropriate filter based on material flags.
-vec4 sample_material_texture(uint p_texture, vec2 uv, uint mat_flags) {
+// Sample a MaterialData *_texture with the appropriate filter based on material flags. p_ddx/p_ddy: ray cone
+// footprint (MaterialUV::uv_ddx); zero samples the most detailed mip, as ray tracing stages have no derivatives.
+vec4 sample_material_texture(uint p_texture, vec2 uv, vec2 p_ddx, vec2 p_ddy, uint mat_flags) {
 	uint tex_idx = rt_texture_index(p_texture);
 	if ((mat_flags & RT_MAT_FLAG_POINT_FILTER) != 0u) {
-		return sample_bindless_texture_point(tex_idx, uv);
+		return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_NEAREST_REPEAT), uv, p_ddx, p_ddy);
 	}
-	return sample_bindless_texture(tex_idx, uv);
+	return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, p_ddx, p_ddy);
+}
+
+vec4 sample_material_texture(uint p_texture, vec2 uv, uint mat_flags) {
+	return sample_material_texture(p_texture, uv, vec2(0.0), vec2(0.0), mat_flags);
 }
 
 // ============================================================================
@@ -67,6 +63,9 @@ struct MaterialUV {
 	vec3 blend_normal; // Normal the weights came from, in the mapping space.
 	bool triplanar;
 	bool object_space; // Triplanar mapping runs in model space, not world space.
+	// Ray cone UV footprint, zero when disabled. Only the lengths are valid.
+	vec2 uv_ddx;
+	vec2 uv_ddy;
 };
 
 // Addressing parameters of one BaseMaterial3D UV channel.
@@ -111,6 +110,8 @@ MaterialUV material_uv_compute(MaterialUVChannel ch, vec2 mesh_uv,
 	muv.blend_normal = world_normal;
 	muv.triplanar = ch.triplanar;
 	muv.object_space = ch.object_space;
+	muv.uv_ddx = vec2(0.0);
+	muv.uv_ddy = vec2(0.0);
 
 	if (muv.triplanar) {
 		vec3 pos = muv.object_space ? object_pos : world_pos;
@@ -149,14 +150,14 @@ MaterialUV material_uv_from_world(MaterialData mat, GeometryData geom, vec2 mesh
 // Sample a material texture through the resolved addressing.
 vec4 material_uv_sample(uint tex_idx, MaterialUV muv, uint mat_flags) {
 	if (!muv.triplanar) {
-		return sample_material_texture(tex_idx, muv.uv, mat_flags);
+		return sample_material_texture(tex_idx, muv.uv, muv.uv_ddx, muv.uv_ddy, mat_flags);
 	}
 
 	vec3 p = muv.triplanar_pos;
 	vec3 w = muv.triplanar_weight;
-	vec4 samp = sample_material_texture(tex_idx, p.xy, mat_flags) * w.z;
-	samp += sample_material_texture(tex_idx, p.xz, mat_flags) * w.y;
-	samp += sample_material_texture(tex_idx, p.zy * vec2(-1.0, 1.0), mat_flags) * w.x;
+	vec4 samp = sample_material_texture(tex_idx, p.xy, muv.uv_ddx, muv.uv_ddy, mat_flags) * w.z;
+	samp += sample_material_texture(tex_idx, p.xz, muv.uv_ddx, muv.uv_ddy, mat_flags) * w.y;
+	samp += sample_material_texture(tex_idx, p.zy * vec2(-1.0, 1.0), muv.uv_ddx, muv.uv_ddy, mat_flags) * w.x;
 	return samp;
 }
 
@@ -230,14 +231,11 @@ float material_ao(MaterialData mat, MaterialUV muv) {
 // Raw emission output of BaseMaterial3D for one hit (before exposure
 // normalization). Mirrors the generated fragment code: the emission texture
 // defaults to black, and the operator combines it with the emission color.
-vec3 material_emission(MaterialData mat, MaterialUV uv1, vec2 mesh_uv2, vec3 world_pos, vec3 world_normal) {
+// p_emission_uv: UV1 addressing, or UV2 with RT_MAT_FLAG_EMISSION_UV2.
+vec3 material_emission(MaterialData mat, MaterialUV p_emission_uv) {
 	vec3 emission_tex = vec3(0.0);
 	if ((mat.flags & RT_MAT_FLAG_HAS_EMISSION_TEX) != 0u) {
-		MaterialUV muv = uv1;
-		if ((mat.flags & RT_MAT_FLAG_EMISSION_UV2) != 0u) {
-			muv = material_uv_channel_from_world(material_uv2_channel(mat), mesh_uv2, world_pos, world_normal);
-		}
-		emission_tex = material_uv_sample(mat.emission_texture, muv, mat.flags).rgb;
+		emission_tex = material_uv_sample(mat.emission_texture, p_emission_uv, mat.flags).rgb;
 	}
 	vec3 emission = (mat.flags & RT_MAT_FLAG_EMISSION_ADD) != 0u
 			? mat.emission_color + emission_tex

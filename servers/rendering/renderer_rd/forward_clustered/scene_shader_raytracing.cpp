@@ -42,7 +42,12 @@
 #include "servers/rendering/shader_types.h"
 #include "servers/rendering/storage/environment_storage.h"
 
+#include "modules/modules_enabled.gen.h" // For texture_streaming.
+
 using namespace RendererSceneRenderImplementation;
+
+// Inserted right after #version, so defines appended to it are visible to every include.
+static constexpr const char *RT_CUSTOM_HIT_GROUP_DEFINE = "#define RT_CUSTOM_HIT_GROUP\n";
 
 static void _dump_failed_shader(const String &p_source, const String &p_label, const String &p_error = String()) {
 	String tmp_dir = OS::get_singleton()->get_temp_path();
@@ -601,6 +606,13 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	bool uses_instance_custom = false;
 	actions.usage_flag_pointers["INSTANCE_CUSTOM"] = &uses_instance_custom;
 	actions.function_renames["fwidth"] = "rt_fwidth";
+	actions.texture_gradients = { { "UV", "rt_uv_ddx", "rt_uv_ddy" }, { "UV2", "rt_uv2_ddx", "rt_uv2_ddy" } };
+	actions.texture_explicit_gradients = true;
+	actions.texture_gradients_pre_vertex = true; // rt_uv is the mesh UV; vertex() reruns per hit.
+	actions.texture_footprint_code = "texture_footprint";
+	actions.texture_debug_macro = "RT_TEXTURE_DEBUG";
+	bool uses_uv2 = false;
+	actions.usage_flag_pointers["UV2"] = &uses_uv2;
 	int blend_modei = RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX;
 	actions.render_mode_values["blend_add"] = Pair<int *, int>(&blend_modei, RendererRD::MaterialStorage::ShaderData::BLEND_MODE_ADD);
 	actions.render_mode_values["blend_mix"] = Pair<int *, int>(&blend_modei, RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX);
@@ -625,8 +637,10 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	r_entry.needs_full_any_hit = detected_alpha || blend_modei != RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX;
 	r_entry.uses_scene_depth = uses_scene_depth;
 	r_entry.uses_instance_custom = uses_instance_custom;
+	r_entry.uses_uv2 = uses_uv2;
 	r_entry.vertex_code = gen_code.code.has("vertex") ? gen_code.code["vertex"] : String();
 	r_entry.fragment_code = gen_code.code.has("fragment") ? gen_code.code["fragment"] : String();
+	r_entry.texture_footprint_code = gen_code.code.has("texture_footprint") ? gen_code.code["texture_footprint"] : String();
 	r_entry.fragment_globals = gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT];
 	if (p_is_procedural) {
 		r_entry.intersection_code = gen_code.code.has("intersection") ? gen_code.code["intersection"] : String();
@@ -752,8 +766,31 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
 		flags |= RT_FLAG_SER_ENABLED;
 	}
+	if (is_ray_cones_enabled()) {
+		flags |= RT_FLAG_RAY_CONES_ENABLED;
+	}
+	if (is_ray_cone_position_fetch_enabled()) {
+		flags |= RT_FLAG_RAY_CONE_POSITION_FETCH;
+	}
 
 	return rt_flags_pack(flags, sample_count, max_bounces);
+}
+
+bool SceneShaderRaytracing::is_texture_streaming_enabled() {
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+	return GLOBAL_GET_CACHED(bool, "rendering/textures/streaming/enabled");
+#else
+	return false;
+#endif
+}
+
+bool SceneShaderRaytracing::is_ray_cones_enabled() {
+	return is_texture_streaming_enabled() || GLOBAL_GET_CACHED(bool, "rendering/pathtracing/ray_cones");
+}
+
+bool SceneShaderRaytracing::is_ray_cone_position_fetch_enabled() {
+	return is_ray_cones_enabled() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/ray_cones_position_fetch") &&
+			RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_POSITION_FETCH);
 }
 
 namespace {
@@ -1012,6 +1049,9 @@ bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags)
 	if (p_rt_flags & RT_FLAG_DECALS_ENABLED) {
 		inject_define(sources, "#define RT_DECALS_ENABLED\n");
 	}
+	if (p_rt_flags & RT_FLAG_RAY_CONE_POSITION_FETCH) {
+		inject_define(sources, "#define RT_RAY_CONE_POSITION_FETCH\n");
+	}
 
 	// Procedural templates come from intersection stage; strip from base HG0 path.
 	String intersection_source_template;
@@ -1025,7 +1065,7 @@ bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags)
 	ERR_FAIL_COND_V(base_ch_src.is_empty(), false);
 	ERR_FAIL_COND_V(base_ah_src.is_empty(), false);
 
-	static const String custom_hg_define = "#define RT_CUSTOM_HIT_GROUP\n";
+	const String custom_hg_define = RT_CUSTOM_HIT_GROUP_DEFINE;
 	int base_ch_ver = base_ch_src.find("#version");
 	int base_ah_ver = base_ah_src.find("#version");
 	ERR_FAIL_COND_V(base_ch_ver < 0 || base_ah_ver < 0, false);
@@ -1272,6 +1312,8 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		if (entry.uses_instance_custom) {
 			tex_defines += "#define RT_USES_INSTANCE_CUSTOM\n";
 		}
+		// compute_hit_data() is compiled before the texture defines placeholder.
+		const String hit_group_defines = String(RT_CUSTOM_HIT_GROUP_DEFINE) + (entry.uses_uv2 ? "#define RT_USES_UV2\n" : "");
 
 		String vertex_function;
 		String vertex_call;
@@ -1311,13 +1353,14 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		String fragment_function = "void rt_run_fragment_shader() {\n" + fragment_code + "\n}\n";
 
 		{
-			String s = ctx.ch_template;
+			String s = ctx.ch_template.replace_first(RT_CUSTOM_HIT_GROUP_DEFINE, hit_group_defines);
 			s = s.replace("/* RT_CUSTOM_FRAGMENT_GLOBALS */", entry.fragment_globals);
 			s = s.replace("/* RT_CUSTOM_FRAGMENT_FUNCTION */", fragment_function);
 			s = s.replace("/* RT_CUSTOM_UNIFORM_MEMBERS */", uniform_members);
 			s = s.replace("/* RT_CUSTOM_TEXTURE_DEFINES */", tex_defines);
 			s = s.replace("/* RT_CUSTOM_VERTEX_FUNCTION */", vertex_function);
 			s = s.replace("/* RT_CUSTOM_VERTEX_CALL */", vertex_call);
+			s = s.replace("/* RT_CUSTOM_TEXTURE_FOOTPRINT */", entry.texture_footprint_code);
 			si.ch_src = s;
 		}
 		// Per-HG any-hit: alpha-clip materials need it for scissor, blend

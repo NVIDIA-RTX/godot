@@ -38,7 +38,7 @@
 #include "editor/inspector/editor_resource_preview.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
-#include "scene/resources/3d/primitive_meshes.cpp"
+#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/image_texture.h"
 
 namespace TestGltf {

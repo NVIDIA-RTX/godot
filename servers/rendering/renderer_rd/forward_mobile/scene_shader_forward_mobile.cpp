@@ -176,6 +176,8 @@ void SceneShaderForwardMobile::ShaderData::set_code(const String &p_code) {
 	actions.stencil_reference = &stencil_referencei;
 
 	actions.uniforms = &uniforms;
+	actions.texture_gradients = { { "UV", "uv_ddx", "uv_ddy" }, { "UV2", "uv2_ddx", "uv2_ddy" } };
+	actions.texture_footprint_code = "texture_footprint";
 
 	Error err = OK;
 	{

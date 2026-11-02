@@ -1167,6 +1167,7 @@ public:
 		// Raytracing: wider AABB cull volume for TLAS and light gathering.
 		bool rt_enabled = false;
 		AABB rt_aabb;
+		bool raster_list_used = true;
 	} cull;
 
 	struct VisibilityCullData {
@@ -1199,6 +1200,7 @@ public:
 	static void _scene_particles_set_view_axis(RID p_particles, const Vector3 &p_axis, const Vector3 &p_up_axis);
 	// Requests simulation and view sorting for a visible particle system. Returns false when it is inactive.
 	bool _scene_particles_request_process(CullData &p_cull_data, RID p_particles);
+	bool _occlusion_culling_is_used(RID p_environment, RID p_viewport) const { return !scene_render->pathtracing_is_used(p_environment, p_viewport) || scene_render->pathtracing_uses_raster_list(); }
 	_FORCE_INLINE_ bool _visibility_parent_check(const CullData &p_cull_data, const InstanceData &p_instance_data);
 
 	bool _render_reflection_probe_step(Instance *p_instance, int p_step);

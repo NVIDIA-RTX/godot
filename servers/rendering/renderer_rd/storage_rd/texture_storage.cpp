@@ -2100,6 +2100,26 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 	area_light_atlas_mark_dirty_on_texture(p_texture);
 }
 
+void TextureStorage::rd_texture_replaced_add_listener(void (*p_func)(void *, RID, RID), void *p_userdata) {
+	ERR_FAIL_NULL(p_func);
+	rd_texture_replaced_listeners.push_back({ p_func, p_userdata });
+}
+
+void TextureStorage::rd_texture_replaced_remove_listener(void (*p_func)(void *, RID, RID), void *p_userdata) {
+	for (uint32_t i = 0; i < rd_texture_replaced_listeners.size(); i++) {
+		if (rd_texture_replaced_listeners[i].func == p_func && rd_texture_replaced_listeners[i].userdata == p_userdata) {
+			rd_texture_replaced_listeners.remove_at_unordered(i);
+			return;
+		}
+	}
+}
+
+void TextureStorage::_notify_rd_texture_replaced(RID p_old_rd_texture, RID p_new_rd_texture) {
+	for (const RDTextureReplacedListener &listener : rd_texture_replaced_listeners) {
+		listener.func(listener.userdata, p_old_rd_texture, p_new_rd_texture);
+	}
+}
+
 void TextureStorage::texture_replace_compatible(RID p_texture, RID p_by_texture) {
 	Texture *tex = texture_owner.get_or_null(p_texture);
 	ERR_FAIL_NULL(tex);
@@ -2144,12 +2164,14 @@ void TextureStorage::texture_replace_compatible(RID p_texture, RID p_by_texture)
 	if (old_rd_texture_srgb.is_valid() && old_rd_texture_srgb != new_rd_texture_srgb) {
 		if (new_rd_texture_srgb.is_valid()) {
 			RD::get_singleton()->texture_replace_rid(old_rd_texture_srgb, new_rd_texture_srgb);
+			_notify_rd_texture_replaced(old_rd_texture_srgb, new_rd_texture_srgb);
 		} else {
 			RD::get_singleton()->free_rid(old_rd_texture_srgb);
 		}
 	}
 	if (old_rd_texture != new_rd_texture) {
 		RD::get_singleton()->texture_replace_rid(old_rd_texture, new_rd_texture);
+		_notify_rd_texture_replaced(old_rd_texture, new_rd_texture);
 	}
 
 	//delete last, so proxies can be updated

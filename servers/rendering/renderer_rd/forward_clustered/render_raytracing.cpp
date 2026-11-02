@@ -48,6 +48,11 @@
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/environment_storage.h"
 
+#include "modules/modules_enabled.gen.h" // For texture_streaming.
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+#include "modules/texture_streaming/texture_streaming.h"
+#endif
+
 using namespace RendererSceneRenderImplementation;
 
 // Device addresses written into the geometry and material tables must follow the RT validation rules in
@@ -434,23 +439,54 @@ static void _rt_update_or_grow_storage(RID &r_buffer, uint32_t &r_capacity, cons
 	}
 }
 
+// Texture streaming feedback slot of p_mat_data, registered with this frame's feedback buffer. Render thread only.
+static uint32_t _rt_material_feedback_index(const RTMaterialData *p_mat_data) {
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+	if (!SceneShaderRaytracing::is_texture_streaming_enabled()) {
+		return UINT32_MAX;
+	}
+	const uint32_t frame = RSG::rasterizer->get_frame_number();
+	if (p_mat_data->feedback_frame != frame) {
+		p_mat_data->feedback_frame = frame;
+		p_mat_data->feedback_index = UINT32_MAX;
+		const RendererRD::MaterialStorage::MaterialData *data = p_mat_data->material.is_valid()
+				? RendererRD::MaterialStorage::get_singleton()->material_get_data(p_mat_data->material, RendererRD::MaterialStorage::SHADER_TYPE_3D)
+				: nullptr;
+		if (data && data->material_feedback_rid.is_valid()) {
+			p_mat_data->feedback_index = TextureStreaming::get_singleton()->feedback_buffer_material_index(data->material_feedback_rid);
+		}
+	}
+	return p_mat_data->feedback_index;
+#else
+	return UINT32_MAX;
+#endif
+}
+
 static void _rt_set_entry_material(RT_GeometryData &r_geometry, const RTMaterialData *p_mat_data, uint32_t p_material_flags, float p_instance_alpha) {
 	r_geometry.material_index = rt_pack_material_index(p_mat_data->table_index, rt_instance_transparency(p_instance_alpha));
 	r_geometry.material_flags = p_material_flags;
+	r_geometry.material_feedback_index = _rt_material_feedback_index(p_mat_data);
 }
 
 static uint32_t _rt_tlas_flags(const RTSurfaceGroupKey &p_key, const RTTriangleFacing &p_facing) {
 	return p_facing.instance_flags | (p_key.opaque ? uint32_t(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT) : 0u);
 }
 
-static RID _create_blas(Span<RD::AccelerationStructureGeometry> p_geometries, bool p_prefer_fast_build, bool p_allow_update, const String &p_name, LocalVector<RID> &r_dirty_blas_list) {
+BitField<RD::AccelerationStructureFlagBits> RenderRaytracing::_triangle_blas_flags(bool p_prefer_fast_build, bool p_allow_update) const {
 	BitField<RD::AccelerationStructureFlagBits> as_flags = p_prefer_fast_build
 			? RD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT
 			: RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT;
 	if (p_allow_update) {
 		as_flags.set_flag(RD::ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT);
 	}
-	RID blas = RD::get_singleton()->blas_create(p_geometries, as_flags);
+	if (blas_data_access) {
+		as_flags.set_flag(RD::ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT);
+	}
+	return as_flags;
+}
+
+static RID _create_blas(Span<RD::AccelerationStructureGeometry> p_geometries, BitField<RD::AccelerationStructureFlagBits> p_flags, const String &p_name, LocalVector<RID> &r_dirty_blas_list) {
+	RID blas = RD::get_singleton()->blas_create(p_geometries, p_flags);
 	if (!blas.is_valid()) {
 		return RID();
 	}
@@ -481,6 +517,7 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 	// Initialized eagerly: vertex captures resolve materials before build_tlas() runs prepare_frame().
 	bindless_block = memnew(BindlessBlock);
 	bindless_block->initialize(RD::get_singleton());
+	RendererRD::TextureStorage::get_singleton()->rd_texture_replaced_add_listener(&RenderRaytracing::_on_rd_texture_replaced, this);
 #ifdef RT_VALIDATION_ENABLED
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "rendering/pathtracing/debug/strict_validation"), false);
 #endif
@@ -498,6 +535,13 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 	}
 }
 
+void RenderRaytracing::_on_rd_texture_replaced(void *p_userdata, RID p_old_rd_texture, RID p_new_rd_texture) {
+	RenderRaytracing *self = static_cast<RenderRaytracing *>(p_userdata);
+	if (self->bindless_block) {
+		self->bindless_block->replace_texture(p_old_rd_texture, p_new_rd_texture);
+	}
+}
+
 RenderRaytracing::~RenderRaytracing() {
 	for (KeyValue<RTViewportStateKey, RTViewportState *> &kv : viewport_states) {
 		_free_viewport_state_internal(kv.value);
@@ -511,6 +555,9 @@ RenderRaytracing::~RenderRaytracing() {
 	}
 
 	if (bindless_block) {
+		if (RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton()) {
+			texture_storage->rd_texture_replaced_remove_listener(&RenderRaytracing::_on_rd_texture_replaced, this);
+		}
 		memdelete(bindless_block);
 		bindless_block = nullptr;
 	}
@@ -824,7 +871,16 @@ uint64_t RenderRaytracing::mat_ubo_pool_get_address(uint32_t p_slot) const {
 // Cache management
 // ---------------------------------------------------------------------------
 
-void RenderRaytracing::cleanup_caches() {
+void RenderRaytracing::_sync_blas_data_access(uint32_t p_rt_flags) {
+	const bool data_access = (p_rt_flags & SceneShaderRaytracing::RT_FLAG_RAY_CONE_POSITION_FETCH) != 0;
+	if (data_access == blas_data_access) {
+		return;
+	}
+	_free_geometry_caches();
+	blas_data_access = data_access;
+}
+
+void RenderRaytracing::_free_geometry_caches() {
 	for (uint32_t i = 0; i < surface_chunks.size(); i++) {
 		if (surface_chunks[i]) {
 			for (uint32_t j = 0; j < RT_CACHE_CHUNK_SIZE; j++) {
@@ -854,18 +910,9 @@ void RenderRaytracing::cleanup_caches() {
 	for (KeyValue<RTViewportStateKey, RTViewportState *> &kv : viewport_states) {
 		kv.value->capture_entries.clear();
 		kv.value->captured_mm_entries.clear();
-		// Plans name material cache slots, which are freed below.
+		// Plans name cache entries and material cache slots.
 		kv.value->plan_lookup.clear();
 	}
-	_free_rid_if_valid(capture_arena);
-	_free_rid_if_valid(capture_params_buffer);
-	capture_arena_capacity = 0;
-	capture_arena_used = 0;
-	capture_arena_window_peak = 0;
-	capture_params_capacity = 0;
-	capture_params.reset();
-	_clear_capture_bindings();
-	capture_candidates.reset();
 
 	// Free all merged MultiMesh BLAS data.
 	{
@@ -876,6 +923,20 @@ void RenderRaytracing::cleanup_caches() {
 	}
 	mm_handles.clear();
 	particle_mm_entries.clear();
+}
+
+void RenderRaytracing::cleanup_caches() {
+	_free_geometry_caches();
+
+	_free_rid_if_valid(capture_arena);
+	_free_rid_if_valid(capture_params_buffer);
+	capture_arena_capacity = 0;
+	capture_arena_used = 0;
+	capture_arena_window_peak = 0;
+	capture_params_capacity = 0;
+	capture_params.reset();
+	_clear_capture_bindings();
+	capture_candidates.reset();
 
 	// Free all cached material data
 	for (uint32_t i = 0; i < material_chunks.size(); i++) {
@@ -2151,6 +2212,7 @@ void RenderRaytracing::_apply_capture_instance(const RTPlanContext &p_ctx, RTVie
 }
 
 void RenderRaytracing::prepare_vertex_captures(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_requests) {
+	_sync_blas_data_access(p_rt_flags);
 	r_requests.clear();
 	capture_params.clear();
 	_clear_capture_bindings();
@@ -2551,7 +2613,7 @@ void RenderRaytracing::_populate_surface_blas(
 
 	const String name = String(p_vertex_buffer_override.is_valid() ? "RT BLAS deformed [" : "RT BLAS [") + itos(p_cache_key) + "]";
 	_assign_compression_transforms(blas_transform_pool, &r_surf_data->geometry, &as_geom, &r_surf_data->blas_transform, 1);
-	r_surf_data->blas = _create_blas({ &as_geom, 1 }, p_prefer_fast_build, p_allow_update, name, r_dirty_blas_list);
+	r_surf_data->blas = _create_blas({ &as_geom, 1 }, _triangle_blas_flags(p_prefer_fast_build, p_allow_update), name, r_dirty_blas_list);
 	if (!r_surf_data->blas.is_valid()) {
 		_free_blas_resources(blas_transform_pool, r_surf_data->blas, &r_surf_data->blas_transform, 1);
 	}
@@ -3009,6 +3071,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	RT_MaterialData &mat = mat_data->data;
 
 	mat = rt_material_data_default();
+	mat_data->material = p_material_rid;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
@@ -3786,10 +3849,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		// Scheduled entries (particles, captures, camera-dependent billboards) are rebuilt or refitted nearly every frame,
 		// so build speed wins over trace speed. Only static MultiMeshes keep fast trace.
 		const bool transient = p_source.particles || p_inputs.captured || billboarded;
-		BitField<RD::AccelerationStructureFlagBits> as_flags =
-				(transient ? RD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT : RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT) |
-				RD::ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT;
-		entry.blas = rd->blas_create({ &as_geom, 1 }, as_flags);
+		entry.blas = rd->blas_create({ &as_geom, 1 }, _triangle_blas_flags(transient, true));
 		ERR_FAIL_COND_V(!entry.blas.is_valid(), false);
 		rd->set_resource_name(entry.blas, "RT MM merged BLAS [" + itos(cache_key) + "]");
 	}
@@ -3918,7 +3978,7 @@ RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_
 
 	_assign_compression_transforms(blas_transform_pool, entry->geometries.ptr(), as_geoms.ptr(), entry->transforms.ptr(), count);
 	const String name = "RT BLAS group [" + itos(RID::from_uint64(p_key.mesh_id).get_local_index()) + ":" + String::num_uint64(p_key.surface_mask, 16) + "]";
-	entry->blas = _create_blas(as_geoms, false, false, name, r_dirty_blas_list);
+	entry->blas = _create_blas(as_geoms, _triangle_blas_flags(false, false), name, r_dirty_blas_list);
 	if (!entry->blas.is_valid()) {
 		_free_blas_resources(blas_transform_pool, entry->blas, entry->transforms.ptr(), count);
 		mesh_groups.erase(p_key);
@@ -5082,6 +5142,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		return nullptr;
 	}
 
+	_sync_blas_data_access(p_rt_flags);
 	prepare_frame();
 	mesh_group_build_first_use = mesh_group_use_counter;
 	state->merge_billboards.clear();
@@ -5603,6 +5664,10 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	}
 
 	RenderSceneBuffersRD *rb = p_render_data->render_buffers.ptr();
+	// Without ray cones every hit samples mip 0, where a viewport mipmap bias would only blur.
+	const RendererRD::MaterialStorage::Samplers material_samplers = (p_rt_flags & SceneShaderRaytracing::RT_FLAG_RAY_CONES_ENABLED)
+			? rb->get_samplers()
+			: RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default();
 
 	// SET 0 indices must match raytracing_common_inc.glsl / scene_raytracing_raygen.glsl / samplers includes.
 	Vector<RD::Uniform> uniforms;
@@ -5728,6 +5793,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_DECAL_COUNT] = float(p_state->decal_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_DECAL_MODE] = float(GLOBAL_GET_CACHED(int, "rendering/pathtracing/decals"));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_DOMINANT_LAYER_ALPHA] = _rt_dominant_layer_alpha();
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TEXTURE_MIPMAP_BIAS] = material_samplers.mipmap_bias;
 
 		// Unjittered VP for motion vectors (matches raster convention).
 		{
@@ -5907,7 +5973,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	}
 
 	// Bindings 16-27: Material samplers (12 filter/repeat combinations for custom shaders).
-	RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default().append_uniforms(uniforms, 16);
+	material_samplers.append_uniforms(uniforms, 16);
 
 	// Binding 28: Velocity output (RG16F). Past the 16-27 sampler range.
 	{
@@ -5970,6 +6036,21 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 41;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		u.append_id(owner->volumetric_fog_noise_get_texture());
+		uniforms.push_back(u);
+	}
+
+	// Binding 42: texture streaming feedback. The buffer rotates every frame, matching the material slots registered by the TLAS build.
+	{
+		RID feedback_buffer;
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+		if (SceneShaderRaytracing::is_texture_streaming_enabled()) {
+			feedback_buffer = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		}
+#endif
+		RD::Uniform u;
+		u.binding = 42;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(feedback_buffer.is_valid() ? feedback_buffer : owner->scene_shader.default_material_feedback_buffer);
 		uniforms.push_back(u);
 	}
 

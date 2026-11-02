@@ -178,6 +178,163 @@ static String _mkid(const String &p_id) {
 	return id.replace("__", "_dus_"); //doubleunderscore is reserved in glsl
 }
 
+// True if p_node reads any of p_names (variables, arrays, or user function results).
+static bool _node_reads(const SL::Node *p_node, const HashSet<StringName> &p_names) {
+	if (p_node == nullptr) {
+		return false;
+	}
+	switch (p_node->type) {
+		case SL::Node::NODE_TYPE_VARIABLE:
+			return p_names.has(static_cast<const SL::VariableNode *>(p_node)->name);
+		case SL::Node::NODE_TYPE_OPERATOR: {
+			for (const SL::Node *arg : static_cast<const SL::OperatorNode *>(p_node)->arguments) {
+				if (_node_reads(arg, p_names)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		case SL::Node::NODE_TYPE_MEMBER: {
+			const SL::MemberNode *mnode = static_cast<const SL::MemberNode *>(p_node);
+			return _node_reads(mnode->owner, p_names) || _node_reads(mnode->index_expression, p_names) || _node_reads(mnode->call_expression, p_names);
+		}
+		case SL::Node::NODE_TYPE_ARRAY: {
+			const SL::ArrayNode *anode = static_cast<const SL::ArrayNode *>(p_node);
+			return p_names.has(anode->name) || _node_reads(anode->index_expression, p_names) || _node_reads(anode->call_expression, p_names);
+		}
+		case SL::Node::NODE_TYPE_ARRAY_CONSTRUCT: {
+			for (const SL::Node *init : static_cast<const SL::ArrayConstructNode *>(p_node)->initializer) {
+				if (_node_reads(init, p_names)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		default:
+			return false;
+	}
+}
+
+// Variable written by an assignment target (`v`, `v.x`, `v[i]`).
+static StringName _assigned_root(const SL::Node *p_node) {
+	switch (p_node->type) {
+		case SL::Node::NODE_TYPE_VARIABLE:
+			return static_cast<const SL::VariableNode *>(p_node)->name;
+		case SL::Node::NODE_TYPE_ARRAY:
+			return static_cast<const SL::ArrayNode *>(p_node)->name;
+		case SL::Node::NODE_TYPE_MEMBER:
+			return _assigned_root(static_cast<const SL::MemberNode *>(p_node)->owner);
+		case SL::Node::NODE_TYPE_OPERATOR: {
+			const SL::OperatorNode *onode = static_cast<const SL::OperatorNode *>(p_node);
+			return onode->op == SL::OP_INDEX ? _assigned_root(onode->arguments[0]) : StringName();
+		}
+		default:
+			return StringName();
+	}
+}
+
+struct ShaderDataflowEdge {
+	StringName target;
+	const SL::Node *source = nullptr;
+};
+
+// Records "target is computed from source" for declarations, assignments, user call arguments and returns.
+static void _collect_dataflow(const SL::ShaderNode *p_shader, const SL::Node *p_node, const StringName &p_function, LocalVector<ShaderDataflowEdge> &r_edges) {
+	if (p_node == nullptr) {
+		return;
+	}
+	switch (p_node->type) {
+		case SL::Node::NODE_TYPE_BLOCK: {
+			for (const SL::Node *statement : static_cast<const SL::BlockNode *>(p_node)->statements) {
+				_collect_dataflow(p_shader, statement, p_function, r_edges);
+			}
+		} break;
+		case SL::Node::NODE_TYPE_VARIABLE_DECLARATION: {
+			for (const SL::VariableDeclarationNode::Declaration &decl : static_cast<const SL::VariableDeclarationNode *>(p_node)->declarations) {
+				for (const SL::Node *init : decl.initializer) {
+					r_edges.push_back({ decl.name, init });
+					_collect_dataflow(p_shader, init, p_function, r_edges);
+				}
+			}
+		} break;
+		case SL::Node::NODE_TYPE_CONTROL_FLOW: {
+			const SL::ControlFlowNode *cfnode = static_cast<const SL::ControlFlowNode *>(p_node);
+			for (const SL::Node *expression : cfnode->expressions) {
+				if (cfnode->flow_op == SL::FLOW_OP_RETURN) {
+					r_edges.push_back({ p_function, expression });
+				}
+				_collect_dataflow(p_shader, expression, p_function, r_edges);
+			}
+			for (const SL::BlockNode *block : cfnode->blocks) {
+				_collect_dataflow(p_shader, block, p_function, r_edges);
+			}
+		} break;
+		case SL::Node::NODE_TYPE_OPERATOR: {
+			const SL::OperatorNode *onode = static_cast<const SL::OperatorNode *>(p_node);
+			if (onode->op >= SL::OP_ASSIGN && onode->op <= SL::OP_ASSIGN_BIT_XOR) {
+				r_edges.push_back({ _assigned_root(onode->arguments[0]), onode->arguments[1] });
+			} else if (onode->op == SL::OP_CALL && onode->arguments[0]->type == SL::Node::NODE_TYPE_VARIABLE) {
+				const StringName &callee = static_cast<const SL::VariableNode *>(onode->arguments[0])->name;
+				for (const SL::ShaderNode::Function &func : p_shader->vfunctions) {
+					if (func.name != callee) {
+						continue;
+					}
+					for (int i = 1; i < onode->arguments.size() && i - 1 < func.function->arguments.size(); i++) {
+						r_edges.push_back({ func.function->arguments[i - 1].name, onode->arguments[i] });
+					}
+					break;
+				}
+			}
+			for (const SL::Node *arg : onode->arguments) {
+				_collect_dataflow(p_shader, arg, p_function, r_edges);
+			}
+		} break;
+		case SL::Node::NODE_TYPE_ARRAY: {
+			const SL::ArrayNode *anode = static_cast<const SL::ArrayNode *>(p_node);
+			if (anode->assign_expression) {
+				r_edges.push_back({ anode->name, anode->assign_expression });
+			}
+			_collect_dataflow(p_shader, anode->index_expression, p_function, r_edges);
+			_collect_dataflow(p_shader, anode->assign_expression, p_function, r_edges);
+		} break;
+		default:
+			break;
+	}
+}
+
+// Every name computed from p_source anywhere in the shader. Flow-insensitive and keyed by name, so
+// shadowed locals and overwritten values are over-approximated.
+static HashSet<StringName> _dataflow_dependents(const LocalVector<ShaderDataflowEdge> &p_edges, const StringName &p_source) {
+	HashSet<StringName> dependents;
+	dependents.insert(p_source);
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		for (const ShaderDataflowEdge &edge : p_edges) {
+			if (edge.target != StringName() && !dependents.has(edge.target) && _node_reads(edge.source, dependents)) {
+				dependents.insert(edge.target);
+				changed = true;
+			}
+		}
+	}
+	return dependents;
+}
+
+static bool _texture_grad_takes_uv(SL::DataType p_sampler) {
+	switch (p_sampler) {
+		case SL::TYPE_SAMPLER2D:
+		case SL::TYPE_ISAMPLER2D:
+		case SL::TYPE_USAMPLER2D:
+		case SL::TYPE_SAMPLER2DARRAY:
+		case SL::TYPE_ISAMPLER2DARRAY:
+		case SL::TYPE_USAMPLER2DARRAY:
+		case SL::TYPE_SAMPLEREXT:
+			return true;
+		default:
+			return false;
+	}
+}
+
 static String f2sp0(float p_float) {
 	String num = String::num_scientific(p_float);
 	if (!num.contains_char('.') && !num.contains_char('e')) {
@@ -457,6 +614,213 @@ static String _get_global_shader_uniform_from_type_and_index(const String &p_buf
 			ERR_FAIL_V("void");
 		}
 	}
+}
+
+// Stands for the source footprint (ddx or ddy) in a scale template.
+static constexpr const char *TEXTURE_FOOTPRINT_TOKEN = "$D";
+
+static bool _is_swizzle_xy(const SL::MemberNode *p_member) {
+	const String name = p_member->name;
+	return name == "xy" || name == "rg" || name == "st";
+}
+
+bool ShaderCompiler::_is_uniform_expression(const SL::Node *p_node) const {
+	switch (p_node->type) {
+		case SL::Node::NODE_TYPE_CONSTANT:
+			return true;
+		case SL::Node::NODE_TYPE_VARIABLE: {
+			const StringName &name = static_cast<const SL::VariableNode *>(p_node)->name;
+			const SL::ShaderNode::Uniform *uniform = shader->uniforms.getptr(name);
+			if (uniform) {
+				return uniform->scope != SL::ShaderNode::Uniform::SCOPE_INSTANCE && !SL::is_sampler_type(uniform->type);
+			}
+			return shader->constants.has(name);
+		}
+		case SL::Node::NODE_TYPE_MEMBER: {
+			const SL::MemberNode *mnode = static_cast<const SL::MemberNode *>(p_node);
+			return mnode->index_expression == nullptr && mnode->call_expression == nullptr && _is_uniform_expression(mnode->owner);
+		}
+		case SL::Node::NODE_TYPE_OPERATOR: {
+			const SL::OperatorNode *onode = static_cast<const SL::OperatorNode *>(p_node);
+			if ((onode->op >= SL::OP_ASSIGN && onode->op <= SL::OP_ASSIGN_BIT_XOR) || onode->op == SL::OP_INCREMENT || onode->op == SL::OP_DECREMENT || onode->op == SL::OP_POST_INCREMENT || onode->op == SL::OP_POST_DECREMENT) {
+				return false;
+			}
+			int first = 0;
+			if (onode->op == SL::OP_CALL || onode->op == SL::OP_CONSTRUCT || onode->op == SL::OP_STRUCT) {
+				if (onode->op == SL::OP_CALL && !internal_functions.has(static_cast<const SL::VariableNode *>(onode->arguments[0])->name)) {
+					return false;
+				}
+				first = 1;
+			}
+			for (int i = first; i < onode->arguments.size(); i++) {
+				if (!_is_uniform_expression(onode->arguments[i])) {
+					return false;
+				}
+			}
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
+// Affine scale of p_node with respect to the coord of texture_gradients[p_source], as a template (see COORD_SCALE_AFFINE).
+// Factors must be uniform expressions so the template is valid anywhere in the shader, e.g. for feedback.
+ShaderCompiler::CoordScale ShaderCompiler::_coord_scale(const SL::Node *p_node, int p_source, HashSet<StringName> &r_expanding, const DumpContext &p_context, String &r_scale) {
+	if (!_node_reads(p_node, texture_coord_dependents[p_source])) {
+		return COORD_SCALE_NONE;
+	}
+	const StringName &coord = p_context.actions->texture_gradients[p_source].coord;
+	auto factor_code = [&](const SL::Node *p_factor) {
+		return _dump_node_code(p_factor, 0, *p_context.gen_code, *p_context.actions, *p_context.default_actions, false);
+	};
+
+	switch (p_node->type) {
+		case SL::Node::NODE_TYPE_VARIABLE: {
+			const StringName &name = static_cast<const SL::VariableNode *>(p_node)->name;
+			const LocalVector<const SL::Node *> *defs = dataflow_defs.getptr(name);
+			const bool expand = defs && !r_expanding.has(name) && (name != coord || p_context.actions->texture_gradients_pre_vertex);
+			if (!expand) {
+				// Inside its own definition (`UV = UV * s`), coord is the source value.
+				if (name != coord) {
+					return COORD_SCALE_UNKNOWN;
+				}
+				r_scale = TEXTURE_FOOTPRINT_TOKEN;
+				return COORD_SCALE_AFFINE;
+			}
+			if (defs->size() != 1) {
+				return COORD_SCALE_UNKNOWN;
+			}
+			r_expanding.insert(name);
+			const CoordScale result = _coord_scale((*defs)[0], p_source, r_expanding, p_context, r_scale);
+			r_expanding.erase(name);
+			return result;
+		}
+		case SL::Node::NODE_TYPE_MEMBER: {
+			const SL::MemberNode *mnode = static_cast<const SL::MemberNode *>(p_node);
+			if (!_is_swizzle_xy(mnode) || mnode->index_expression || mnode->call_expression) {
+				return COORD_SCALE_UNKNOWN;
+			}
+			return _coord_scale(mnode->owner, p_source, r_expanding, p_context, r_scale);
+		}
+		case SL::Node::NODE_TYPE_OPERATOR: {
+			const SL::OperatorNode *onode = static_cast<const SL::OperatorNode *>(p_node);
+			switch (onode->op) {
+				case SL::OP_ADD:
+				case SL::OP_SUB: {
+					String scale_a, scale_b;
+					const CoordScale a = _coord_scale(onode->arguments[0], p_source, r_expanding, p_context, scale_a);
+					const CoordScale b = _coord_scale(onode->arguments[1], p_source, r_expanding, p_context, scale_b);
+					if (a == COORD_SCALE_AFFINE && b == COORD_SCALE_NONE) {
+						r_scale = scale_a;
+						return COORD_SCALE_AFFINE;
+					}
+					if (a == COORD_SCALE_NONE && b == COORD_SCALE_AFFINE) {
+						r_scale = onode->op == SL::OP_SUB ? "(-" + scale_b + ")" : scale_b;
+						return COORD_SCALE_AFFINE;
+					}
+					return COORD_SCALE_UNKNOWN;
+				}
+				case SL::OP_NEGATE: {
+					String scale;
+					if (_coord_scale(onode->arguments[0], p_source, r_expanding, p_context, scale) != COORD_SCALE_AFFINE) {
+						return COORD_SCALE_UNKNOWN;
+					}
+					r_scale = "(-" + scale + ")";
+					return COORD_SCALE_AFFINE;
+				}
+				case SL::OP_MUL:
+				case SL::OP_DIV: {
+					// The coordinate side must stay a vec2 so the scale applies to vec2 footprints.
+					const bool coord_left = _node_reads(onode->arguments[0], texture_coord_dependents[p_source]);
+					const SL::Node *coord_node = onode->arguments[coord_left ? 0 : 1];
+					const SL::Node *factor = onode->arguments[coord_left ? 1 : 0];
+					if (coord_node->get_datatype() != SL::TYPE_VEC2 || !_is_uniform_expression(factor) || (onode->op == SL::OP_DIV && !coord_left)) {
+						return COORD_SCALE_UNKNOWN;
+					}
+					String scale;
+					if (_coord_scale(coord_node, p_source, r_expanding, p_context, scale) != COORD_SCALE_AFFINE) {
+						return COORD_SCALE_UNKNOWN;
+					}
+					const String factor_str = "(" + factor_code(factor) + ")";
+					if (onode->op == SL::OP_DIV) {
+						r_scale = "(" + scale + " / " + factor_str + ")";
+					} else {
+						r_scale = coord_left ? "(" + scale + " * " + factor_str + ")" : "(" + factor_str + " * " + scale + ")";
+					}
+					return COORD_SCALE_AFFINE;
+				}
+				case SL::OP_CALL: {
+					// fract() and mod() tile without changing the scale.
+					const StringName &callee = static_cast<const SL::VariableNode *>(onode->arguments[0])->name;
+					const bool tiles = (callee == "fract" && onode->arguments.size() == 2) || (callee == "mod" && onode->arguments.size() == 3 && _is_uniform_expression(onode->arguments[2]));
+					if (!tiles || !internal_functions.has(callee)) {
+						return COORD_SCALE_UNKNOWN;
+					}
+					return _coord_scale(onode->arguments[1], p_source, r_expanding, p_context, r_scale);
+				}
+				case SL::OP_CONSTRUCT: {
+					// vec2(c) and vec3(c, layer) keep the vec2 coordinate in their first components.
+					const SL::Node *first = onode->arguments.size() > 1 ? onode->arguments[1] : nullptr;
+					if (first == nullptr || first->get_datatype() != SL::TYPE_VEC2) {
+						return COORD_SCALE_UNKNOWN;
+					}
+					for (int i = 2; i < onode->arguments.size(); i++) {
+						if (_node_reads(onode->arguments[i], texture_coord_dependents[p_source])) {
+							return COORD_SCALE_UNKNOWN;
+						}
+					}
+					return _coord_scale(first, p_source, r_expanding, p_context, r_scale);
+				}
+				default:
+					return COORD_SCALE_UNKNOWN;
+			}
+		}
+		default:
+			return COORD_SCALE_UNKNOWN;
+	}
+}
+
+ShaderCompiler::TextureFootprint ShaderCompiler::_texture_footprint(const SL::Node *p_coord, const DumpContext &p_context) {
+	TextureFootprint footprint;
+	footprint.scale = TEXTURE_FOOTPRINT_TOKEN;
+	for (int i = (int)texture_coord_dependents.size() - 1; i > 0; i--) {
+		if (_node_reads(p_coord, texture_coord_dependents[i])) {
+			footprint.source = i;
+			break;
+		}
+	}
+	HashSet<StringName> expanding;
+	String scale;
+	if (_coord_scale(p_coord, footprint.source, expanding, p_context, scale) == COORD_SCALE_AFFINE) {
+		footprint.scale = scale;
+	}
+	return footprint;
+}
+
+String ShaderCompiler::_texture_footprint_code(const IdentifierActions &p_actions) const {
+	if (texture_footprints.is_empty() || (texture_footprints.size() == 1 && texture_footprints[0].source == 0 && texture_footprints[0].scale == TEXTURE_FOOTPRINT_TOKEN)) {
+		return String(); // Already the unscaled source footprint.
+	}
+	String code = "{\n";
+	for (uint32_t i = 0; i < texture_footprints.size(); i++) {
+		const TextureFootprint &footprint = texture_footprints[i];
+		const IdentifierActions::TextureGradients &source = p_actions.texture_gradients[footprint.source];
+		const String ddx = footprint.scale.replace(TEXTURE_FOOTPRINT_TOKEN, source.ddx);
+		const String ddy = footprint.scale.replace(TEXTURE_FOOTPRINT_TOKEN, source.ddy);
+		if (i == 0) {
+			code += "\tvec2 footprint_ddx = " + ddx + ";\n\tvec2 footprint_ddy = " + ddy + ";\n";
+			continue;
+		}
+		code += "\t{\n";
+		code += "\t\tvec2 candidate_ddx = " + ddx + ";\n";
+		code += "\t\tvec2 candidate_ddy = " + ddy + ";\n";
+		code += "\t\tif (dot(candidate_ddx, candidate_ddx) + dot(candidate_ddy, candidate_ddy) < dot(footprint_ddx, footprint_ddx) + dot(footprint_ddy, footprint_ddy)) {\n";
+		code += "\t\t\tfootprint_ddx = candidate_ddx;\n\t\t\tfootprint_ddy = candidate_ddy;\n\t\t}\n\t}\n";
+	}
+	code += "\t" + p_actions.texture_gradients[0].ddx + " = footprint_ddx;\n";
+	code += "\t" + p_actions.texture_gradients[0].ddy + " = footprint_ddy;\n}\n";
+	return code;
 }
 
 String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, GeneratedCode &r_gen_code, IdentifierActions &p_actions, const DefaultIdentifierActions &p_default_actions, bool p_assigning, bool p_use_scope) {
@@ -1239,6 +1603,14 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					bool texture_func_no_uv = false;
 					bool texture_func_returns_data = false;
 					bool texture_func_simple = false;
+					bool texture_explicit = false; // texture() rewritten to textureGrad/textureLod.
+					bool texture_grad = false;
+					TextureFootprint texture_footprint;
+					String texture_bias;
+					int texture_call_start = 0;
+					int texture_args_start = 0;
+					int texture_sampler_end = 0;
+					String texture_debug_prefix;
 
 					if (onode->op == SL::OP_STRUCT) {
 						code += _mkid(vnode->name);
@@ -1251,12 +1623,28 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 
 						if (is_internal_func) {
-							const String *renamed_function = p_actions.function_renames.getptr(vnode->name);
-							code += renamed_function ? *renamed_function : String(vnode->name);
 							is_texture_func = texture_functions.has(vnode->name);
 							texture_func_no_uv = (vnode->name == "textureSize" || vnode->name == "textureQueryLevels");
 							texture_func_returns_data = texture_func_no_uv || vnode->name == "textureQueryLod";
 							texture_func_simple = vnode->name == "texture";
+							if (texture_func_simple && !p_actions.texture_gradients.is_empty() && onode->arguments.size() > 2) {
+								texture_grad = _texture_grad_takes_uv(onode->arguments[1]->get_datatype());
+								if (texture_grad) {
+									texture_footprint = _texture_footprint(onode->arguments[2], { &r_gen_code, &p_actions, &p_default_actions });
+									if (!texture_footprints.has(texture_footprint)) {
+										texture_footprints.push_back(texture_footprint);
+									}
+								}
+								texture_explicit = p_actions.texture_explicit_gradients;
+							}
+							if (texture_explicit) {
+								texture_grad = _texture_grad_takes_uv(onode->arguments[1]->get_datatype());
+								texture_call_start = code.length();
+								code += texture_grad ? "textureGrad" : "textureLod";
+							} else {
+								const String *renamed_function = p_actions.function_renames.getptr(vnode->name);
+								code += renamed_function ? *renamed_function : String(vnode->name);
+							}
 						} else if (p_default_actions.renames.has(vnode->name)) {
 							code += p_default_actions.renames[vnode->name];
 						} else {
@@ -1265,6 +1653,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					}
 
 					code += "(";
+					texture_args_start = code.length();
 
 					// if color backbuffer, depth backbuffer or normal roughness texture is used,
 					// we will add logic to automatically switch between
@@ -1273,6 +1662,13 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					bool is_normal_roughness_texture = false;
 
 					for (int i = 1; i < onode->arguments.size(); i++) {
+						if (texture_explicit && i == 3) {
+							texture_bias = _dump_node_code(onode->arguments[i], p_level, r_gen_code, p_actions, p_default_actions, p_assigning);
+							continue;
+						}
+						if (i == 2) {
+							texture_sampler_end = code.length();
+						}
 						if (i > 1) {
 							code += ", ";
 						}
@@ -1445,7 +1841,33 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 							code += node_code;
 						}
 					}
+					if (texture_explicit && texture_grad) {
+						// Bias scales the footprint by 2^bias, like a raster LOD bias.
+						const IdentifierActions::TextureGradients &source = p_actions.texture_gradients[texture_footprint.source];
+						const String bias_scale = texture_bias.is_empty() ? String() : " * exp2(" + texture_bias + ")";
+						const String grads = ", " + texture_footprint.scale.replace(TEXTURE_FOOTPRINT_TOKEN, source.ddx) + bias_scale +
+								", " + texture_footprint.scale.replace(TEXTURE_FOOTPRINT_TOKEN, source.ddy) + bias_scale;
+						if (!p_actions.texture_debug_macro.is_empty()) {
+							const SL::Node *sampler = onode->arguments[1];
+							const SL::ShaderNode::Uniform *uniform = sampler->type == SL::Node::NODE_TYPE_VARIABLE ? shader->uniforms.getptr(static_cast<const SL::VariableNode *>(sampler)->name) : nullptr;
+							const bool albedo = uniform && uniform->use_color; // source_color on a sampler.
+							texture_debug_prefix = p_actions.texture_debug_macro + "(" + code.substr(texture_args_start, texture_sampler_end - texture_args_start) + grads + (albedo ? ", 2) " : ", 1) ");
+						}
+						if (texture_bias.is_empty()) {
+							code += grads;
+						} else {
+							// Zero gradients (no ray cone) would drop the bias; the closing ")" below ends the ternary.
+							const String call = code.substr(texture_call_start);
+							code = code.substr(0, texture_call_start) + "(" + source.ddx + " != vec2(0.0) ? " + call + grads + ") : textureLod(" +
+									code.substr(texture_args_start) + ", " + texture_bias + ")";
+						}
+					} else if (texture_explicit) {
+						code += ", " + (texture_bias.is_empty() ? String("0.0") : texture_bias);
+					}
 					code += ")";
+					if (!texture_debug_prefix.is_empty()) {
+						code = code.substr(0, texture_call_start) + "(" + texture_debug_prefix + code.substr(texture_call_start) + ")";
+					}
 					if (is_screen_texture && !texture_func_returns_data && actions.apply_luminance_multiplier) {
 						if (RS::get_singleton()->is_low_end()) {
 							code = "(" + code + " / vec4(vec3(scene_data_block.data.luminance_multiplier), 1.0))";
@@ -1695,8 +2117,34 @@ Error ShaderCompiler::compile(RSE::ShaderMode p_mode, const String &p_code, Iden
 
 	shader = parser.get_shader();
 	function = nullptr;
+
+	dataflow_defs.clear();
+	texture_coord_dependents.clear();
+	texture_footprints.clear();
+	if (!p_actions->texture_gradients.is_empty()) {
+		LocalVector<ShaderDataflowEdge> edges;
+		for (const SL::ShaderNode::Function &func : shader->vfunctions) {
+			_collect_dataflow(shader, func.function->body, func.name, edges);
+		}
+		for (const ShaderDataflowEdge &edge : edges) {
+			if (edge.target != StringName()) {
+				dataflow_defs[edge.target].push_back(edge.source);
+			}
+		}
+		for (const IdentifierActions::TextureGradients &source : p_actions->texture_gradients) {
+			texture_coord_dependents.push_back(_dataflow_dependents(edges, source.coord));
+		}
+	}
+
 	// Return value only relevant within nested calls.
 	_ALLOW_DISCARD_ _dump_node_code(shader, 1, r_gen_code, *p_actions, actions, false);
+
+	if (!p_actions->texture_footprint_code.is_empty()) {
+		const String footprint_code = _texture_footprint_code(*p_actions);
+		if (!footprint_code.is_empty()) {
+			r_gen_code.code[p_actions->texture_footprint_code] = footprint_code;
+		}
+	}
 
 	return OK;
 }

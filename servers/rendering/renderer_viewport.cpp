@@ -57,9 +57,11 @@
 
 // No RenderingDevice exists under the Compatibility renderer.
 static void _set_gpu_label_prefix(const String &p_prefix) {
+#ifdef RD_ENABLED
 	if (RD::get_singleton()) {
 		RD::get_singleton()->draw_command_set_label_prefix(p_prefix);
 	}
+#endif
 }
 
 static Transform2D _canvas_get_transform(RendererViewport::Viewport *p_viewport, RendererCanvasCull::Canvas *p_canvas, RendererViewport::Viewport::CanvasData *p_canvas_data, const Vector2 &p_vp_size) {

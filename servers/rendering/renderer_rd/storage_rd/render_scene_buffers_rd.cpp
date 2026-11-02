@@ -106,7 +106,10 @@ void RenderSceneBuffersRD::free_named_texture(NamedTexture &p_named_texture) {
 void RenderSceneBuffersRD::update_samplers() {
 	float computed_mipmap_bias = texture_mipmap_bias;
 
-	if (use_taa || (RSE::scaling_3d_mode_type(scaling_3d_mode) == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL)) {
+	if (scaling_3d_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
+		// NVIDIA's DLSS guide: log2(render / display) - 1.0; texture_mipmap_bias already holds the log2 term.
+		computed_mipmap_bias -= 1.0;
+	} else if (use_taa || (RSE::scaling_3d_mode_type(scaling_3d_mode) == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL)) {
 		// Use negative mipmap LOD bias when TAA, FSR2 or DLSS is enabled to compensate for loss of sharpness.
 		// This restores sharpness in still images to be roughly at the same level as without TAA,
 		// but moving scenes will still be blurrier.

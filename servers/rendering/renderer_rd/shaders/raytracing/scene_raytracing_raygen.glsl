@@ -628,6 +628,9 @@ void main() {
 #ifdef USE_SER
 #extension GL_EXT_shader_invocation_reorder : enable
 #endif
+#ifdef RT_RAY_CONE_POSITION_FETCH
+#extension GL_EXT_ray_tracing_position_fetch : require
+#endif
 
 #define GLSL 1
 #define RT_STAGE_CLOSEST_HIT 1
@@ -731,6 +734,11 @@ void main() {
 	write_primary_hit_velocity(h.hit_pos);
 
 #ifdef RT_CUSTOM_HIT_GROUP
+	// Mesh UV / UV2 footprints; ShaderCompiler scales them per texture() call through the coordinate math.
+	rt_ray_cone_gradients(h.uv_density, h.geometry_normal, rt_uv_ddx, rt_uv_ddy);
+#ifdef RT_USES_UV2
+	rt_ray_cone_gradients(h.uv2_density, h.geometry_normal, rt_uv2_ddx, rt_uv2_ddy);
+#endif
 	uint rt_geometry_idx = h.geometry_idx;
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;
@@ -742,6 +750,10 @@ void main() {
 	bool rt_front_face = h.is_front_face;
 
 #include "raytracing_custom_fragment_inc.glsl"
+
+	// After the custom code: the footprint code reads material uniforms and overwrites rt_uv_ddx/ddy with the finest one.
+	/* RT_CUSTOM_TEXTURE_FOOTPRINT */
+	rt_texture_streaming_feedback(h.geometry_idx, rt_uv_ddx, rt_uv_ddy);
 
 	// Build MaterialResult from fragment outputs.
 	MaterialResult m;
@@ -792,6 +804,8 @@ void main() {
 	// HG0: StandardMaterial3D evaluation.
 	MaterialData mat = rt_entry_material(h.geometry_idx);
 	MaterialUV muv = material_uv_from_world(mat, geometries[h.geometry_idx], h.uv, h.hit_pos, h.geometry_normal);
+	rt_material_uv_apply_cone(muv, material_uv1_channel(mat), h.uv_density, h);
+	rt_texture_streaming_feedback(h.geometry_idx, muv.uv_ddx, muv.uv_ddy);
 
 	// Triplanar mapping derives its own tangent frame from the blend normal.
 	if (muv.triplanar) {
@@ -815,7 +829,15 @@ void main() {
 	float roughness = roughness_metallic.x;
 	float metalness = roughness_metallic.y;
 
-	vec3 emissive = material_emission(mat, muv, h.uv2, h.hit_pos, h.geometry_normal) * scene_data_block.data.emissive_exposure_normalization;
+	MaterialUV emission_uv = muv;
+	if ((mat.flags & RT_MAT_FLAG_EMISSION_UV2) != 0u) {
+		MaterialUVChannel uv2_channel = material_uv2_channel(mat);
+		emission_uv = material_uv_channel_from_world(uv2_channel, h.uv2, h.hit_pos, h.geometry_normal);
+		rt_material_uv_apply_cone(emission_uv, uv2_channel, h.uv2_density, h);
+		// Feedback keeps the smallest footprint per material, so the more detailed channel wins.
+		rt_texture_streaming_feedback(h.geometry_idx, emission_uv.uv_ddx, emission_uv.uv_ddy);
+	}
+	vec3 emissive = material_emission(mat, emission_uv) * scene_data_block.data.emissive_exposure_normalization;
 
 	// Build MaterialResult.
 	MaterialResult m;
@@ -864,6 +886,11 @@ void main() {
 		// VIS 23 (transparency heatmap) shades normally; raygen overrides the image.
 		if (VIS_MODE != 0 && VIS_MODE != 23) {
 			vec2 debug_uv = muv.triplanar ? muv.triplanar_pos.xy : muv.uv;
+			uint albedo_index = rt_texture_index(mat.albedo_texture);
+			if (VIS_MODE == RT_VIS_TEXTURE_MIP && albedo_index != 0u) { // 0 is the white default.
+				rt_debug_texture_mip = rt_debug_texture_mip_level(textureSize(sampler2D(bindless_textures[nonuniformEXT(albedo_index)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), 0),
+						textureQueryLevels(sampler2D(bindless_textures[nonuniformEXT(albedo_index)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT)), muv.uv_ddx, muv.uv_ddy);
+			}
 			debug_visualize(VIS_MODE, debug_material_inputs(h, m, tangent_space_normal, h.tangent, h.bitangent, debug_uv, material_ao(mat, muv)), m.alpha);
 			return;
 		}
@@ -1068,18 +1095,18 @@ void main() {
 
 // Write all attributes and report the intersection. Transparently delta-compresses
 // PREV_POSITION into spare .w bytes of packed_normal/tangent + prev_pos_delta_yz.
-#define report_intersection(t_hit, kind)                                                      \
-	{                                                                                         \
-		vec3 _obj_hit = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * (t_hit);           \
+#define report_intersection(t_hit, kind) \
+	{ \
+		vec3 _obj_hit = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * (t_hit); \
 		vec3 _delta = any(isnan(m_PREV_POSITION)) ? vec3(0.0) : (m_PREV_POSITION - _obj_hit); \
-		uint _n4 = packSnorm4x8(vec4(m_HIT_NORMAL, 0.0));                                     \
-		uint _t4 = packSnorm4x8(vec4(m_HIT_TANGENT, 0.0));                                    \
-		uint _dx = packHalf2x16(vec2(_delta.x, 0.0));                                         \
-		hit_attribs.bary_or_uv = m_HIT_UV;                                                    \
-		hit_attribs.packed_normal = (_n4 & 0x00FFFFFFu) | ((_dx & 0xFFu) << 24u);             \
-		hit_attribs.packed_tangent = (_t4 & 0x00FFFFFFu) | (((_dx >> 8u) & 0xFFu) << 24u);    \
-		hit_attribs.prev_pos_delta_yz = packHalf2x16(vec2(_delta.y, _delta.z));               \
-		reportIntersectionEXT(t_hit, kind);                                                   \
+		uint _n4 = packSnorm4x8(vec4(m_HIT_NORMAL, 0.0)); \
+		uint _t4 = packSnorm4x8(vec4(m_HIT_TANGENT, 0.0)); \
+		uint _dx = packHalf2x16(vec2(_delta.x, 0.0)); \
+		hit_attribs.bary_or_uv = m_HIT_UV; \
+		hit_attribs.packed_normal = (_n4 & 0x00FFFFFFu) | ((_dx & 0xFFu) << 24u); \
+		hit_attribs.packed_tangent = (_t4 & 0x00FFFFFFu) | (((_dx >> 8u) & 0xFFu) << 24u); \
+		hit_attribs.prev_pos_delta_yz = packHalf2x16(vec2(_delta.y, _delta.z)); \
+		reportIntersectionEXT(t_hit, kind); \
 	}
 
 #ifdef RT_CUSTOM_HIT_GROUP
@@ -1098,6 +1125,7 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
 
+#include "raytracing_custom_texture_inc.glsl"
 #include "raytracing_samplers_inc.glsl"
 
 layout(buffer_reference, std140) readonly buffer CustomMaterialUniforms{

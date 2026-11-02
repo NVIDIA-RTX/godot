@@ -378,6 +378,7 @@ Error RenderingDevice::_tlas_validate_instances(const AccelerationStructure *p_t
 
 RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) {
 	ERR_FAIL_COND_V_MSG(!has_feature(SUPPORTS_RAYTRACING_PIPELINE) && !has_feature(SUPPORTS_RAY_QUERY), RID(), "The current rendering device has neither raytracing pipeline nor ray query support.");
+	ERR_FAIL_COND_V_MSG(p_flags.has_flag(ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT) && !has_feature(SUPPORTS_RAYTRACING_POSITION_FETCH), RID(), "ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT requires SUPPORTS_RAYTRACING_POSITION_FETCH.");
 
 	LocalVector<RDD::AccelerationStructureGeometry> rdd_geometries;
 	rdd_geometries.resize(p_geometries.size());
@@ -504,6 +505,8 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
 	acceleration_structure.driver_id = driver->blas_create(rdd_geometries, p_flags);
 	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create BLAS.");
+	acceleration_structure.size = driver->acceleration_structure_get_size_bytes(acceleration_structure.driver_id);
+	blas_memory.add(acceleration_structure.size);
 
 	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
 	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
@@ -572,6 +575,8 @@ RID RenderingDevice::tlas_create(uint32_t p_max_instance_count, BitField<Acceler
 	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
 	acceleration_structure.driver_id = driver->tlas_create(p_max_instance_count, p_flags);
 	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create TLAS.");
+	acceleration_structure.size = driver->acceleration_structure_get_size_bytes(acceleration_structure.driver_id);
+	tlas_memory.add(acceleration_structure.size);
 
 	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
 	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
@@ -790,7 +795,7 @@ bool RenderingDevice::_any_list_active() const {
 }
 
 // Replaces the shared scratch buffer with one doubled until it holds p_size bytes, capped at max_size unless p_size
-// alone exceeds it. Builds recorded with the old one keep it until their frame is done.
+// alone exceeds it.
 Error RenderingDevice::_acceleration_structure_scratch_grow(uint64_t p_size) {
 	constexpr uint64_t INITIAL_SIZE = 1000 * 1000;
 	AccelerationStructureScratch &scratch = acceleration_structure_scratch;
@@ -803,7 +808,12 @@ Error RenderingDevice::_acceleration_structure_scratch_grow(uint64_t p_size) {
 		WARN_PRINT_ONCE(vformat("An acceleration structure build needs %d MB of scratch memory, more than rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb. The scratch buffer was grown to fit.", (p_size + 999999) / 1000000));
 		size = p_size;
 	}
+	return _acceleration_structure_scratch_reallocate(size);
+}
 
+// Replaces the shared scratch buffer with a p_size one. Builds recorded with the old one keep it until their frame is done.
+Error RenderingDevice::_acceleration_structure_scratch_reallocate(uint64_t p_size) {
+	AccelerationStructureScratch &scratch = acceleration_structure_scratch;
 	if (scratch.buffer) {
 		Buffer to_dispose;
 		to_dispose.driver_id = scratch.buffer;
@@ -814,14 +824,27 @@ Error RenderingDevice::_acceleration_structure_scratch_grow(uint64_t p_size) {
 		scratch.size = 0;
 	}
 
-	scratch.buffer = driver->buffer_create(size, RDD::BUFFER_USAGE_STORAGE_BIT | RDD::BUFFER_USAGE_DEVICE_ADDRESS_BIT, RDD::MEMORY_ALLOCATION_TYPE_GPU, frames_drawn);
+	scratch.buffer = driver->buffer_create(p_size, RDD::BUFFER_USAGE_STORAGE_BIT | RDD::BUFFER_USAGE_DEVICE_ADDRESS_BIT, RDD::MEMORY_ALLOCATION_TYPE_GPU, frames_drawn);
 	ERR_FAIL_COND_V(!scratch.buffer, ERR_CANT_CREATE);
-	scratch.size = size;
+	scratch.size = p_size;
 	scratch.used = 0;
+	scratch.sizer.record_resize(OS::get_singleton()->get_ticks_msec());
 
-	buffer_memory.add(size);
+	buffer_memory.add(p_size);
 
 	return OK;
+}
+
+// Shrinks the shared scratch buffer when recent batches use only a fraction of it. Not during a batch.
+void RenderingDevice::_acceleration_structure_scratch_trim() {
+	AccelerationStructureScratch &scratch = acceleration_structure_scratch;
+	if (!scratch.buffer) {
+		return;
+	}
+	const uint64_t size = scratch.sizer.get_shrink_size(scratch.size, OS::get_singleton()->get_ticks_msec());
+	if (size > 0) {
+		_acceleration_structure_scratch_reallocate(size);
+	}
 }
 
 // Places the scratch range of r_build in the shared scratch buffer and appends r_build to the batch.
@@ -901,13 +924,7 @@ Error RenderingDevice::_tlas_batch_add(RID p_tlas, Span<AccelerationStructureIns
 	return OK;
 }
 
-// Records BLAS builds, BLAS refits and then TLAS builds as one untracked command, behind a full barrier: the builds wait
-// for every command recorded before them. Nothing tracks what they build, so the caller orders the commands using it
-// with untracked_barrier(). The structures don't reference each other either, so rebuilding a BLAS doesn't invalidate
-// the TLASes built from it: they must be rebuilt before they are used again. A refit of a BLAS that was never built is
-// recorded as a build, and a BLAS may appear only once. Scratch memory comes from one shared buffer that doubles when
-// full, up to rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb or the size of the largest
-// single build. A structure that can't be built is skipped and left unbuilt; the first error is returned.
+// Untracked: callers order users of the built structures with untracked_barrier(), and rebuild TLASes after their BLASes.
 Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_builds, Span<RID> p_blas_refits, Span<TLASBuild> p_tlas_builds) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 	ERR_FAIL_COND_V_MSG(_any_list_active(), ERR_INVALID_PARAMETER, ACCELERATION_STRUCTURE_BUILD_IN_LIST_ERROR);
@@ -934,6 +951,7 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 	for (const TLASBuild &build : p_tlas_builds) {
 		keep_first_error(_tlas_batch_add(build.tlas, build.instances));
 	}
+	acceleration_structure_scratch.sizer.record_peak(acceleration_structure_scratch.batch_peak, OS::get_singleton()->get_ticks_msec());
 
 	if (!acceleration_structure_batch.builds.is_empty()) {
 		// Also covers the scratch memory and structures still used by earlier batches.
@@ -8596,6 +8614,7 @@ void RenderingDevice::_free_pending_resources(int p_frame) {
 	while (frames[p_frame].acceleration_structures_to_dispose_of.front()) {
 		AccelerationStructure &acceleration_structure = frames[p_frame].acceleration_structures_to_dispose_of.front()->get();
 
+		_acceleration_structure_memory(acceleration_structure.type).sub(acceleration_structure.size);
 		driver->acceleration_structure_free(acceleration_structure.driver_id);
 
 		if (acceleration_structure.scratch_buffer) {
@@ -8694,6 +8713,12 @@ uint64_t RenderingDevice::get_memory_usage(MemoryType p_type) const {
 		case MEMORY_TOTAL: {
 			return driver->get_total_memory_used();
 		}
+		case MEMORY_BLAS: {
+			return blas_memory.get();
+		}
+		case MEMORY_TLAS: {
+			return tlas_memory.get();
+		}
 		default: {
 			DEV_ASSERT(false);
 			return 0;
@@ -8731,6 +8756,8 @@ void RenderingDevice::_begin_frame(bool p_presented) {
 	// Erase pending resources.
 	GodotProfileZoneGrouped(_profile_zone, "_free_pending_resources");
 	_free_pending_resources(frame);
+
+	_acceleration_structure_scratch_trim();
 
 	// Advance staging buffers if used.
 	if (upload_staging_buffers.used) {
@@ -10313,6 +10340,7 @@ void RenderingDevice::_bind_methods() {
 	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT);
 	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT);
 	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_LOW_MEMORY_BIT);
+	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT);
 
 	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT);
 	BIND_BITFIELD_FLAG(ACCELERATION_STRUCTURE_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT);
@@ -10488,6 +10516,7 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUPPORTS_RASTERIZATION_RATE_MAP);
 	BIND_ENUM_CONSTANT(SUPPORTS_SHADER_DEVICE_CLOCK);
 	BIND_ENUM_CONSTANT(SUPPORTS_VERTEX_PIPELINE_STORES);
+	BIND_ENUM_CONSTANT(SUPPORTS_RAYTRACING_POSITION_FETCH);
 
 	BIND_ENUM_CONSTANT(LIMIT_MAX_BOUND_UNIFORM_SETS);
 	BIND_ENUM_CONSTANT(LIMIT_MAX_FRAMEBUFFER_COLOR_ATTACHMENTS);
@@ -10532,6 +10561,8 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(MEMORY_TEXTURES);
 	BIND_ENUM_CONSTANT(MEMORY_BUFFERS);
 	BIND_ENUM_CONSTANT(MEMORY_TOTAL);
+	BIND_ENUM_CONSTANT(MEMORY_BLAS);
+	BIND_ENUM_CONSTANT(MEMORY_TLAS);
 
 	BIND_CONSTANT(INVALID_ID);
 	BIND_CONSTANT(INVALID_FORMAT_ID);

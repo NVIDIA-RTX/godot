@@ -120,6 +120,8 @@ vec4 rt_fwidth(vec4 value) {
 	return vec4(RT_FWIDTH_EPSILON);
 }
 
+#include "raytracing_custom_texture_inc.glsl"
+
 /* RT_CUSTOM_TEXTURE_DEFINES */
 /* RT_CUSTOM_FRAGMENT_GLOBALS */
 
