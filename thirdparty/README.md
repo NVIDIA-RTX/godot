@@ -283,6 +283,20 @@ Patches:
 - `0001-remove-bc7enc.patch` ([GH-101362](https://github.com/godotengine/godot/pull/101362))
 
 
+## fast_noise
+
+- Upstream: https://github.com/electronicarts/fastnoise
+- Version: git (2cf53e4bb510d07511fe63a312556d2a2e108c70, 2025)
+- License: BSD-3-Clause
+
+Files generated from upstream source:
+
+- `LICENSE.txt`
+- `fast_noise_vec2_64x64x32.{cpp,h}`: built `FastNoise.exe` run with
+  `vector2 uniform binomial 2 exponential 0.1 0.1 product 64 64 32 fast -split -seed 1337 -numsteps 100000`,
+  then the R and G channels of the 32 PNG slices packed as `[layer][y][x][rg]` bytes in the `.cpp`.
+
+
 ## fonts
 
 - `DroidSans*.woff2`:

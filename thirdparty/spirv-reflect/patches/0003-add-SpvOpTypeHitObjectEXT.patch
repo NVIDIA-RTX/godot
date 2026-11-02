@@ -1,0 +1,12 @@
+diff --git a/thirdparty/spirv-reflect/spirv_reflect.c b/thirdparty/spirv-reflect/spirv_reflect.c
+index cca1f68fda..41a0906f4a 100644
+--- a/thirdparty/spirv-reflect/spirv_reflect.c
++++ b/thirdparty/spirv-reflect/spirv_reflect.c
+@@ -846,6 +846,7 @@ static SpvReflectResult ParseNodes(SpvReflectPrvParser* p_parser) {
+       case SpvOpTypeAccelerationStructureKHR:
+       case SpvOpTypeRayQueryKHR:
+       case SpvOpTypeHitObjectNV:
++       case SpvOpTypeHitObjectEXT:
+       case SpvOpTypeCooperativeVectorNV:
+       case SpvOpTypeCooperativeMatrixNV:
+       case SpvOpTypeCooperativeMatrixKHR: {

@@ -1,0 +1,34 @@
+diff --git a/thirdparty/glslang/SPIRV/SpvBuilder.cpp b/thirdparty/glslang/SPIRV/SpvBuilder.cpp
+index 0e4237fb8a..2feba23465 100644
+--- a/thirdparty/glslang/SPIRV/SpvBuilder.cpp
++++ b/thirdparty/glslang/SPIRV/SpvBuilder.cpp
+@@ -2865,16 +2865,20 @@ Id Builder::createVariable(Decoration precision, StorageClass storageClass, Id t
+
+     if (emitNonSemanticShaderDebugInfo && !compilerGenerated)
+     {
+-        // For debug info, we prefer respecting how the variable is declared in source code.
+-        // We may emulate some local variables as global variable with private storage in SPIR-V, but we still want to
+-        // treat them as local variables in debug info.
+-        if (storageClass == StorageClass::Function || (currentFunction && storageClass == StorageClass::Private)) {
+-            auto const debugLocalVariableId = createDebugLocalVariable(getDebugType(type), name);
+-            makeDebugDeclare(debugLocalVariableId, inst->getResultId());
+-        }
+-        else {
+-            createDebugGlobalVariable(getDebugType(type), name, inst->getResultId());
+-        }
++        // Skip debug info for opaque types
++        Id debugType = getDebugType(type);
++        if (debugType) {
++            // For debug info, we prefer respecting how the variable is declared in source code.
++            // We may emulate some local variables as global variable with private storage in SPIR-V, but we still want to
++            // treat them as local variables in debug info.
++            if (storageClass == StorageClass::Function || (currentFunction && storageClass == StorageClass::Private)) {
++                auto const debugLocalVariableId = createDebugLocalVariable(getDebugType(type), name);
++                makeDebugDeclare(debugLocalVariableId, inst->getResultId());
++            } else {
++                createDebugGlobalVariable(getDebugType(type), name, inst->getResultId());
++            }
++        }
+     }
+
+     if (name)
