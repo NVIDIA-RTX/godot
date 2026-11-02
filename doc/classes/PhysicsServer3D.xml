@@ -1650,7 +1650,7 @@
 		<constant name="G6DOF_JOINT_LINEAR_MOTOR_TARGET_VELOCITY" value="5" enum="G6DOFJointAxisParam">
 			The velocity that the joint's linear motor will attempt to reach.
 		</constant>
-		<constant name="G6DOF_JOINT_LINEAR_MOTOR_FORCE_LIMIT" value="6" enum="G6DOFJointAxisParam">
+		<constant name="G6DOF_JOINT_LINEAR_MOTOR_FORCE_LIMIT" value="6" enum="G6DOFJointAxisParam" deprecated="Use [constant G6DOF_JOINT_LINEAR_DRIVE_FORCE_LIMIT] instead, which applies in both spring and motor modes.">
 			The maximum force that the linear motor can apply while trying to reach the target velocity.
 		</constant>
 		<constant name="G6DOF_JOINT_LINEAR_SPRING_STIFFNESS" value="7" enum="G6DOFJointAxisParam">
@@ -1688,7 +1688,7 @@
 		<constant name="G6DOF_JOINT_ANGULAR_MOTOR_TARGET_VELOCITY" value="17" enum="G6DOFJointAxisParam">
 			Target speed for the motor at the axes.
 		</constant>
-		<constant name="G6DOF_JOINT_ANGULAR_MOTOR_FORCE_LIMIT" value="18" enum="G6DOFJointAxisParam">
+		<constant name="G6DOF_JOINT_ANGULAR_MOTOR_FORCE_LIMIT" value="18" enum="G6DOFJointAxisParam" deprecated="Use [constant G6DOF_JOINT_ANGULAR_DRIVE_TORQUE_LIMIT] instead, which applies in both spring and motor modes.">
 			Maximum acceleration for the motor at the axes.
 		</constant>
 		<constant name="G6DOF_JOINT_ANGULAR_SPRING_STIFFNESS" value="19" enum="G6DOFJointAxisParam">
@@ -1697,7 +1697,17 @@
 		</constant>
 		<constant name="G6DOF_JOINT_ANGULAR_SPRING_EQUILIBRIUM_POINT" value="21" enum="G6DOFJointAxisParam">
 		</constant>
-		<constant name="G6DOF_JOINT_MAX" value="22" enum="G6DOFJointAxisParam">
+		<constant name="G6DOF_JOINT_LINEAR_DRIVE_FORCE_LIMIT" value="22" enum="G6DOFJointAxisParam">
+			The maximum force the joint can apply along this linear axis.
+			Used by both the spring drive and the linear motor; supersedes [constant G6DOF_JOINT_LINEAR_MOTOR_FORCE_LIMIT] when set.
+			[b]Note:[/b] Only for Jolt backend. Other 3D physics backends may ignore this value.
+		</constant>
+		<constant name="G6DOF_JOINT_ANGULAR_DRIVE_TORQUE_LIMIT" value="23" enum="G6DOFJointAxisParam">
+			The maximum torque the joint can apply around this angular axis.
+			Used by both the spring drive and the angular motor; supersedes [constant G6DOF_JOINT_ANGULAR_MOTOR_FORCE_LIMIT] when set.
+			[b]Note:[/b] Only for Jolt backend. Other 3D physics backends may ignore this value.
+		</constant>
+		<constant name="G6DOF_JOINT_MAX" value="24" enum="G6DOFJointAxisParam">
 			Represents the size of the [enum G6DOFJointAxisParam] enum.
 		</constant>
 		<constant name="G6DOF_JOINT_FLAG_ENABLE_LINEAR_LIMIT" value="0" enum="G6DOFJointAxisFlag">
@@ -1710,8 +1720,11 @@
 		</constant>
 		<constant name="G6DOF_JOINT_FLAG_ENABLE_LINEAR_SPRING" value="3" enum="G6DOFJointAxisFlag">
 		</constant>
-		<constant name="G6DOF_JOINT_FLAG_ENABLE_MOTOR" value="4" enum="G6DOFJointAxisFlag">
-			If set, there is a rotational motor across these axes.
+		<constant name="G6DOF_JOINT_FLAG_ENABLE_ANGULAR_MOTOR" value="4" enum="G6DOFJointAxisFlag">
+			If set, there is a rotational or angular motor across these axes.
+		</constant>
+		<constant name="G6DOF_JOINT_FLAG_ENABLE_MOTOR" value="4" enum="G6DOFJointAxisFlag" deprecated="Use [constant G6DOF_JOINT_FLAG_ENABLE_ANGULAR_MOTOR] instead.">
+			If set, there is a rotational or angular motor across these axes.
 		</constant>
 		<constant name="G6DOF_JOINT_FLAG_ENABLE_LINEAR_MOTOR" value="5" enum="G6DOFJointAxisFlag">
 			If set, there is a linear motor on this axis that targets a specific velocity.
@@ -1765,7 +1778,7 @@
 			Constant to set/get whether the gravity vector of an area is a direction, or a center point.
 		</constant>
 		<constant name="AREA_PARAM_GRAVITY_POINT_UNIT_DISTANCE" value="4" enum="AreaParameter">
-			Constant to set/get the distance at which the gravity strength is equal to the gravity controlled by [constant AREA_PARAM_GRAVITY]. For example, on a planet 100 meters in radius with a surface gravity of 4.0 m/s², set the gravity to 4.0 and the unit distance to 100.0. The gravity will have falloff according to the inverse square law, so in the example, at 200 meters from the center the gravity will be 1.0 m/s² (twice the distance, 1/4th the gravity), at 50 meters it will be 16.0 m/s² (half the distance, 4x the gravity), and so on.
+			Constant to set/get the distance at which the gravity strength is equal to the gravity controlled by [constant AREA_PARAM_GRAVITY]. For example, on a planet 100 meters in radius with a surface gravity of 4.0 m/s², set the gravity to 4.0 and the unit distance to 100.0. The gravity will have falloff according to the inverse square law, so in the example, at 200 meters from the center the gravity will be 1.0 m/s² (twice the distance, 1/4th the gravity), at 50 meters it will be 16.0 m/s² (half the distance, 4× the gravity), and so on.
 			The above is true only when the unit distance is a positive number. When this is set to 0.0, the gravity will be constant regardless of distance.
 		</constant>
 		<constant name="AREA_PARAM_LINEAR_DAMP_OVERRIDE_MODE" value="5" enum="AreaParameter">

@@ -284,6 +284,8 @@ public:
 	void set_text(int p_column, String p_text);
 	String get_text(int p_column) const;
 
+	Ref<TextParagraph> _get_text_buf(int p_column) const;
+
 	void set_description(int p_column, String p_text);
 	String get_description(int p_column) const;
 
@@ -602,7 +604,7 @@ private:
 	void draw_item_rect(const TreeItem::Cell &p_cell, const Rect2i &p_rect, const Color &p_color, const Color &p_icon_color, int p_ol_size, const Color &p_ol_color, const RID &p_ci) const;
 	int draw_item(const Point2i &p_pos, const Point2 &p_draw_ofs, const Size2 &p_draw_size, TreeItem *p_item, int &r_self_height, const RID &p_ci);
 	void select_single_item(TreeItem *p_selected, TreeItem *p_current, int p_col, TreeItem *p_prev = nullptr, bool *r_in_range = nullptr, bool p_force_deselect = false);
-	int propagate_mouse_event(const Point2i &p_pos, int x_ofs, int y_ofs, int x_limit, bool p_double_click, TreeItem *p_item, MouseButton p_button, const Ref<InputEventWithModifiers> &p_mod, bool p_first_call = true, bool p_skip_children = false);
+	int propagate_mouse_event(const Point2i &p_pos, int x_ofs, int y_ofs, const Size2 p_limit, bool p_double_click, TreeItem *p_item, MouseButton p_button, const Ref<InputEventWithModifiers> &p_mod, bool p_first_call = true, bool p_skip_children = false);
 	void _line_editor_submit(String p_text);
 	void _apply_multiline_edit(bool p_hide_focus = false);
 	void _text_editor_popup_modal_close();
@@ -610,6 +612,7 @@ private:
 	void value_editor_changed(double p_value);
 	void _update_popup_menu(const TreeItem::Cell &p_cell);
 	void _update_value_editor(const TreeItem::Cell &p_cell);
+	String _get_range_cell_text(const TreeItem::Cell &p_cell) const;
 
 	void popup_select(int p_option);
 
@@ -713,6 +716,10 @@ private:
 		int scrollbar_margin_left = -1;
 		int scrollbar_h_separation = 0;
 		int scrollbar_v_separation = 0;
+
+		Ref<AudioStream> focus_sound;
+		Ref<AudioStream> item_hovered_sound;
+		Ref<AudioStream> item_selected_sound;
 	} theme_cache;
 
 	struct Cache {

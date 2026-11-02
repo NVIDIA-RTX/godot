@@ -47,12 +47,14 @@
 		<string>arm64</string>
 		<string>x86_64</string>
 	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
 	<key>LSMinimumSystemVersionByArchitecture</key>
 	<dict>
 		<key>arm64</key>
-		<string>11.0</string>
+		<string>13.0</string>
 		<key>x86_64</key>
-		<string>10.12</string>
+		<string>11.0</string>
 	</dict>
 	<key>NSHighResolutionCapable</key>
 	<true/>

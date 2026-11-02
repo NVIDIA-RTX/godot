@@ -35,6 +35,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/object/editor_language.h"
 #include "core/os/os.h"
 #include "editor/doc/doc_tools.h"
 #include "editor/doc/editor_help.h"
@@ -124,10 +125,7 @@ Error GDScriptLanguageProtocol::LSPeer::send_data() {
 	while (!res_queue.is_empty()) {
 		CharString c_res = res_queue[0];
 		if (res_sent < c_res.size()) {
-			Error err = connection->put_partial_data((const uint8_t *)c_res.get_data() + res_sent, c_res.size() - res_sent - 1, sent);
-			if (err != OK) {
-				return err;
-			}
+			RETURN_IF_ERROR(connection->put_partial_data((const uint8_t *)c_res.get_data() + res_sent, c_res.size() - res_sent - 1, sent));
 			res_sent += sent;
 		}
 		// Response sent
@@ -250,6 +248,13 @@ Variant GDScriptLanguageProtocol::initialize(const Dictionary &p_params) {
 	client->behavior.use_snippets_for_brace_completion = get_deep(capabilities, false,
 			"textDocument", "completion", "completionItem", "snippetSupport");
 
+	Array allowed_tags = get_deep(capabilities, Array(), "general", "markdown", "allowedTags");
+	for (const Variant &tag : allowed_tags) {
+		if (tag.is_string()) {
+			client->behavior.markdown_allowed_html_tags.insert(tag);
+		}
+	}
+
 	return ret.to_json();
 }
 
@@ -349,7 +354,7 @@ void GDScriptLanguageProtocol::notify_client(const String &p_method, const Varia
 	peer->res_queue.push_back(msg.utf8());
 }
 
-void GDScriptLanguageProtocol::request_client(const String &p_method, const Variant &p_params, int p_client_id) {
+void GDScriptLanguageProtocol::request_client(const String &p_method, const Variant &p_params, int p_client_id, const Callable &p_response_handler) {
 #ifdef TESTS_ENABLED
 	if (clients.is_empty()) {
 		return;
@@ -364,6 +369,7 @@ void GDScriptLanguageProtocol::request_client(const String &p_method, const Vari
 	ERR_FAIL_COND(peer.is_null());
 
 	Dictionary message = make_request(p_method, p_params, next_server_id);
+	set_response_handler(next_client_id, p_response_handler);
 	next_server_id++;
 	String msg = Variant(message).to_json_string();
 	msg = format_output(msg);
@@ -438,6 +444,12 @@ ExtendGDScriptParser *GDScriptLanguageProtocol::get_parse_result(const String &p
 		return client->parse_script(p_path);
 	}
 	return *cached_parser;
+}
+
+const HashSet<String> &GDScriptLanguageProtocol::get_client_markdown_allowed_html_tags() const {
+	static const HashSet<String> default_tags = {};
+	LSP_CLIENT_V(default_tags);
+	return client->behavior.markdown_allowed_html_tags;
 }
 
 void GDScriptLanguageProtocol::lsp_did_open(const Dictionary &p_params) {
@@ -517,14 +529,14 @@ Array GDScriptLanguageProtocol::lsp_completion(const Dictionary &p_params) {
 	params.load(p_params);
 	Dictionary request_data = params.to_json();
 
-	List<ScriptLanguage::CodeCompletionOption> options;
+	List<EditorLanguage::CompletionOption> options;
 	get_workspace()->completion(params, &options);
 
 	if (!options.is_empty()) {
 		int i = 0;
 		arr.resize(options.size());
 
-		for (const ScriptLanguage::CodeCompletionOption &option : options) {
+		for (const EditorLanguage::CompletionOption &option : options) {
 			LSP::CompletionItem item;
 			item.label = option.display;
 			item.data = request_data;
@@ -549,41 +561,39 @@ Array GDScriptLanguageProtocol::lsp_completion(const Dictionary &p_params) {
 			}
 
 			switch (option.kind) {
-				case ScriptLanguage::CODE_COMPLETION_KIND_ENUM:
+				case EditorLanguage::CompletionKind::ENUM:
 					item.kind = LSP::CompletionItemKind::Enum;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_CLASS:
+				case EditorLanguage::CompletionKind::CLASS:
 					item.kind = LSP::CompletionItemKind::Class;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_MEMBER:
+				case EditorLanguage::CompletionKind::MEMBER_VARIABLE:
 					item.kind = LSP::CompletionItemKind::Property;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_FUNCTION:
+				case EditorLanguage::CompletionKind::FUNCTION:
 					item.kind = LSP::CompletionItemKind::Method;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_SIGNAL:
+				case EditorLanguage::CompletionKind::SIGNAL:
 					item.kind = LSP::CompletionItemKind::Event;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_CONSTANT:
+				case EditorLanguage::CompletionKind::CONSTANT:
 					item.kind = LSP::CompletionItemKind::Constant;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_VARIABLE:
+				case EditorLanguage::CompletionKind::VARIABLE:
 					item.kind = LSP::CompletionItemKind::Variable;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_FILE_PATH:
+				case EditorLanguage::CompletionKind::FILE_PATH:
 					item.kind = LSP::CompletionItemKind::File;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_NODE_PATH:
+				case EditorLanguage::CompletionKind::NODE_PATH:
 					item.kind = LSP::CompletionItemKind::Snippet;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT:
+				case EditorLanguage::CompletionKind::PLAIN_TEXT:
 					item.kind = LSP::CompletionItemKind::Text;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_KEYWORD:
+				case EditorLanguage::CompletionKind::KEYWORD:
 					item.kind = LSP::CompletionItemKind::Keyword;
 					break;
-				case ScriptLanguage::CODE_COMPLETION_KIND_MAX: {
-				}
 			}
 
 			arr[i] = item.to_json();
@@ -661,10 +671,7 @@ GDScriptLanguageProtocol::GDScriptLanguageProtocol() {
 	SET_DOCUMENT_METHOD(rename);
 	SET_DOCUMENT_METHOD(prepareRename);
 	SET_DOCUMENT_METHOD(references);
-	SET_DOCUMENT_METHOD(foldingRange);
-	SET_DOCUMENT_METHOD(codeLens);
 	SET_DOCUMENT_METHOD(documentLink);
-	SET_DOCUMENT_METHOD(colorPresentation);
 	SET_DOCUMENT_METHOD(hover);
 	SET_DOCUMENT_METHOD(definition);
 	SET_DOCUMENT_METHOD(declaration);

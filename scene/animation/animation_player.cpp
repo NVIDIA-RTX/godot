@@ -299,7 +299,7 @@ void AnimationPlayer::_blend_playback_data(double p_delta, bool p_started) {
 		// so it is best to use "deferred" calls instead of "immediate" for animation events that can trigger new animations.
 		_process_playback_data(b.data, p_delta, b.blend_left, false, false, false);
 	}
-	for (int i = to_erase.size() - 1; i >= 0; i--) {
+	for (int i = (int)to_erase.size() - 1; i >= 0; i--) {
 		c.blend.remove_at(to_erase[i]);
 	}
 }
@@ -1039,9 +1039,6 @@ void AnimationPlayer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_autoplay", "name"), &AnimationPlayer::set_autoplay);
 	ClassDB::bind_method(D_METHOD("get_autoplay"), &AnimationPlayer::get_autoplay);
-
-	ClassDB::bind_method(D_METHOD("find_animation", "animation"), &AnimationPlayer::find_animation);
-	ClassDB::bind_method(D_METHOD("find_animation_library", "animation"), &AnimationPlayer::find_animation_library);
 
 	ClassDB::bind_method(D_METHOD("set_movie_quit_on_finish_enabled", "enabled"), &AnimationPlayer::set_movie_quit_on_finish_enabled);
 	ClassDB::bind_method(D_METHOD("is_movie_quit_on_finish_enabled"), &AnimationPlayer::is_movie_quit_on_finish_enabled);

@@ -30,10 +30,12 @@
 
 #include "shape_3d.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/physics_3d/physics_server_3d_manager.h"
 
 void Shape3D::add_vertices_to_array(Vector<Vector3> &array, const Transform3D &p_xform) {
 	Vector<Vector3> toadd = get_debug_mesh_lines();
@@ -164,6 +166,20 @@ void Shape3D::_update_shape() {
 	debug_mesh_lines_cache_dirty = true;
 	debug_arraymesh_faces_cache.unref();
 	debug_arraymesh_faces_cache_valid = false;
+}
+
+void Shape3D::_validate_property(PropertyInfo &p_property) const {
+	if (p_property.name == "custom_solver_bias" && GLOBAL_GET(PhysicsServer3DManager::setting_property_name) == PhysicsServer3DManager::JOLT_PHYSICS_NAME) {
+		// This property is not used by Jolt Physics. Hide it from the editor to avoid confusion.
+		// Third-party physics engines may make use of this property, so we leave it visible for those.
+		p_property.usage = PROPERTY_USAGE_STORAGE;
+	}
+
+	if (p_property.name == "margin" && GLOBAL_GET(PhysicsServer3DManager::setting_property_name) == PhysicsServer3DManager::GODOT_PHYSICS_3D_NAME) {
+		// This property is not used by GodotPhysics3D. Hide it from the editor to avoid confusion.
+		// Third-party physics engines may make use of this property, so we leave it visible for those.
+		p_property.usage = PROPERTY_USAGE_STORAGE;
+	}
 }
 
 void Shape3D::_bind_methods() {

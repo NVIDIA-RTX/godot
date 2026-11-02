@@ -13,14 +13,14 @@ on:
 jobs:
   static-checks:
     name: Code style, file formatting, and docs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     outputs:
       changed-files: '"${{ steps.changed-files.outputs.clangd_all_changed_files }}"' # Wrap with quotes to bookend internal quote separators.
       sources-changed: ${{ steps.changed-files.outputs.sources_any_changed }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # Treeless clone. Slightly less performant than a shallow clone, but makes finding diffs instantaneous.
           filter: tree:0 # See: https://github.blog/open-source/git/get-up-to-speed-with-partial-clone-and-shallow-clone/
@@ -46,7 +46,10 @@ jobs:
 
       - name: Style checks via prek
         env:
-          CHANGED_FILES: '"${{ steps.changed-files.outputs.everything_all_changed_files }}"' # Wrap with quotes to bookend internal quote separators.
+          FROM_REF: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
+            || github.event.before != '0000000000000000000000000000000000000000' && github.event.before
+            || 'HEAD~1' }}
         run: |
           pip install prek==0.4.1
-          prek --files ${{ env.CHANGED_FILES }}
+          prek run --show-diff-on-failure --color=always --from-ref ${{ env.FROM_REF }} --to-ref HEAD

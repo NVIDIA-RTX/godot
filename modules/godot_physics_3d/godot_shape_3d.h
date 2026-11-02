@@ -32,9 +32,12 @@
 
 #include "core/math/geometry_3d.h"
 #include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/rid.h"
 #include "core/templates/safe_refcount.h"
-#include "servers/physics_3d/physics_server_3d.h"
+#include "core/variant/variant.h"
+#include "servers/physics_3d/physics_server_3d_enums.h"
 
 class GodotShape3D;
 
@@ -70,7 +73,7 @@ public:
 	_FORCE_INLINE_ void set_self(const RID &p_self) { self = p_self; }
 	_FORCE_INLINE_ RID get_self() const { return self; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const = 0;
+	virtual PS3DE::ShapeType get_type() const = 0;
 
 	_FORCE_INLINE_ const AABB &get_aabb() const { return aabb; }
 	_FORCE_INLINE_ bool is_configured() const { return configured; }
@@ -122,7 +125,7 @@ public:
 	Plane get_plane() const;
 
 	virtual real_t get_volume() const override { return Math::INF; }
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_WORLD_BOUNDARY; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_WORLD_BOUNDARY; }
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
 	virtual void get_supports(const Vector3 &p_normal, int p_max, Vector3 *r_supports, int &r_amount, FeatureType &r_type) const override { r_amount = 0; }
@@ -149,7 +152,7 @@ public:
 	bool get_slide_on_slope() const;
 
 	virtual real_t get_volume() const override { return 0.0; }
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_SEPARATION_RAY; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_SEPARATION_RAY; }
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
 	virtual void get_supports(const Vector3 &p_normal, int p_max, Vector3 *r_supports, int &r_amount, FeatureType &r_type) const override;
@@ -176,7 +179,7 @@ public:
 
 	virtual real_t get_volume() const override { return 4.0 / 3.0 * Math::PI * radius * radius * radius; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_SPHERE; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_SPHERE; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -201,7 +204,7 @@ public:
 	_FORCE_INLINE_ Vector3 get_half_extents() const { return half_extents; }
 	virtual real_t get_volume() const override { return 8 * half_extents.x * half_extents.y * half_extents.z; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_BOX; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_BOX; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -230,7 +233,7 @@ public:
 
 	virtual real_t get_volume() const override { return 4.0 / 3.0 * Math::PI * radius * radius * radius + (height - radius * 2.0) * Math::PI * radius * radius; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CAPSULE; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CAPSULE; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -259,7 +262,7 @@ public:
 
 	virtual real_t get_volume() const override { return height * Math::PI * radius * radius; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CYLINDER; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CYLINDER; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -286,7 +289,7 @@ struct GodotConvexPolygonShape3D : public GodotShape3D {
 public:
 	const Geometry3D::MeshData &get_mesh() const { return mesh; }
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CONVEX_POLYGON; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CONVEX_POLYGON; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -378,7 +381,7 @@ struct GodotConcavePolygonShape3D : public GodotConcaveShape3D {
 public:
 	Vector<Vector3> get_faces() const;
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CONCAVE_POLYGON; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CONCAVE_POLYGON; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -443,7 +446,7 @@ public:
 	int get_width() const;
 	int get_depth() const;
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_HEIGHTMAP; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_HEIGHTMAP; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override;
 	virtual Vector3 get_support(const Vector3 &p_normal) const override;
@@ -468,7 +471,7 @@ struct GodotFaceShape3D : public GodotShape3D {
 	bool backface_collision = false;
 	bool invert_backface_collision = false;
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CONCAVE_POLYGON; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CONCAVE_POLYGON; }
 
 	const Vector3 &get_vertex(int p_idx) const { return vertex[p_idx]; }
 
@@ -491,7 +494,7 @@ struct GodotMotionShape3D : public GodotShape3D {
 	GodotShape3D *shape = nullptr;
 	Vector3 motion;
 
-	virtual PhysicsServer3D::ShapeType get_type() const override { return PhysicsServer3D::SHAPE_CONVEX_POLYGON; }
+	virtual PS3DE::ShapeType get_type() const override { return PS3DE::SHAPE_CONVEX_POLYGON; }
 
 	virtual void project_range(const Vector3 &p_normal, const Transform3D &p_transform, real_t &r_min, real_t &r_max) const override {
 		Vector3 cast = p_transform.basis.xform(motion);

@@ -177,8 +177,11 @@ void SceneShaderForwardMobile::ShaderData::set_code(const String &p_code) {
 
 	actions.uniforms = &uniforms;
 
-	MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
-	Error err = SceneShaderForwardMobile::singleton->compiler.compile(RSE::SHADER_SPATIAL, code, &actions, path, gen_code);
+	Error err = OK;
+	{
+		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
+		err = SceneShaderForwardMobile::singleton->compiler.compile(RSE::SHADER_SPATIAL, code, &actions, path, gen_code);
+	}
 
 	if (err != OK) {
 		if (version.is_valid()) {
@@ -274,7 +277,6 @@ bool SceneShaderForwardMobile::ShaderData::casts_shadows() const {
 
 RenderingServerTypes::ShaderNativeSourceCode SceneShaderForwardMobile::ShaderData::get_native_source_code() const {
 	if (version.is_valid()) {
-		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
 		return SceneShaderForwardMobile::singleton->shader.version_get_native_source_code(version);
 	} else {
 		return RenderingServerTypes::ShaderNativeSourceCode();
@@ -283,7 +285,6 @@ RenderingServerTypes::ShaderNativeSourceCode SceneShaderForwardMobile::ShaderDat
 
 Pair<ShaderRD *, RID> SceneShaderForwardMobile::ShaderData::get_native_shader_and_version() const {
 	if (version.is_valid()) {
-		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
 		return { &SceneShaderForwardMobile::singleton->shader, version };
 	} else {
 		return {};
@@ -445,8 +446,8 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 	specialization_constants.push_back(sc);
 
 	sc.constant_id = 2;
-	sc.float_value = p_pipeline_key.shader_specialization.packed_2;
-	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_FLOAT;
+	sc.int_value = p_pipeline_key.shader_specialization.packed_2;
+	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_INT;
 	specialization_constants.push_back(sc);
 
 	sc = {}; // Sanitize value bits. "bool_value" only assigns 8 bits and keeps the remaining bits intact.
@@ -488,7 +489,6 @@ void SceneShaderForwardMobile::ShaderData::_clear_vertex_input_mask_cache() {
 
 RID SceneShaderForwardMobile::ShaderData::get_shader_variant(ShaderVersion p_shader_version, bool p_ubershader) const {
 	if (version.is_valid()) {
-		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
 		ERR_FAIL_NULL_V(SceneShaderForwardMobile::singleton, RID());
 		return SceneShaderForwardMobile::singleton->shader.version_get_shader(version, p_shader_version + (SceneShaderForwardMobile::singleton->use_fp16 ? SHADER_VERSION_MAX * 2 : 0) + (p_ubershader ? SHADER_VERSION_MAX : 0));
 	} else {
@@ -514,7 +514,6 @@ uint64_t SceneShaderForwardMobile::ShaderData::get_vertex_input_mask(ShaderVersi
 
 bool SceneShaderForwardMobile::ShaderData::is_valid() const {
 	if (version.is_valid()) {
-		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
 		ERR_FAIL_NULL_V(SceneShaderForwardMobile::singleton, false);
 		return SceneShaderForwardMobile::singleton->shader.version_is_valid(version);
 	} else {
@@ -532,7 +531,6 @@ SceneShaderForwardMobile::ShaderData::~ShaderData() {
 	pipeline_hash_map.clear_pipelines();
 
 	if (version.is_valid()) {
-		MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
 		ERR_FAIL_NULL(SceneShaderForwardMobile::singleton);
 		SceneShaderForwardMobile::singleton->shader.version_free(version);
 	}
@@ -667,6 +665,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["BINORMAL"] = "binormal_highp";
 		actions.renames["POSITION"] = "position";
 		actions.renames["UV"] = "uv_interp";
+		actions.renames["STREAMING_LOD"] = "streaming_lod";
 		actions.renames["UV2"] = "uv2_interp";
 		actions.renames["COLOR"] = "color_highp";
 		actions.renames["POINT_SIZE"] = "point_size";
@@ -811,6 +810,11 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.usage_defines["POINT_SIZE"] = "#define POINT_SIZE_USED\n";
 		actions.usage_defines["POINT_COORD"] = "#define POINT_COORD_USED\n";
 
+		actions.usage_defines["DISCARD"] = "#define DISCARD_USED\n";
+		actions.usage_defines["DEPTH"] = "#define DEPTH_USED\n";
+
+		actions.usage_defines["STREAMING_LOD"] = "#define STREAMING_LOD_USED\n";
+
 		actions.render_mode_defines["skip_vertex_transform"] = "#define SKIP_TRANSFORM_USED\n";
 		actions.render_mode_defines["world_vertex_coords"] = "#define VERTEX_WORLD_COORDS_USED\n";
 		actions.render_mode_defines["ensure_correct_normals"] = "#define ENSURE_CORRECT_NORMALS\n";
@@ -823,6 +827,12 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.render_mode_defines["billboard_particles"] = "#define BILLBOARD_PARTICLES\n";
 		actions.render_mode_defines["billboard_keep_scale"] = "#define BILLBOARD_KEEP_SCALE\n";
 		actions.render_mode_defines["fixed_size"] = "#define FIXED_SIZE_USED\n";
+
+		actions.render_mode_defines["depth_draw_never"] = "#define DEPTH_DRAW_NEVER_USED\n";
+		actions.render_mode_defines["depth_draw_always"] = "#define DEPTH_DRAW_ALWAYS_USED\n";
+		actions.render_mode_defines["depth_test_disabled"] = "#define DEPTH_TEST_DISABLED_USED\n";
+		actions.stencil_mode_defines["write"] = "#define STENCIL_WRITE_USED\n";
+		actions.stencil_mode_defines["write_depth_fail"] = "#define STENCIL_WRITE_USED\n";
 
 		bool force_lambert = GLOBAL_GET("rendering/shading/overrides/force_lambert_over_burley");
 		if (!force_lambert) {
@@ -951,6 +961,7 @@ void fragment() {
 
 	{
 		default_vec4_xform_buffer = RD::get_singleton()->storage_buffer_create(256);
+		default_material_feedback_buffer = RD::get_singleton()->storage_buffer_create(256);
 		Vector<RD::Uniform> uniforms;
 		RD::Uniform u;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
@@ -965,8 +976,8 @@ void fragment() {
 void SceneShaderForwardMobile::set_default_specialization(const ShaderSpecialization &p_specialization) {
 	default_specialization = p_specialization;
 
-	for (SelfList<ShaderData> *E = shader_list.first(); E; E = E->next()) {
-		E->self()->pipeline_hash_map.clear_pipelines();
+	for (ShaderData &shader_data : shader_list) {
+		shader_data.pipeline_hash_map.clear_pipelines();
 	}
 }
 
@@ -1005,10 +1016,31 @@ bool SceneShaderForwardMobile::is_multiview_shader_group_enabled() const {
 	return shader.is_group_enabled(SHADER_GROUP_FP32_MULTIVIEW) || shader.is_group_enabled(SHADER_GROUP_FP16_MULTIVIEW);
 }
 
+RID SceneShaderForwardMobile::get_default_shader_rd(bool p_is_multiview) {
+	RID &shader_rd = p_is_multiview ? default_multiview_shader_rd : default_shader_rd;
+
+	if (shader_rd.is_null()) {
+		RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+		ERR_FAIL_NULL_V(material_storage, RID());
+		ERR_FAIL_COND_V(!default_material.is_valid(), RID());
+
+		int variant = p_is_multiview ? SHADER_VERSION_COLOR_PASS_MULTIVIEW : SHADER_VERSION_COLOR_PASS;
+		if (use_fp16) {
+			variant += SHADER_VERSION_MAX * 2;
+		}
+
+		MaterialData *md = static_cast<MaterialData *>(material_storage->material_get_data(default_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
+		shader_rd = shader.version_get_shader(md->shader_data->version, variant);
+	}
+
+	return shader_rd;
+}
+
 SceneShaderForwardMobile::~SceneShaderForwardMobile() {
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 
 	RD::get_singleton()->free_rid(default_vec4_xform_buffer);
+	RD::get_singleton()->free_rid(default_material_feedback_buffer);
 	RD::get_singleton()->free_rid(shadow_sampler);
 
 	material_storage->shader_free(overdraw_material_shader);

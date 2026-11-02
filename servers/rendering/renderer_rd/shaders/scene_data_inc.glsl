@@ -5,15 +5,16 @@
 
 #define SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT (1 << 0)
 #define SCENE_DATA_FLAGS_USE_AMBIENT_CUBEMAP (1 << 1)
-#define SCENE_DATA_FLAGS_USE_REFLECTION_CUBEMAP (1 << 2)
-#define SCENE_DATA_FLAGS_USE_ROUGHNESS_LIMITER (1 << 3)
-#define SCENE_DATA_FLAGS_USE_FOG (1 << 4)
-#define SCENE_DATA_FLAGS_USE_UV2_MATERIAL (1 << 5)
-#define SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS (1 << 6)
-#define SCENE_DATA_FLAGS_IN_SHADOW_PASS (1 << 7)
-#define SCENE_DATA_FLAGS_USE_DEPTH_FOG (1 << 8)
-#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG (1 << 9)
-#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE (1 << 10)
+#define SCENE_DATA_FLAGS_USE_REFLECTION_COLOR (1 << 2)
+#define SCENE_DATA_FLAGS_USE_REFLECTION_CUBEMAP (1 << 3)
+#define SCENE_DATA_FLAGS_USE_ROUGHNESS_LIMITER (1 << 4)
+#define SCENE_DATA_FLAGS_USE_FOG (1 << 5)
+#define SCENE_DATA_FLAGS_USE_UV2_MATERIAL (1 << 6)
+#define SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS (1 << 7)
+#define SCENE_DATA_FLAGS_IN_SHADOW_PASS (1 << 8)
+#define SCENE_DATA_FLAGS_USE_DEPTH_FOG (1 << 9)
+#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG (1 << 10)
+#define SCENE_DATA_FLAGS_DEBUG_VOLUMETRIC_FOG_TRANSMITTANCE (1 << 11)
 
 struct SceneData {
 	mat4 projection_matrix;
@@ -62,6 +63,9 @@ struct SceneData {
 	mat3 radiance_inverse_xform;
 
 	vec4 ambient_light_color_energy;
+
+	vec3 reflection_color;
+	uint pad;
 
 	float ambient_color_sky_mix;
 	float fog_density;

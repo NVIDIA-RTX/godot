@@ -61,6 +61,7 @@ protected:
 		uint32_t specialization_constants_count = 0;
 		RDC::PipelineType pipeline_type = RDC::PIPELINE_TYPE_RASTERIZATION;
 		uint32_t has_multiview = 0;
+		uint32_t has_physical_storage_buffer_addresses = 0;
 		uint32_t has_dynamic_buffers = 0;
 		uint32_t compute_local_size[3] = {};
 		uint32_t set_count = 0;
@@ -99,6 +100,7 @@ protected:
 		uint32_t code_decompressed_size = 0;
 	};
 
+	ContainerHeader container_header;
 	ReflectionData reflection_data;
 	Vector<uint32_t> reflection_binding_set_uniforms_count;
 	Vector<ReflectionBindingData> reflection_binding_set_uniforms_data;
@@ -234,6 +236,7 @@ protected:
 		uint32_t compute_local_size[3] = {};
 		uint32_t push_constant_size = 0;
 		bool has_multiview = false;
+		bool has_physical_storage_buffer_addresses = false;
 		bool has_dynamic_buffers = false;
 		RDC::PipelineType pipeline_type = RDC::PIPELINE_TYPE_RASTERIZATION;
 
@@ -313,5 +316,5 @@ class RenderingShaderContainerFormat : public RenderingDeviceCommons {
 public:
 	virtual Ref<RenderingShaderContainer> create_container() const = 0;
 	virtual ShaderLanguageVersion get_shader_language_version() const = 0;
-	virtual ShaderSpirvVersion get_shader_spirv_version() const = 0;
+	virtual ShaderSpirvVersion get_shader_spirv_version(ShaderStage p_stage) const = 0;
 };

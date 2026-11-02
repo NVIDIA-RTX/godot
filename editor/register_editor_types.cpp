@@ -37,7 +37,6 @@
 #include "core/object/script_language.h"
 #include "core/os/os.h"
 #include "editor/animation/animation_tree_editor_plugin.h"
-#include "editor/audio/audio_stream_editor_plugin.h"
 #include "editor/audio/audio_stream_randomizer_editor_plugin.h"
 #include "editor/debugger/debug_adapter/debug_adapter_server.h"
 #include "editor/debugger/editor_debugger_plugin.h"
@@ -68,6 +67,7 @@
 #include "editor/import/resource_importer_imagefont.h"
 #include "editor/import/resource_importer_layered_texture.h"
 #include "editor/import/resource_importer_shader_file.h"
+#include "editor/import/resource_importer_streamed_texture.h"
 #include "editor/import/resource_importer_svg.h"
 #include "editor/import/resource_importer_texture.h"
 #include "editor/import/resource_importer_texture_atlas.h"
@@ -91,7 +91,6 @@
 #include "editor/scene/2d/scene_paint_2d_editor_plugin.h"
 #include "editor/scene/2d/skeleton_2d_editor_plugin.h"
 #include "editor/scene/2d/sprite_2d_editor_plugin.h"
-#include "editor/scene/2d/tiles/tiles_editor_plugin.h"
 #include "editor/scene/3d/bone_map_editor_plugin.h"
 #include "editor/scene/3d/camera_3d_editor_plugin.h"
 #include "editor/scene/3d/gpu_particles_collision_sdf_editor_plugin.h"
@@ -153,6 +152,7 @@ void register_editor_types() {
 	EditorStringNames::create();
 
 	GDREGISTER_CLASS(EditorPaths);
+	GDREGISTER_ABSTRACT_CLASS(ScenePaint2DEditor);
 	GDREGISTER_VIRTUAL_CLASS(EditorPlugin);
 	GDREGISTER_CLASS(EditorTranslationParserPlugin);
 	GDREGISTER_CLASS(EditorImportPlugin);
@@ -222,10 +222,10 @@ void register_editor_types() {
 	GDREGISTER_CLASS(ResourceImporterTexture);
 	GDREGISTER_CLASS(ResourceImporterTextureAtlas);
 	GDREGISTER_CLASS(ResourceImporterWAV);
+	GDREGISTER_CLASS(ResourceImporterStreamedTexture);
 
 	// This list is alphabetized, and plugins that depend on Node2D or Node3D are in their own section below.
 	EditorPlugins::add_by_type<AnimationTreeEditorPlugin>();
-	EditorPlugins::add_by_type<AudioStreamEditorPlugin>();
 	EditorPlugins::add_by_type<AudioStreamRandomizerEditorPlugin>();
 	EditorPlugins::add_by_type<BitMapEditorPlugin>();
 	EditorPlugins::add_by_type<ControlEditorPlugin>();
@@ -265,8 +265,6 @@ void register_editor_types() {
 	EditorPlugins::add_by_type<Polygon2DEditorPlugin>();
 	EditorPlugins::add_by_type<Skeleton2DEditorPlugin>();
 	EditorPlugins::add_by_type<Sprite2DEditorPlugin>();
-	EditorPlugins::add_by_type<TileSetEditorPlugin>();
-	EditorPlugins::add_by_type<TileMapEditorPlugin>();
 	EditorPlugins::add_by_type<ScenePaint2DEditorPlugin>();
 	// 2D physics editor plugins.
 	EditorPlugins::add_by_type<Cast2DEditorPlugin>();

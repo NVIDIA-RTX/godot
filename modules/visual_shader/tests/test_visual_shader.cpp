@@ -32,8 +32,8 @@
 
 TEST_FORCE_LINK(test_visual_shader)
 
-#include "modules/visual_shader/visual_shader.h"
-#include "modules/visual_shader/vs_nodes/visual_shader_nodes.h"
+#include "../visual_shader.h"
+#include "../vs_nodes/visual_shader_nodes.h"
 
 namespace TestVisualShader {
 
