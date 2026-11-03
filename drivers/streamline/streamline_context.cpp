@@ -73,6 +73,12 @@ void StreamlineContext::load_functions(bool d3d12) {
 #ifdef _WIN32
 	HMODULE streamline = LoadLibraryA("sl.interposer.dll");
 	if (streamline == nullptr) {
+		const DWORD error = GetLastError();
+		if (error == ERROR_MOD_NOT_FOUND) {
+			print_verbose("Streamline: sl.interposer.dll not found, DLSS/Reflex disabled.");
+		} else {
+			WARN_PRINT(vformat("Streamline: failed to load sl.interposer.dll (error %d), DLSS/Reflex disabled.", (int64_t)error));
+		}
 		return;
 	}
 #define SL_GETPROC(type, name) (type *)(void *)GetProcAddress(streamline, name)
@@ -128,14 +134,20 @@ void StreamlineContext::load_functions_post_init() {
 	}
 }
 
+static bool _is_feature_supported(StreamlineContext *self, sl::Feature feature, const char *name, sl::AdapterInfo &adapterInfo) {
+	const sl::Result result = self->slIsFeatureSupported(feature, adapterInfo);
+	print_verbose(vformat("Streamline: %s %s.", name, result == sl::Result::eOk ? "supported" : StreamlineContext::result_to_string(result)));
+	return result == sl::Result::eOk;
+}
+
 static void _enumerate_support(StreamlineContext *self, sl::AdapterInfo &adapterInfo, StreamlineCapabilities &outSupport) {
 	if (self->slIsFeatureSupported) {
-		outSupport.dlss_available = self->slIsFeatureSupported(sl::kFeatureDLSS, adapterInfo) == sl::Result::eOk;
-		outSupport.dlss_g_available = self->slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk;
-		outSupport.dlss_rr_available = self->slIsFeatureSupported(sl::kFeatureDLSS_RR, adapterInfo) == sl::Result::eOk;
-		outSupport.reflex_available = self->slIsFeatureSupported(sl::kFeatureReflex, adapterInfo) == sl::Result::eOk;
-		outSupport.pcl_available = self->slIsFeatureSupported(sl::kFeaturePCL, adapterInfo) == sl::Result::eOk;
-		outSupport.nis_available = self->slIsFeatureSupported(sl::kFeatureNIS, adapterInfo) == sl::Result::eOk;
+		outSupport.dlss_available = _is_feature_supported(self, sl::kFeatureDLSS, "DLSS", adapterInfo);
+		outSupport.dlss_g_available = _is_feature_supported(self, sl::kFeatureDLSS_G, "DLSS-G", adapterInfo);
+		outSupport.dlss_rr_available = _is_feature_supported(self, sl::kFeatureDLSS_RR, "DLSS-RR", adapterInfo);
+		outSupport.reflex_available = _is_feature_supported(self, sl::kFeatureReflex, "Reflex", adapterInfo);
+		outSupport.pcl_available = _is_feature_supported(self, sl::kFeaturePCL, "PCL", adapterInfo);
+		outSupport.nis_available = _is_feature_supported(self, sl::kFeatureNIS, "NIS", adapterInfo);
 	}
 }
 

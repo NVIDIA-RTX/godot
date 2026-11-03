@@ -339,6 +339,9 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 	// Set DLSS or DLSS-RR options depending on mode
 	bool use_dlss_rr = p_params.dlss_rr && StreamlineContext::get().slDLSSDSetOptions != nullptr && StreamlineContext::get().streamline_capabilities.dlss_rr_available;
+	if (p_params.dlss_rr && !use_dlss_rr) {
+		WARN_PRINT_ONCE("DLSS Ray Reconstruction is not supported by Streamline on this device; falling back to DLSS without denoising.");
+	}
 
 	if (use_dlss_rr) {
 		// Set DLSS-RR (Ray Reconstruction) options

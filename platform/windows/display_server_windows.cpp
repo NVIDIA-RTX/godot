@@ -106,6 +106,19 @@
 
 #define WM_INDICATOR_CALLBACK_MESSAGE (WM_USER + 1)
 
+// Windows on ARM has no native OpenGL drivers, also for x86_64 builds running under emulation.
+static bool _is_arm64_machine() {
+#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+	return true;
+#else
+	typedef BOOL(WINAPI * IsWow64Process2Ptr)(HANDLE, USHORT *, USHORT *);
+	IsWow64Process2Ptr IsWow64Process2 = (IsWow64Process2Ptr)(void *)GetProcAddress(GetModuleHandle(TEXT("kernel32")), "IsWow64Process2");
+	USHORT process_arch = 0;
+	USHORT machine_arch = 0;
+	return IsWow64Process2 && IsWow64Process2(GetCurrentProcess(), &process_arch, &machine_arch) && machine_arch == 0xAA64;
+#endif
+}
+
 static String format_error_message(DWORD id) {
 	LPWSTR messageBuffer = nullptr;
 	size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -8114,6 +8127,25 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 		RasterizerDummy::make_current();
 	}
 
+#if defined(GLES3_ENABLED) && !defined(ANGLE_ENABLED) && (defined(MOBILE_RD_ENABLED) || defined(FORWARD_RD_ENABLED))
+	// Mirrors the RenderingDevice -> OpenGL fallback below: without ANGLE, OpenGL cannot work on ARM64 machines.
+	if (rendering_driver == "opengl3" && _is_arm64_machine()) {
+#ifdef MOBILE_RD_ENABLED
+		const String fallback_method = "mobile";
+#else
+		const String fallback_method = "forward_plus";
+#endif
+#ifdef D3D12_ENABLED
+		rendering_driver = "d3d12"; // Vulkan only runs through a D3D12 mapping layer on Windows on ARM.
+#else
+		rendering_driver = "vulkan";
+#endif
+		WARN_PRINT(vformat("OpenGL is not available natively on this device and this build has no ANGLE, switching to %s (%s).", fallback_method, rendering_driver));
+		OS::get_singleton()->set_current_rendering_method(fallback_method, OS::RENDERING_SOURCE_FALLBACK);
+		OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
+	}
+#endif
+
 #ifdef RD_ENABLED
 	bool fallback_to_vulkan = GLOBAL_GET("rendering/rendering_device/fallback_to_vulkan");
 	bool fallback_to_d3d12 = GLOBAL_GET("rendering/rendering_device/fallback_to_d3d12");
@@ -8243,36 +8275,14 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 	bool show_warning = true;
 #endif
 
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" && _is_arm64_machine()) {
 		// There's no native OpenGL drivers on Windows for ARM, always enable fallback.
-#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
 #if defined(ANGLE_ENABLED)
 		fallback = true;
 		show_warning = false;
 #else
 		r_error = ERR_UNAVAILABLE;
 		ERR_FAIL_MSG("Could not initialize OpenGL.");
-#endif
-#else
-		typedef BOOL(WINAPI * IsWow64Process2Ptr)(HANDLE, USHORT *, USHORT *);
-
-		IsWow64Process2Ptr IsWow64Process2 = (IsWow64Process2Ptr)(void *)GetProcAddress(GetModuleHandle(TEXT("kernel32")), "IsWow64Process2");
-		if (IsWow64Process2) {
-			USHORT process_arch = 0;
-			USHORT machine_arch = 0;
-			if (!IsWow64Process2(GetCurrentProcess(), &process_arch, &machine_arch)) {
-				machine_arch = 0;
-			}
-			if (machine_arch == 0xAA64) {
-#if defined(ANGLE_ENABLED)
-				fallback = true;
-				show_warning = false;
-#else
-				r_error = ERR_UNAVAILABLE;
-				ERR_FAIL_MSG("Could not initialize OpenGL.");
-#endif
-			}
-		}
 #endif
 	}
 

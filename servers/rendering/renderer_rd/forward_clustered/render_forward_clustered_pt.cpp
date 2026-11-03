@@ -260,6 +260,9 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 
 		const bool dlss_rr_enabled = (rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) != 0;
 		if (dlss_rr_enabled) {
+			if (scale_type != SCALE_3D_DLSS) {
+				WARN_PRINT_ONCE("The DLSS Ray Reconstruction denoiser only runs with the viewport 3D scaling mode set to DLSS; the path traced image is not denoised.");
+			}
 			raytracing->dlss_rr_ensure_buffers(rb.ptr());
 			using_depth_reconstruct = true;
 		} else if (raytracing->dlss_rr_has_buffers(rb.ptr())) {
